@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..rules.engine import Vulnerability
+from ..models import Vulnerability
 
 logger = logging.getLogger(__name__)
 

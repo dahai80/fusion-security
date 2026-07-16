@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from fusion_security.rules.engine import RuleEngine, Vulnerability, ScanRule
+from fusion_security.rules.engine import RuleEngine, ScanRule
+from fusion_security.models import Vulnerability
 from fusion_security.scanner.scanner import Scanner, ScanTarget, ScanResult
 from fusion_security.report.report import ReportGenerator
 from fusion_security.fix.fix_generator import FixGenerator, FixPatch

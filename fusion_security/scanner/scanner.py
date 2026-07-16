@@ -9,41 +9,70 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ..rules.engine import RuleEngine, Vulnerability
+from ..rules.engine import RuleEngine
+from ..models import Vulnerability
 from ..ai.analyzer import AIAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# 默认限制
+DEFAULT_MAX_FILE_SIZE = 1 * 1024 * 1024  # 1MB
+DEFAULT_MAX_FILES = 10000
+
 
 class ScanTarget:
     """扫描目标定义。"""
-    def __init__(self, path: str, recursive: bool = True):
+    def __init__(
+        self,
+        path: str,
+        recursive: bool = True,
+        max_file_size: int = DEFAULT_MAX_FILE_SIZE,
+        max_files: int = DEFAULT_MAX_FILES,
+    ):
         self.path = Path(path).expanduser().resolve()
         self.recursive = recursive
+        self.max_file_size = max_file_size
+        self.max_files = max_files
         self.files: List[Path] = []
 
     def discover(self, extensions: Optional[Set[str]] = None) -> List[Path]:
-        """发现待扫描文件。"""
+        """发现待扫描文件（带大小和数量限制）。"""
         if not extensions:
             extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs',
                          '.php', '.rb', '.swift', '.kt', '.scala', '.cs', '.c', '.cpp',
                          '.h', '.hpp', '.yaml', '.yml', '.json', '.xml', '.sql', '.sh'}
 
+        # 排除常见非源码目录
+        exclude_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv',
+                        '.egg-info', 'dist', 'build', '.build', '.svn', '.gitlab'}
+
         if self.path.is_file():
-            self.files = [self.path] if self.path.suffix in extensions else []
+            if self.path.suffix in extensions and self._check_file_size(self.path):
+                self.files = [self.path]
+            else:
+                self.files = []
         else:
             self.files = []
             for ext in extensions:
+                if len(self.files) >= self.max_files:
+                    break
                 pattern = f"**/*{ext}" if self.recursive else f"*{ext}"
-                self.files.extend(self.path.glob(pattern))
-
-        # 排除常见非源码目录
-        exclude_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv',
-                        '.egg-info', 'dist', 'build', '.build', '.svn'}
-        self.files = [f for f in self.files
-                      if not any(p in f.parts for p in exclude_dirs)]
+                for f in self.path.glob(pattern):
+                    if len(self.files) >= self.max_files:
+                        break
+                    if any(p in f.parts for p in exclude_dirs):
+                        continue
+                    if self._check_file_size(f):
+                        self.files.append(f)
 
         return self.files
+
+    def _check_file_size(self, path: Path) -> bool:
+        """检查文件是否在大小限制内。"""
+        try:
+            return path.stat().st_size <= self.max_file_size
+        except (OSError, IOError):
+            return False
 
 
 class ScanResult:
@@ -102,15 +131,26 @@ class Scanner:
 
         logger.info(f"开始扫描: {target.path} ({len(files)} 个文件)")
 
-        # 1. 规则引擎扫描
-        for file_path in files:
+        # 1. 规则引擎扫描（并行）
+        async def scan_file(file_path: Path) -> List[Vulnerability]:
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
-                findings = self.rule_engine.scan_file(file_path, content)
-                result.vulnerabilities.extend(findings)
+                return self.rule_engine.scan_file(file_path, content)
             except Exception as e:
                 logger.debug(f"扫描文件失败 {file_path}: {e}")
                 result.files_skipped += 1
+                return []
+
+        # 分批执行避免太多并发
+        batch_size = 50
+        for i in range(0, len(files), batch_size):
+            batch = files[i:i + batch_size]
+            batch_results = await asyncio.gather(
+                *[scan_file(f) for f in batch], return_exceptions=True
+            )
+            for findings in batch_results:
+                if isinstance(findings, list):
+                    result.vulnerabilities.extend(findings)
 
         # 2. AI 验证（降低误报）
         if self.ai_analyzer and result.vulnerabilities:

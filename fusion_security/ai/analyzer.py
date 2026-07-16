@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..rules.engine import Vulnerability
+from ..models import Vulnerability
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ CWE编号: {vuln.cwe_id}
                 {"role": "system", "content": "你是一个代码安全专家。分析代码中的逻辑漏洞。"},
                 {"role": "user", "content": prompt},
             ])
-            results = self._parse_json_array(response)
+            results = self._parse_json(response, as_array=True)
             findings = []
             for r in results:
                 vuln = Vulnerability(
@@ -191,20 +191,8 @@ CWE编号: {vuln.cwe_id}
         except Exception as e:
             return f"// 修复生成失败: {e}"
 
-    def _parse_json(self, text: str) -> Optional[Dict]:
-        """解析 JSON 响应。"""
-        text = text.strip()
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return None
-
-    def _parse_json_array(self, text: str) -> List[Dict]:
-        """解析 JSON 数组响应。"""
+    def _parse_json(self, text: str, as_array: bool = False) -> Any:
+        """解析 JSON 响应（支持对象和数组）。"""
         text = text.strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
@@ -212,6 +200,8 @@ CWE编号: {vuln.cwe_id}
             text = text.split("```")[1].split("```")[0].strip()
         try:
             result = json.loads(text)
-            return result if isinstance(result, list) else []
+            if as_array:
+                return result if isinstance(result, list) else []
+            return result if isinstance(result, dict) else None
         except json.JSONDecodeError:
-            return []
+            return [] if as_array else None

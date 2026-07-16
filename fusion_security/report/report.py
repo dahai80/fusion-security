@@ -58,6 +58,7 @@ class ReportGenerator:
         lines.append("---")
         lines.append(f"*由 Fusion-Security v0.1.0 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
         lines.append("*100% 本地离线，代码不出境*")
+        lines.append("*⚠️ 修复建议由 AI 生成，请人工审核后再应用*")
         return "\n".join(lines)
 
     def generate_json(self, result: ScanResult) -> str:
