@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from fusion_security.rules.engine import RuleEngine, ScanRule
+from fusion_security.engine.rules.engine import RuleEngine, ScanRule
 from fusion_security.models import Vulnerability
-from fusion_security.scanner.scanner import Scanner, ScanTarget, ScanResult
+from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
 from fusion_security.report.report import ReportGenerator
-from fusion_security.fix.fix_generator import FixGenerator, FixPatch
+from fusion_security.engine.fix.fix_generator import FixGenerator
+from fusion_security.models.patch import Patch as FixPatch
 
 
 class TestRuleEngine:
@@ -167,7 +168,7 @@ class TestFixGenerator:
     def test_generate_fix(self):
         vuln = Vulnerability(
             id="TEST001", title="SQL注入", description="测试",
-            severity="high", confidence=0.9,
+            severity="high", confidence=90,
             file_path="/tmp/test.py", line_number=1,
             code_snippet="cursor.execute(sql)",
             rule_id="SQL001",
@@ -175,15 +176,15 @@ class TestFixGenerator:
         gen = FixGenerator()
         patch = gen.generate_fix(vuln)
         assert isinstance(patch, FixPatch)
-        assert patch.vuln.id == "TEST001"
+        assert patch.vuln_id == "TEST001"
 
     def test_fix_patch_to_diff(self):
         vuln = Vulnerability(
             id="T1", title="Test", description="", severity="low",
-            confidence=0.5, file_path="/tmp/t.py", line_number=1,
+            confidence=50, file_path="/tmp/t.py", line_number=1,
             code_snippet="old code",
         )
-        patch = FixPatch(vuln=vuln, original="old code", patched="new code")
+        patch = FixPatch(vuln_id="T1", original_code="old code", patched_code="new code")
         diff = patch.to_diff()
         assert "old code" in diff
         assert "new code" in diff
@@ -193,11 +194,11 @@ class TestVulnerability:
     def test_to_dict(self):
         vuln = Vulnerability(
             id="V1", title="Test", description="Desc",
-            severity="high", confidence=0.95,
+            severity="high", confidence=95,
             file_path="/tmp/test.py", line_number=10,
             code_snippet="code here",
         )
         d = vuln.to_dict()
         assert d["id"] == "V1"
         assert d["severity"] == "high"
-        assert d["confidence"] == 0.95
+        assert d["confidence"] == 95

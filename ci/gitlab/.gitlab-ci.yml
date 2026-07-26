@@ -1,0 +1,90 @@
+# Fusion-Security GitLab CI Template
+# Usage: include this file in your .gitlab-ci.yml
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/YOUR_ORG/fusion-security/main/ci/gitlab/.gitlab-ci.yml'
+#
+# Variables:
+#   FUSION_SECURITY_SEVERITY  - min severity (critical/high/medium/low), default: low
+#   FUSION_SECURITY_FAIL_ON   - fail pipeline above this severity, default: high
+#   FUSION_SECURITY_NO_AI     - set "true" to disable AI, default: false
+#   FUSION_SECURITY_FORMAT    - report format (json/html/markdown), default: json
+#   FUSION_SECURITY_SERVER    - remote API server URL (optional)
+
+variables:
+  FUSION_SECURITY_SEVERITY: "low"
+  FUSION_SECURITY_FAIL_ON: "high"
+  FUSION_SECURITY_NO_AI: "false"
+  FUSION_SECURITY_FORMAT: "json"
+  FUSION_SECURITY_OUTPUT: "fusion-security-reports"
+
+.fusion-security-base:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install fusion-security 2>/dev/null || true
+    - which fusion-security || { echo "fusion-security not found"; exit 1; }
+  script:
+    - |
+      ARGS="scan ."
+      ARGS="$ARGS --severity ${FUSION_SECURITY_SEVERITY}"
+      ARGS="$ARGS --format ${FUSION_SECURITY_FORMAT}"
+      ARGS="$ARGS --output ${FUSION_SECURITY_OUTPUT}"
+      if [ "${FUSION_SECURITY_NO_AI}" = "true" ]; then ARGS="$ARGS --no-ai"; fi
+      if [ -n "${FUSION_SECURITY_SERVER}" ]; then ARGS="$ARGS --server ${FUSION_SECURITY_SERVER}"; fi
+      fusion-security $ARGS
+    - |
+      if [ "${FUSION_SECURITY_FAIL_ON}" = "off" ]; then exit 0; fi
+      REPORT="${FUSION_SECURITY_OUTPUT}/report.json"
+      if [ ! -f "$REPORT" ]; then echo "No report, skip gate"; exit 0; fi
+      python3 -c "
+      import json, sys
+      sev_map = {'critical':0,'high':1,'medium':2,'low':3}
+      threshold = sev_map.get('${FUSION_SECURITY_FAIL_ON}', 99)
+      with open('$REPORT') as f:
+          data = json.load(f)
+      count = 0
+      for v in data.get('vulnerabilities', data.get('findings', [])):
+          if sev_map.get(v.get('severity','low'), 3) <= threshold:
+              count += 1
+      if count > 0:
+          print(f'FAIL: {count} vulns at or above ${FUSION_SECURITY_FAIL_ON}')
+          sys.exit(1)
+      print(f'PASS: no vulns above ${FUSION_SECURITY_FAIL_ON}')
+      "
+  artifacts:
+    when: always
+    paths:
+      - ${FUSION_SECURITY_OUTPUT}
+    expire_in: 30 days
+
+fusion-security-full:
+  extends: .fusion-security-base
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $FUSION_SECURITY_INCREMENTAL != "true"
+
+fusion-security-incremental:
+  extends: .fusion-security-base
+  script:
+    - |
+      ARGS="scan . --severity ${FUSION_SECURITY_SEVERITY} --format ${FUSION_SECURITY_FORMAT} --output ${FUSION_SECURITY_OUTPUT} --incremental"
+      if [ "${FUSION_SECURITY_NO_AI}" = "true" ]; then ARGS="$ARGS --no-ai"; fi
+      fusion-security $ARGS
+    - |
+      if [ "${FUSION_SECURITY_FAIL_ON}" = "off" ]; then exit 0; fi
+      REPORT="${FUSION_SECURITY_OUTPUT}/report.json"
+      if [ ! -f "$REPORT" ]; then exit 0; fi
+      python3 -c "
+      import json, sys
+      sev_map = {'critical':0,'high':1,'medium':2,'low':3}
+      threshold = sev_map.get('${FUSION_SECURITY_FAIL_ON}', 99)
+      with open('$REPORT') as f:
+          data = json.load(f)
+      count = 0
+      for v in data.get('vulnerabilities', data.get('findings', [])):
+          if sev_map.get(v.get('severity','low'), 3) <= threshold:
+              count += 1
+      if count > 0: sys.exit(1)
+      "
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $FUSION_SECURITY_INCREMENTAL == "true"

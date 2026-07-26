@@ -12,9 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fusion_security.models import Vulnerability
-from fusion_security.scanner.scanner import Scanner, ScanTarget, ScanResult
+from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
 from fusion_security.report.report import ReportGenerator
-from fusion_security.fix.fix_generator import FixGenerator, FixPatch
+from fusion_security.engine.fix.fix_generator import FixGenerator
+from fusion_security.models.patch import Patch as FixPatch
 from fusion_security.utils.logger import setup_logger
 
 
@@ -25,18 +26,18 @@ from fusion_security.utils.logger import setup_logger
 class TestAIAnalyzer:
     @pytest.mark.asyncio
     async def test_verify_findings_empty(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = await analyzer.verify_findings([], [])
         assert result == []
 
     @pytest.mark.asyncio
     async def test_verify_findings_with_vuln(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         vuln = Vulnerability(
             id="V1", title="SQL注入", description="测试", severity="high",
-            confidence=0.9, file_path="/tmp/test.py", line_number=1,
+            confidence=90, file_path="/tmp/test.py", line_number=1,
             code_snippet="execute(sql)", rule_id="SQL001",
         )
         result = await analyzer.verify_findings([vuln], [])
@@ -46,18 +47,18 @@ class TestAIAnalyzer:
 
     @pytest.mark.asyncio
     async def test_semantic_scan_empty(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = await analyzer.semantic_scan([])
         assert result == []
 
     @pytest.mark.asyncio
     async def test_generate_fix(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         vuln = Vulnerability(
             id="V1", title="Test", description="", severity="low",
-            confidence=0.5, file_path="/tmp/t.py", line_number=1,
+            confidence=50, file_path="/tmp/t.py", line_number=1,
             code_snippet="old code",
         )
         result = await analyzer.generate_fix(vuln)
@@ -65,31 +66,31 @@ class TestAIAnalyzer:
         assert "修复" in result or "error" in result
 
     def test_parse_json_valid(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = analyzer._parse_json('{"key": "value"}')
         assert result == {"key": "value"}
 
     def test_parse_json_with_codeblock(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = analyzer._parse_json('```json\n{"key": "value"}\n```')
         assert result == {"key": "value"}
 
     def test_parse_json_array(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = analyzer._parse_json('[{"a": 1}]', as_array=True)
         assert result == [{"a": 1}]
 
     def test_parse_json_invalid(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = analyzer._parse_json("not json", as_array=True)
         assert result == []
 
     def test_parse_json_invalid_dict(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         analyzer = AIAnalyzer()
         result = analyzer._parse_json("not json")
         assert result is None
@@ -160,7 +161,7 @@ class TestScannerEdge:
         result.files_scanned = 5
         result.vulnerabilities.append(
             Vulnerability(id="V1", title="Test", description="", severity="critical",
-                         confidence=0.9, file_path="/t.py", line_number=1, code_snippet="x")
+                         confidence=90, file_path="/t.py", line_number=1, code_snippet="x")
         )
         d = result.to_dict()
         assert d["total_vulnerabilities"] == 1
@@ -184,7 +185,7 @@ class TestReportCoverage:
         result.summary = "发现漏洞"
         result.vulnerabilities.append(
             Vulnerability(id="V1", title="XSS", description="XSS漏洞",
-                         severity="high", confidence=0.95,
+                         severity="high", confidence=95,
                          file_path="/t.js", line_number=5, code_snippet="innerHTML=x")
         )
         gen = ReportGenerator()
@@ -198,7 +199,7 @@ class TestReportCoverage:
         result.files_scanned = 3
         result.vulnerabilities.append(
             Vulnerability(id="V1", title="Test", description="", severity="low",
-                         confidence=0.5, file_path="/t.py", line_number=1, code_snippet="x")
+                         confidence=50, file_path="/t.py", line_number=1, code_snippet="x")
         )
         gen = ReportGenerator()
         js = gen.generate_json(result)
@@ -230,39 +231,39 @@ class TestFixCoverage:
     def test_apply_template_fix_sql(self):
         vuln = Vulnerability(
             id="T1", title="SQL注入", description="", severity="high",
-            confidence=0.9, file_path="/t.py", line_number=1,
+            confidence=90, file_path="/t.py", line_number=1,
             code_snippet="cursor.execute(sql)", rule_id="SQL001",
         )
         gen = FixGenerator()
         patch = gen.generate_fix(vuln)
-        assert "execute_query" in patch.patched or patch.patched != patch.original
+        assert "execute_query" in patch.patched_code or patch.patched_code != patch.original_code
 
     def test_apply_template_fix_secret(self):
         vuln = Vulnerability(
             id="T2", title="硬编码密钥", description="", severity="high",
-            confidence=0.9, file_path="/t.py", line_number=1,
+            confidence=90, file_path="/t.py", line_number=1,
             code_snippet='api_key = "sk-12345"', rule_id="SEC001",
         )
         gen = FixGenerator()
         patch = gen.generate_fix(vuln)
-        assert "os.environ" in patch.patched or patch.patched != patch.original
+        assert "os.environ" in patch.patched_code or patch.patched_code != patch.original_code
 
     def test_apply_template_fix_xss(self):
         vuln = Vulnerability(
             id="T3", title="XSS", description="", severity="high",
-            confidence=0.9, file_path="/t.js", line_number=1,
+            confidence=90, file_path="/t.js", line_number=1,
             code_snippet="element.innerHTML = x", rule_id="XSS001",
         )
         gen = FixGenerator()
         patch = gen.generate_fix(vuln)
-        assert "textContent" in patch.patched or patch.patched != patch.original
+        assert "textContent" in patch.patched_code or patch.patched_code != patch.original_code
 
     def test_extract_context_file_exists(self, tmp_path):
         test_file = tmp_path / "test.py"
         test_file.write_text("line1\nline2\nline3\nline4\nline5\n")
         vuln = Vulnerability(
             id="T4", title="Test", description="", severity="low",
-            confidence=0.5, file_path=str(test_file), line_number=2,
+            confidence=50, file_path=str(test_file), line_number=2,
             code_snippet="", rule_id="",
         )
         gen = FixGenerator()
@@ -273,7 +274,7 @@ class TestFixCoverage:
     def test_extract_context_file_not_found(self):
         vuln = Vulnerability(
             id="T5", title="Test", description="", severity="low",
-            confidence=0.5, file_path="/nonexistent/path.py", line_number=1,
+            confidence=50, file_path="/nonexistent/path.py", line_number=1,
             code_snippet="fallback code", rule_id="",
         )
         gen = FixGenerator()
@@ -282,17 +283,17 @@ class TestFixCoverage:
 
     @pytest.mark.asyncio
     async def test_ai_enhance_fix(self):
-        from fusion_security.ai import AIAnalyzer
+        from fusion_security.engine.ai.analyzer import AIAnalyzer
         vuln = Vulnerability(
             id="T6", title="Test", description="", severity="low",
-            confidence=0.5, file_path="/t.py", line_number=1,
+            confidence=50, file_path="/t.py", line_number=1,
             code_snippet="old code", rule_id="",
         )
         ai = AIAnalyzer()
         gen = FixGenerator(ai_analyzer=ai)
-        patch = FixPatch(vuln=vuln, original="old code", patched="new code")
+        patch = FixPatch(vuln_id=vuln.id, original_code="old code", patched_code="new code")
         result = await gen.ai_enhance_fix(patch)
-        assert result.patched == "new code" or len(result.patched) > 0
+        assert result.patched_code == "new code" or len(result.patched_code) > 0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -370,10 +371,10 @@ class TestCLI:
 class TestModuleIntegrity:
     def test_all_modules_importable(self):
         import fusion_security
-        import fusion_security.scanner
-        import fusion_security.rules
-        import fusion_security.ai
-        import fusion_security.fix
+        import fusion_security.engine.scanner
+        import fusion_security.engine.rules.engine
+        import fusion_security.engine.ai.analyzer
+        import fusion_security.engine.fix.fix_generator
         import fusion_security.report
         import fusion_security.utils
         assert True
@@ -381,25 +382,25 @@ class TestModuleIntegrity:
     def test_models_export(self):
         from fusion_security.models import Vulnerability
         v = Vulnerability(id="V1", title="T", description="D", severity="high",
-                         confidence=0.9, file_path="/f", line_number=1, code_snippet="c")
+                         confidence=90, file_path="/f", line_number=1, code_snippet="c")
         assert v.to_dict()["id"] == "V1"
 
     def test_scanner_import(self):
-        from fusion_security.scanner import Scanner, ScanTarget, ScanResult
+        from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
         assert Scanner is not None
 
     def test_scanner_summary_with_vulns(self):
         """测试生成摘要。"""
-        from fusion_security.scanner.scanner import Scanner, ScanTarget
+        from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
         from fusion_security.models import Vulnerability
         result = ScanResult(ScanTarget("/test"))
         result.vulnerabilities = [
             Vulnerability(id="V1", title="注入", description="", severity="critical",
-                         confidence=0.9, file_path="/f", line_number=1, code_snippet="c"),
+                         confidence=90, file_path="/f", line_number=1, code_snippet="c"),
             Vulnerability(id="V2", title="XSS", description="", severity="high",
-                         confidence=0.8, file_path="/f", line_number=2, code_snippet="c"),
+                         confidence=80, file_path="/f", line_number=2, code_snippet="c"),
         ]
-        from fusion_security.scanner.scanner import Scanner as S
+        from fusion_security.engine.scanner import Scanner as S
         s = S(use_ai=False)
         s._generate_summary(result)
         assert "2 个安全漏洞" in result.summary

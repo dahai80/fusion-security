@@ -1,0 +1,14 @@
+apiVersion: v2
+name: fusion-security
+description: Fusion-Security — Local AI-powered code security audit tool
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - security
+  - code-audit
+  - ai
+  - sast
+home: https://github.com/dahai80/fusion-security
+maintainers:
+  - name: dahai80

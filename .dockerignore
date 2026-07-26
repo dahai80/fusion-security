@@ -1,0 +1,17 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+reports/
+*.md
+!README.md
+.claude/
+.codegraph/
+tests/

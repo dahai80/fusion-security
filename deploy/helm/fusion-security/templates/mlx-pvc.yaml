@@ -1,0 +1,17 @@
+{{- if and .Values.fusionMLX.enabled .Values.fusionMLX.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fusion-mlx.fullname" . }}-models
+  labels:
+    {{- include "fusion-mlx.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.fusionMLX.persistence.accessMode }}
+  {{- if .Values.fusionMLX.persistence.storageClass }}
+  storageClassName: {{ .Values.fusionMLX.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.fusionMLX.persistence.size }}
+{{- end }}

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fusion-security.fullname" . }}
+  labels:
+    {{- include "fusion-security.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fusion-security.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fusion-security.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: fusion-security
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          env:
+            - name: FUSION_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: FUSION_SEVERITY_THRESHOLD
+              value: {{ .Values.config.severityThreshold | quote }}
+            - name: FUSION_ENABLE_AI
+              value: {{ .Values.config.enableAI | quote }}
+            - name: FUSION_MLX_URL
+              value: "http://{{ include "fusion-mlx.fullname" . }}:{{ .Values.fusionMLX.service.port }}/v1"
+            {{- if .Values.config.model }}
+            - name: FUSION_MODEL
+              value: {{ .Values.config.model | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/system/health/detailed
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/system/health/detailed
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: scan-data
+              mountPath: /data/scans
+      volumes:
+        - name: scan-data
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fusion-security.fullname" . }}-data
+        {{- else }}
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
