@@ -22,3 +22,12 @@ htmlcov/
 
 # Reports
 reports/
+
+# Frontend
+frontend/node_modules/
+
+# Claude
+.claude/
+
+# Coverage data
+coverage.json

@@ -1,0 +1,17 @@
+{{- if .Values.fusionMLX.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fusion-mlx.fullname" . }}
+  labels:
+    {{- include "fusion-mlx.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.fusionMLX.service.type }}
+  ports:
+    - port: {{ .Values.fusionMLX.service.port }}
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "fusion-mlx.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,0 +1,112 @@
+name: 'Fusion-Security Scan'
+description: 'Run Fusion-Security code security audit in GitHub Actions'
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  severity:
+    description: 'Minimum severity threshold (critical/high/medium/low)'
+    required: false
+    default: 'low'
+  no-ai:
+    description: 'Disable AI analysis'
+    required: false
+    default: 'false'
+  format:
+    description: 'Report format (markdown/json/html)'
+    required: false
+    default: 'json'
+  output:
+    description: 'Output directory for reports'
+    required: false
+    default: 'fusion-security-reports'
+  fail-on-severity:
+    description: 'Fail the workflow if vulnerabilities at or above this severity are found (critical/high/medium/low/off)'
+    required: false
+    default: 'high'
+  server-url:
+    description: 'Fusion-Security API server URL (for remote mode)'
+    required: false
+    default: ''
+  incremental:
+    description: 'Enable incremental scan (git diff)'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Fusion-Security
+      shell: bash
+      run: |
+        pip install fusion-security 2>/dev/null || pip install -e "${{ github.action_path }}/../.." 2>/dev/null || true
+        which fusion-security || { echo "::error::fusion-security not found"; exit 1; }
+
+    - name: Run Security Scan
+      shell: bash
+      run: |
+        ARGS="scan ${{ inputs.path }}"
+        ARGS="$ARGS --severity ${{ inputs.severity }}"
+        ARGS="$ARGS --format ${{ inputs.format }}"
+        ARGS="$ARGS --output ${{ inputs.output }}"
+
+        if [ "${{ inputs.no-ai }}" = "true" ]; then
+          ARGS="$ARGS --no-ai"
+        fi
+
+        if [ "${{ inputs.incremental }}" = "true" ]; then
+          ARGS="$ARGS --incremental"
+        fi
+
+        if [ -n "${{ inputs.server-url }}" ]; then
+          ARGS="$ARGS --server ${{ inputs.server-url }}"
+        fi
+
+        echo "::group::Fusion-Security Scan"
+        fusion-security $ARGS 2>&1 | tee scan-output.txt
+        echo "::endgroup::"
+
+    - name: Check Severity Gate
+      shell: bash
+      run: |
+        FAIL_SEV="${{ inputs.fail-on-severity }}"
+        if [ "$FAIL_SEV" = "off" ]; then
+          echo "Severity gate disabled"
+          exit 0
+        fi
+
+        REPORT="${{ inputs.output }}/report.json"
+        if [ ! -f "$REPORT" ]; then
+          echo "::warning::Report not found at $REPORT, skipping gate"
+          exit 0
+        fi
+
+        SEV_ORDER='{"critical":0,"high":1,"medium":2,"low":3}'
+        THRESHOLD=$(echo "$SEV_ORDER" | python3 -c "import sys,json; print(json.load(sys.stdin).get('$FAIL_SEV', 99))")
+
+        FOUND=$(python3 -c "
+import json, sys
+with open('$REPORT') as f:
+    data = json.load(f)
+sev_map = {'critical':0,'high':1,'medium':2,'low':3}
+threshold = $THRESHOLD
+count = 0
+vulns = data.get('vulnerabilities', data.get('findings', []))
+for v in vulns:
+    if sev_map.get(v.get('severity','low'), 3) <= threshold:
+        count += 1
+print(count)
+")
+
+        if [ "$FOUND" -gt 0 ]; then
+          echo "::error::$FOUND vulnerabilities found at or above '$FAIL_SEV' severity"
+          exit 1
+        fi
+        echo "No vulnerabilities above '$FAIL_SEV' threshold"
+
+    - name: Upload Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: fusion-security-report
+        path: ${{ inputs.output }}
