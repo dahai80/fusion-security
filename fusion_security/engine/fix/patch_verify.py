@@ -6,7 +6,6 @@ import difflib
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ...models.patch import Patch
 
@@ -43,7 +42,7 @@ class PatchVerifier:
         result.is_valid = len(result.errors) == 0
         return result
 
-    def _apply_patch_text(self, original: str, diff_text: str) -> Optional[str]:
+    def _apply_patch_text(self, original: str, diff_text: str) -> str | None:
         try:
             lines = original.splitlines(keepends=True)
             hunks = self._parse_unified_diff(diff_text)
@@ -53,7 +52,7 @@ class PatchVerifier:
                 start = hunk["old_start"] - 1
                 count = hunk["old_count"]
                 new_lines = hunk["new_lines"]
-                lines[start:start + count] = new_lines
+                lines[start : start + count] = new_lines
             return "".join(lines)
         except Exception as e:
             logger.debug(f"[PatchVerify] 应用补丁失败: {e}")
@@ -77,9 +76,7 @@ class PatchVerifier:
                 continue
             if current is None:
                 continue
-            if line.startswith("+") and not line.startswith("++"):
-                current["new_lines"].append(line[1:] + "\n")
-            elif line.startswith(" "):
+            if line.startswith("+") and not line.startswith("++") or line.startswith(" "):
                 current["new_lines"].append(line[1:] + "\n")
         if current:
             hunks.append(current)

@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,8 @@ def init_db(db_path: str = DEFAULT_DB_PATH, echo: bool = False) -> None:
 
     url = f"sqlite:///{path}"
     _engine = create_engine(
-        url, echo=echo,
+        url,
+        echo=echo,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -43,9 +43,11 @@ def init_db(db_path: str = DEFAULT_DB_PATH, echo: bool = False) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
     _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
 
     from . import models  # noqa: F401 — ensure models registered
+
     Base.metadata.create_all(_engine)
     logger.info(f"数据库已初始化: {path}")
 
@@ -61,6 +63,7 @@ def init_async_db(db_path: str = DEFAULT_DB_PATH, echo: bool = False) -> None:
     _AsyncSessionLocal = async_sessionmaker(_async_engine, expire_on_commit=False)
 
     from . import models  # noqa: F401
+
     logger.info(f"异步数据库已初始化: {path}")
 
 

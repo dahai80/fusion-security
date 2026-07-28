@@ -6,9 +6,8 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from .engine import ScanRule
 
@@ -37,7 +36,7 @@ class CustomRule:
         if not self.updated_at:
             self.updated_at = self.created_at
 
-    def to_scan_rule(self) -> Optional[ScanRule]:
+    def to_scan_rule(self) -> ScanRule | None:
         if not self.enabled or not self.pattern:
             return None
         if self._is_redos_risk(self.pattern):
@@ -49,22 +48,25 @@ class CustomRule:
             logger.warning(f"[CustomRule] 正则编译失败 {self.id}: {e}")
             return None
         return ScanRule(
-            id=self.id, name=self.name, description=self.description,
-            severity=self.severity, cwe_id="", pattern=compiled, language=self.language,
+            id=self.id,
+            name=self.name,
+            description=self.description,
+            severity=self.severity,
+            cwe_id="",
+            pattern=compiled,
+            language=self.language,
         )
 
     def _is_redos_risk(self, pattern: str) -> bool:
         dangerous = re.compile(
-            r'(\([^)]*[+*][^)]*\)){2,}|'
-            r'(\[[^\]]*[+*][^\]]*\]){2,}|'
-            r'(\(.+\))[+*]{2,}|'
-            r'(\(\?:.+\))[+*]\1'
+            r"(\([^)]*[+*][^)]*\)){2,}|"
+            r"(\[[^\]]*[+*][^\]]*\]){2,}|"
+            r"(\(.+\))[+*]{2,}|"
+            r"(\(\?:.+\))[+*]\1"
         )
         if dangerous.search(pattern):
             return True
-        if len(pattern) > 500:
-            return True
-        return False
+        return len(pattern) > 500
 
     def should_apply(self, tenant_id: str = "") -> bool:
         if not self.enabled:
@@ -72,6 +74,7 @@ class CustomRule:
         if not self.gray_release:
             return True
         import hashlib
+
         hash_val = int(hashlib.md5(f"{tenant_id}:{self.id}".encode()).hexdigest()[:8], 16)
         return (hash_val % 100) < self.gray_percentage
 
@@ -79,7 +82,7 @@ class CustomRule:
 class CustomRuleStore:
     def __init__(self, store_path: str = ""):
         self.store_path = store_path or str(Path.home() / ".fusion_security" / "custom_rules.json")
-        self.rules: Dict[str, CustomRule] = {}
+        self.rules: dict[str, CustomRule] = {}
         self._load()
 
     def add_rule(self, rule: CustomRule) -> CustomRule:
@@ -88,7 +91,7 @@ class CustomRuleStore:
         logger.info(f"[CustomRule] 添加规则: {rule.id} type={rule.rule_type}")
         return rule
 
-    def update_rule(self, rule_id: str, **kwargs) -> Optional[CustomRule]:
+    def update_rule(self, rule_id: str, **kwargs) -> CustomRule | None:
         rule = self.rules.get(rule_id)
         if not rule:
             return None
@@ -108,16 +111,16 @@ class CustomRuleStore:
             return True
         return False
 
-    def get_rule(self, rule_id: str) -> Optional[CustomRule]:
+    def get_rule(self, rule_id: str) -> CustomRule | None:
         return self.rules.get(rule_id)
 
-    def list_rules(self, enabled_only: bool = False) -> List[CustomRule]:
+    def list_rules(self, enabled_only: bool = False) -> list[CustomRule]:
         rules = list(self.rules.values())
         if enabled_only:
             rules = [r for r in rules if r.enabled]
         return rules
 
-    def get_active_rules(self, tenant_id: str = "") -> List[ScanRule]:
+    def get_active_rules(self, tenant_id: str = "") -> list[ScanRule]:
         scan_rules = []
         for cr in self.rules.values():
             if cr.should_apply(tenant_id) and cr.rule_type == "regex":
@@ -132,11 +135,19 @@ class CustomRuleStore:
             data = {}
             for rid, r in self.rules.items():
                 data[rid] = {
-                    "id": r.id, "name": r.name, "description": r.description,
-                    "severity": r.severity, "rule_type": r.rule_type, "pattern": r.pattern,
-                    "language": r.language, "enabled": r.enabled,
-                    "gray_release": r.gray_release, "gray_percentage": r.gray_percentage,
-                    "created_by": r.created_by, "created_at": r.created_at, "updated_at": r.updated_at,
+                    "id": r.id,
+                    "name": r.name,
+                    "description": r.description,
+                    "severity": r.severity,
+                    "rule_type": r.rule_type,
+                    "pattern": r.pattern,
+                    "language": r.language,
+                    "enabled": r.enabled,
+                    "gray_release": r.gray_release,
+                    "gray_percentage": r.gray_percentage,
+                    "created_by": r.created_by,
+                    "created_at": r.created_at,
+                    "updated_at": r.updated_at,
                 }
             with open(self.store_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -148,7 +159,7 @@ class CustomRuleStore:
             p = Path(self.store_path)
             if not p.exists():
                 return
-            with open(p, "r", encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 data = json.load(f)
             for rid, d in data.items():
                 self.rules[rid] = CustomRule(**d)

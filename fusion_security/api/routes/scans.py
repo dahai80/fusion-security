@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...db import get_session
+from ...db.convert import scan_to_orm
 from ...db.models import ScanORM
-from ...db.convert import orm_to_scan, scan_to_orm
 from ...engine.scanner import Scanner, ScanTarget
 
 logger = logging.getLogger(__name__)
@@ -26,7 +24,7 @@ class ScanCreate(BaseModel):
     model: str = ""
     trigger: str = "manual"
     branch: str = ""
-    changed_files: List[str] = []
+    changed_files: list[str] = []
 
 
 class IncrementalScanCreate(BaseModel):
@@ -62,22 +60,31 @@ class ScanResponse(BaseModel):
 
 def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
     return ScanResponse(
-        id=o.id, project_id=o.project_id, scan_type=o.scan_type,
-        status=o.status, severity_threshold=o.severity_threshold,
-        use_ai=o.use_ai, model=o.model, trigger=o.trigger,
-        branch=o.branch, files_scanned=o.files_scanned,
-        files_skipped=o.files_skipped, duration_ms=o.duration_ms,
+        id=o.id,
+        project_id=o.project_id,
+        scan_type=o.scan_type,
+        status=o.status,
+        severity_threshold=o.severity_threshold,
+        use_ai=o.use_ai,
+        model=o.model,
+        trigger=o.trigger,
+        branch=o.branch,
+        files_scanned=o.files_scanned,
+        files_skipped=o.files_skipped,
+        duration_ms=o.duration_ms,
         total_vulnerabilities=o.total_vulnerabilities,
-        critical=o.critical, high=o.high, medium=o.medium, low=o.low,
+        critical=o.critical,
+        high=o.high,
+        medium=o.medium,
+        low=o.low,
         summary=o.summary,
     )
 
 
-async def _run_scan(scan_id: str, path: str, scan_type: str,
-                    severity_threshold: str, use_ai: bool, model: str,
-                    changed_files: List[str]):
+async def _run_scan(
+    scan_id: str, path: str, scan_type: str, severity_threshold: str, use_ai: bool, model: str, changed_files: list[str]
+):
     from ...db import get_session
-    from ...db.models import VulnerabilityORM
     from ...db.convert import vuln_to_orm
 
     db = get_session()
@@ -89,7 +96,7 @@ async def _run_scan(scan_id: str, path: str, scan_type: str,
         db.commit()
 
         target = ScanTarget(path)
-        scanner = Scanner(use_ai=use_ai, model=model)
+        scanner = Scanner(use_ai=use_ai, model=model, project_id=scan_orm.project_id, db=db)
 
         if scan_type == "incremental" and changed_files:
             result = await scanner.scan_incremental(target, changed_files, severity_threshold)
@@ -98,12 +105,23 @@ async def _run_scan(scan_id: str, path: str, scan_type: str,
 
         scan_model = result.to_scan_model()
         scan_model.id = scan_id
-        for attr in ["status", "files_scanned", "files_skipped", "duration_ms",
-                      "total_vulnerabilities", "critical", "high", "medium", "low", "summary"]:
+        for attr in [
+            "status",
+            "files_scanned",
+            "files_skipped",
+            "duration_ms",
+            "total_vulnerabilities",
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "summary",
+        ]:
             setattr(scan_orm, attr, getattr(scan_model, attr))
 
         scan_orm.status = "completed"
         from datetime import datetime
+
         scan_orm.completed_at = datetime.utcnow()
 
         for v in result.vulnerabilities:
@@ -126,13 +144,17 @@ async def _run_scan(scan_id: str, path: str, scan_type: str,
 
 
 @router.post("", response_model=ScanResponse)
-def create_scan(body: ScanCreate, background_tasks: BackgroundTasks,
-                db: Session = Depends(get_session)):
+def create_scan(body: ScanCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     from ...models.project import Scan
+
     s = Scan(
-        project_id=body.project_id, scan_type=body.scan_type,
-        severity_threshold=body.severity_threshold, use_ai=body.use_ai,
-        model=body.model, trigger=body.trigger, branch=body.branch,
+        project_id=body.project_id,
+        scan_type=body.scan_type,
+        severity_threshold=body.severity_threshold,
+        use_ai=body.use_ai,
+        model=body.model,
+        trigger=body.trigger,
+        branch=body.branch,
     )
     orm = scan_to_orm(s)
     orm.status = "pending"
@@ -142,8 +164,13 @@ def create_scan(body: ScanCreate, background_tasks: BackgroundTasks,
 
     if body.path:
         background_tasks.add_task(
-            _run_scan, orm.id, body.path, body.scan_type,
-            body.severity_threshold, body.use_ai, body.model,
+            _run_scan,
+            orm.id,
+            body.path,
+            body.scan_type,
+            body.severity_threshold,
+            body.use_ai,
+            body.model,
             body.changed_files,
         )
 
@@ -159,6 +186,7 @@ def _get_queue():
     global _queue_instance
     if _queue_instance is None:
         from ...engine.queue import TaskQueue
+
         _queue_instance = TaskQueue()
     return _queue_instance
 
@@ -170,6 +198,7 @@ def _get_pool():
     global _pool_instance
     if _pool_instance is None:
         from ...engine.queue import WorkerPool
+
         _pool_instance = WorkerPool(_get_queue(), workers=4, executor=_scan_executor)
     return _pool_instance
 
@@ -199,12 +228,16 @@ class QueueScanCreate(BaseModel):
 
 @router.post("/queue", summary="提交扫描到队列")
 async def enqueue_scan(body: QueueScanCreate, db: Session = Depends(get_session)):
-    from ...models.project import Scan
     from ...engine.queue import ScanTask, TaskPriority
+    from ...models.project import Scan
+
     s = Scan(
-        project_id=body.project_id, scan_type=body.scan_type,
-        severity_threshold=body.severity_threshold, use_ai=body.use_ai,
-        model=body.model, trigger="queued",
+        project_id=body.project_id,
+        scan_type=body.scan_type,
+        severity_threshold=body.severity_threshold,
+        use_ai=body.use_ai,
+        model=body.model,
+        trigger="queued",
     )
     orm = scan_to_orm(s)
     orm.status = "queued"
@@ -214,11 +247,16 @@ async def enqueue_scan(body: QueueScanCreate, db: Session = Depends(get_session)
 
     prio = TaskPriority(body.priority) if 0 <= body.priority <= 3 else TaskPriority.NORMAL
     task = ScanTask(
-        priority=prio, project_path=body.path,
-        config={"scan_id": orm.id, "scan_type": body.scan_type,
-                "severity_threshold": body.severity_threshold,
-                "use_ai": body.use_ai, "model": body.model,
-                "changed_files": []},
+        priority=prio,
+        project_path=body.path,
+        config={
+            "scan_id": orm.id,
+            "scan_type": body.scan_type,
+            "severity_threshold": body.severity_threshold,
+            "use_ai": body.use_ai,
+            "model": body.model,
+            "changed_files": [],
+        },
     )
     queue = _get_queue()
     task_id = await queue.enqueue(task)
@@ -245,15 +283,22 @@ async def queue_status():
 
 
 @router.get("/queue/tasks", summary="列出队列任务")
-async def list_queue_tasks(status: Optional[str] = None):
+async def list_queue_tasks(status: str | None = None):
     queue = _get_queue()
     tasks = await queue.list_tasks(status=status)
-    return {"tasks": [
-        {"task_id": t.task_id, "priority": t.priority, "status": t.status,
-         "project_path": t.project_path, "created_at": t.created_at,
-         "progress": t.progress}
-        for t in tasks
-    ]}
+    return {
+        "tasks": [
+            {
+                "task_id": t.task_id,
+                "priority": t.priority,
+                "status": t.status,
+                "project_path": t.project_path,
+                "created_at": t.created_at,
+                "progress": t.progress,
+            }
+            for t in tasks
+        ]
+    }
 
 
 @router.post("/queue/{task_id}/cancel", summary="取消队列任务")
@@ -282,26 +327,33 @@ async def stop_pool():
 @router.get("/checkpoints", summary="列出所有断点")
 def list_checkpoints():
     from ...engine.resume import CheckpointManager
+
     mgr = CheckpointManager()
     cps = mgr.list_checkpoints()
-    return {"checkpoints": [
-        {"scan_id": cp.scan_id, "project_path": cp.project_path,
-         "completed_stage": cp.completed_stage, "updated_at": cp.updated_at,
-         "errors": cp.errors}
-        for cp in cps
-    ]}
+    return {
+        "checkpoints": [
+            {
+                "scan_id": cp.scan_id,
+                "project_path": cp.project_path,
+                "completed_stage": cp.completed_stage,
+                "updated_at": cp.updated_at,
+                "errors": cp.errors,
+            }
+            for cp in cps
+        ]
+    }
 
 
 class ResumeRequest(BaseModel):
     scan_id: str
     path: str
-    changed_files: List[str] = []
+    changed_files: list[str] = []
 
 
 @router.post("/resume", summary="断点续扫")
-def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks,
-                db: Session = Depends(get_session)):
+def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     from ...engine.resume import CheckpointManager
+
     mgr = CheckpointManager()
     cp = mgr.load(body.scan_id)
     if not cp:
@@ -314,15 +366,18 @@ def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks,
     db.commit()
 
     background_tasks.add_task(
-        _run_pipeline_resume, body.scan_id, body.path, body.changed_files,
+        _run_pipeline_resume,
+        body.scan_id,
+        body.path,
+        body.changed_files,
     )
     return {"scan_id": body.scan_id, "status": "resuming", "resume_from": cp.completed_stage}
 
 
-async def _run_pipeline_resume(scan_id: str, path: str, changed_files: List[str]):
-    from ...engine.pipeline import ScanPipeline, PipelineConfig
+async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]):
     from ...db import get_session as get_db
     from ...db.models import ScanORM
+    from ...engine.pipeline import ScanPipeline
 
     db = get_db()
     try:
@@ -337,6 +392,7 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: List[str]
         scan_orm.files_scanned = len(ctx.files)
         scan_orm.summary = f"续扫完成, {len(ctx.vulnerabilities)} 个漏洞"
         from datetime import datetime
+
         scan_orm.completed_at = datetime.utcnow()
         db.commit()
         logger.info(f"续扫完成: {scan_id}")
@@ -354,9 +410,8 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: List[str]
         db.close()
 
 
-@router.get("", response_model=List[ScanResponse])
-def list_scans(project_id: Optional[str] = None, status: Optional[str] = None,
-               db: Session = Depends(get_session)):
+@router.get("", response_model=list[ScanResponse])
+def list_scans(project_id: str | None = None, status: str | None = None, db: Session = Depends(get_session)):
     q = db.query(ScanORM)
     if project_id:
         q = q.filter(ScanORM.project_id == project_id)
@@ -385,20 +440,26 @@ def delete_scan(scan_id: str, db: Session = Depends(get_session)):
 
 
 @router.post("/incremental", response_model=ScanResponse)
-def create_incremental_scan(body: IncrementalScanCreate, background_tasks: BackgroundTasks,
-                            db: Session = Depends(get_session)):
+def create_incremental_scan(
+    body: IncrementalScanCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_session)
+):
     try:
         from ...engine.vcs.git import GitHelper
+
         git = GitHelper(body.path)
         diff = git.get_changed_files(base=body.base, head=body.head)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     from ...models.project import Scan
+
     s = Scan(
-        project_id=body.project_id, scan_type="incremental",
-        severity_threshold=body.severity_threshold, use_ai=body.use_ai,
-        model=body.model, trigger="incremental",
+        project_id=body.project_id,
+        scan_type="incremental",
+        severity_threshold=body.severity_threshold,
+        use_ai=body.use_ai,
+        model=body.model,
+        trigger="incremental",
         branch=git.get_current_branch(),
     )
     orm = scan_to_orm(s)
@@ -411,8 +472,13 @@ def create_incremental_scan(body: IncrementalScanCreate, background_tasks: Backg
 
     if body.path and diff.changed_files:
         background_tasks.add_task(
-            _run_scan, orm.id, body.path, "incremental",
-            body.severity_threshold, body.use_ai, body.model,
+            _run_scan,
+            orm.id,
+            body.path,
+            "incremental",
+            body.severity_threshold,
+            body.use_ai,
+            body.model,
             diff.changed_files,
         )
     else:

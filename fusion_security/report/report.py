@@ -6,12 +6,10 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from ..engine.scanner import ScanResult
-from ..models.vulnerability import Vulnerability
 
 logger = logging.getLogger(__name__)
 
@@ -84,23 +82,22 @@ _html_template = _jinja_env.from_string(HTML_TEMPLATE)
 
 
 class ReportGenerator:
-
     def generate_markdown(self, result: ScanResult) -> str:
         lines = []
-        lines.append(f"# 代码安全审计报告")
+        lines.append("# 代码安全审计报告")
         lines.append("")
         lines.append(f"**扫描目标**: {result.target.path}")
         lines.append(f"**扫描时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"**扫描文件**: {result.files_scanned} 个")
         lines.append(f"**扫描耗时**: {result.duration_ms:.0f}ms")
         lines.append("")
-        lines.append(f"## 扫描摘要")
+        lines.append("## 扫描摘要")
         lines.append("")
         lines.append(f"{result.summary}")
         lines.append("")
 
         if result.vulnerabilities:
-            lines.append(f"## 漏洞详情")
+            lines.append("## 漏洞详情")
             lines.append("")
             for i, vuln in enumerate(result.vulnerabilities, 1):
                 sev_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
@@ -132,17 +129,19 @@ class ReportGenerator:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         vuln_data = []
         for v in result.vulnerabilities:
-            vuln_data.append({
-                "title": v.title,
-                "severity": v.severity,
-                "file_path": v.file_path,
-                "line_number": v.line_number,
-                "cwe_id": v.cwe_id,
-                "confidence": v.confidence,
-                "description": v.description,
-                "code_snippet": v.code_snippet or "",
-                "fix_suggestion": v.fix_suggestion or "",
-            })
+            vuln_data.append(
+                {
+                    "title": v.title,
+                    "severity": v.severity,
+                    "file_path": v.file_path,
+                    "line_number": v.line_number,
+                    "cwe_id": v.cwe_id,
+                    "confidence": v.confidence,
+                    "description": v.description,
+                    "code_snippet": v.code_snippet or "",
+                    "fix_suggestion": v.fix_suggestion or "",
+                }
+            )
         return _html_template.render(
             target_path=result.target.path,
             scan_time=now,
@@ -153,7 +152,7 @@ class ReportGenerator:
             vulnerabilities=vuln_data,
         )
 
-    def save_report(self, result: ScanResult, output_dir: str, formats: List[str] = None) -> Dict[str, str]:
+    def save_report(self, result: ScanResult, output_dir: str, formats: list[str] = None) -> dict[str, str]:
         if formats is None:
             formats = ["md", "json"]
 

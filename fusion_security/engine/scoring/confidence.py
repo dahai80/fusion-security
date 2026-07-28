@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ class ConfidenceFactors:
     adversarial: float = 0.0
     context_score: float = 0.0
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         return {
             "rule_match": self.rule_match,
             "ast_support": self.ast_support,
@@ -42,8 +41,7 @@ WEIGHTS = ConfidenceFactors(
 
 def compute_confidence(factors: ConfidenceFactors) -> int:
     total = 0.0
-    for attr in ["rule_match", "ast_support", "taint_reach",
-                 "ai_verify", "adversarial", "context_score"]:
+    for attr in ["rule_match", "ast_support", "taint_reach", "ai_verify", "adversarial", "context_score"]:
         f_val = getattr(factors, attr)
         w_val = getattr(WEIGHTS, attr)
         total += f_val * w_val / 100.0
@@ -86,8 +84,7 @@ def from_ast(has_match: bool, node_type: str = "") -> float:
     return 80.0 if node_type in dangerous_types else 60.0
 
 
-def from_context(in_function: bool = False, in_import: bool = False,
-                 has_user_input: bool = False) -> float:
+def from_context(in_function: bool = False, in_import: bool = False, has_user_input: bool = False) -> float:
     score = 30.0
     if in_function:
         score += 20.0

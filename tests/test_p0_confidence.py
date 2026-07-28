@@ -1,8 +1,18 @@
 import pytest
+
 from fusion_security.engine.scoring.confidence import (
-    ConfidenceFactors, compute_confidence, from_rule_match, from_ai_verify,
-    from_adversarial, from_taint, from_ast, from_context,
-    legacy_to_score, score_to_legacy, CONFIDENCE_MIN, CONFIDENCE_MAX,
+    CONFIDENCE_MAX,
+    CONFIDENCE_MIN,
+    ConfidenceFactors,
+    compute_confidence,
+    from_adversarial,
+    from_ai_verify,
+    from_ast,
+    from_context,
+    from_rule_match,
+    from_taint,
+    legacy_to_score,
+    score_to_legacy,
 )
 
 
@@ -31,8 +41,12 @@ class TestComputeConfidence:
 
     def test_all_max(self):
         f = ConfidenceFactors(
-            rule_match=100, ast_support=100, taint_reach=100,
-            ai_verify=100, adversarial=100, context_score=100,
+            rule_match=100,
+            ast_support=100,
+            taint_reach=100,
+            ai_verify=100,
+            adversarial=100,
+            context_score=100,
         )
         score = compute_confidence(f)
         assert score == 100
@@ -44,9 +58,15 @@ class TestComputeConfidence:
 
 
 class TestFromRuleMatch:
-    @pytest.mark.parametrize("severity,expected_min", [
-        ("critical", 60), ("high", 50), ("medium", 40), ("low", 30),
-    ])
+    @pytest.mark.parametrize(
+        "severity,expected_min",
+        [
+            ("critical", 60),
+            ("high", 50),
+            ("medium", 40),
+            ("low", 30),
+        ],
+    )
     def test_severity_base(self, severity, expected_min):
         f = from_rule_match(severity)
         assert f.rule_match >= expected_min
@@ -134,10 +154,16 @@ class TestLegacyConversion:
 class TestVulnerabilityConfidence:
     def test_vulnerability_confidence_is_0_100(self):
         from fusion_security.models.vulnerability import Vulnerability
+
         v = Vulnerability(
-            id="V1", title="Test", description="d",
-            severity="high", confidence=85,
-            file_path="test.py", line_number=1, code_snippet="x",
+            id="V1",
+            title="Test",
+            description="d",
+            severity="high",
+            confidence=85,
+            file_path="test.py",
+            line_number=1,
+            code_snippet="x",
         )
         assert v.confidence == 85
         assert v.to_dict()["confidence"] == 85

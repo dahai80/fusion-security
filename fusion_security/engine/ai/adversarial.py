@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ...models.vulnerability import Vulnerability
 from .analyzer import AIAnalyzer
@@ -16,7 +15,7 @@ class AdversarialVerifier:
         self.ai = ai_analyzer
         self.rounds = rounds
 
-    async def verify(self, vuln: Vulnerability, files: List[Path]) -> Tuple[bool, float, str]:
+    async def verify(self, vuln: Vulnerability, files: list[Path]) -> tuple[bool, float, str]:
         attack_result = await self._attack(vuln)
         if not attack_result.get("is_exploitable", False):
             logger.debug(f"攻击代理判定不可利用: {vuln.id}")
@@ -32,8 +31,7 @@ class AdversarialVerifier:
         logger.info(f"对抗验证通过: {vuln.id}, confidence={confidence}")
         return True, confidence, exploit
 
-    async def verify_batch(self, vulns: List[Vulnerability],
-                           files: List[Path]) -> List[Vulnerability]:
+    async def verify_batch(self, vulns: list[Vulnerability], files: list[Path]) -> list[Vulnerability]:
         verified = []
         for vuln in vulns:
             try:
@@ -50,7 +48,7 @@ class AdversarialVerifier:
                 verified.append(vuln)
         return verified
 
-    async def _attack(self, vuln: Vulnerability) -> Dict[str, Any]:
+    async def _attack(self, vuln: Vulnerability) -> dict[str, Any]:
         prompt = f"""你是攻击代理。你的任务是证明以下漏洞可以被真实利用。
 
 漏洞: {vuln.title}
@@ -69,14 +67,15 @@ CWE: {vuln.cwe_id}
 
 只返回JSON: {{"is_exploitable": true/false, "exploit": "具体攻击路径", "difficulty": 0.0-1.0, "impact": 0.0-1.0, "reason": "..."}}"""
 
-        response = await self.ai._chat([
-            {"role": "system", "content": "你是安全攻击专家，寻找漏洞利用路径。"},
-            {"role": "user", "content": prompt},
-        ])
+        response = await self.ai._chat(
+            [
+                {"role": "system", "content": "你是安全攻击专家，寻找漏洞利用路径。"},
+                {"role": "user", "content": prompt},
+            ]
+        )
         return self.ai._parse_json(response) or {"is_exploitable": False}
 
-    async def _defend(self, vuln: Vulnerability,
-                      attack_result: Dict[str, Any]) -> Dict[str, Any]:
+    async def _defend(self, vuln: Vulnerability, attack_result: dict[str, Any]) -> dict[str, Any]:
         prompt = f"""你是防御代理。你的任务是反驳以下漏洞利用。
 
 漏洞: {vuln.title}
@@ -88,8 +87,8 @@ CWE: {vuln.cwe_id}
 {vuln.code_snippet[:1500]}
 ```
 
-攻击者声称: {attack_result.get('exploit', '')}
-攻击理由: {attack_result.get('reason', '')}
+攻击者声称: {attack_result.get("exploit", "")}
+攻击理由: {attack_result.get("reason", "")}
 
 请反驳：
 1. 这个攻击路径是否可行？是否有防护措施阻止？
@@ -97,13 +96,15 @@ CWE: {vuln.cwe_id}
 
 只返回JSON: {{"refuted": true/false, "reason": "反驳理由", "defense": "具体防护说明"}}"""
 
-        response = await self.ai._chat([
-            {"role": "system", "content": "你是安全防御专家，寻找反驳漏洞利用的证据。"},
-            {"role": "user", "content": prompt},
-        ])
+        response = await self.ai._chat(
+            [
+                {"role": "system", "content": "你是安全防御专家，寻找反驳漏洞利用的证据。"},
+                {"role": "user", "content": prompt},
+            ]
+        )
         return self.ai._parse_json(response) or {"refuted": False}
 
-    def _compute_confidence(self, attack: Dict, defense: Dict) -> int:
+    def _compute_confidence(self, attack: dict, defense: dict) -> int:
         difficulty = attack.get("difficulty", 0.5)
         impact = attack.get("impact", 0.5)
         base_confidence = (1 - difficulty) * 0.4 + impact * 0.4 + 0.2

@@ -31,9 +31,11 @@ def health_check():
 @router.get("/health/detailed")
 def health_detailed():
     import httpx
+
     db_ok = True
     try:
         from ...db import get_session
+
         s = next(get_session())
         s.execute("SELECT 1")
         s.close()
@@ -48,6 +50,7 @@ def health_detailed():
         pass
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         cpu = psutil.cpu_percent(interval=0.5)
         disk = psutil.disk_usage("/").percent
@@ -68,6 +71,7 @@ def health_detailed():
 @router.get("/model/config")
 def model_config():
     import httpx
+
     try:
         r = httpx.get("http://localhost:8000/v1/models", timeout=5)
         if r.status_code == 200:
@@ -83,20 +87,29 @@ def model_config():
 @router.get("/rules")
 def list_rules():
     from ...engine.rules.engine import RuleEngine
+
     engine = RuleEngine()
     rules = []
     for r in engine.get_rules():
-        rules.append({
-            "id": r.id, "name": r.name, "description": r.description,
-            "severity": r.severity, "cwe_id": r.cwe_id, "category": r.category,
-            "language": r.language, "prdid": r.prdid,
-        })
+        rules.append(
+            {
+                "id": r.id,
+                "name": r.name,
+                "description": r.description,
+                "severity": r.severity,
+                "cwe_id": r.cwe_id,
+                "category": r.category,
+                "language": r.language,
+                "prdid": r.prdid,
+            }
+        )
     return {"total": len(rules), "rules": rules}
 
 
 @router.get("/rulesets")
 def list_rulesets():
     from ...engine.rules.engine import RuleEngine
+
     engine = RuleEngine()
     rules = engine.get_rules()
     categories = {}
@@ -115,13 +128,16 @@ def update_model_config(body: ModelConfigUpdate):
     if not body.default_model:
         raise HTTPException(status_code=400, detail="default_model 不能为空")
     import httpx
+
     try:
         r = httpx.get("http://localhost:8000/v1/models", timeout=5)
         if r.status_code == 200:
             models = r.json().get("data", [])
             model_ids = [m.get("id", m.get("model", "")) for m in models]
             if body.default_model not in model_ids:
-                raise HTTPException(status_code=400, detail=f"模型 {body.default_model} 不可用，可选: {', '.join(model_ids)}")
+                raise HTTPException(
+                    status_code=400, detail=f"模型 {body.default_model} 不可用，可选: {', '.join(model_ids)}"
+                )
     except HTTPException:
         raise
     except Exception as e:

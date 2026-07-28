@@ -1,9 +1,8 @@
-import pytest
 from pathlib import Path
 
 from fusion_security.engine.rules.ast_parser import (
-    ASTParser,
     ASTNode,
+    ASTParser,
     ASTResult,
     FunctionDef,
     ImportStmt,
@@ -203,12 +202,16 @@ class TestSubprocessIsolation:
         class SlowProcess:
             def __init__(self, *a, **kw):
                 self._alive = True
+
             def start(self):
                 pass
+
             def join(self, timeout=None):
                 pass
+
             def is_alive(self):
                 return True
+
             def kill(self):
                 self._alive = False
 
@@ -313,13 +316,13 @@ class TestWalkCpp:
         assert len(result.imports) >= 1
 
     def test_parse_hpp_file(self):
-        code = '#include <vector>\n'
+        code = "#include <vector>\n"
         result = self.parser.parse(Path("test.hpp"), code)
         assert result is not None
         assert result.language == "hpp"
 
     def test_parse_cc_file(self):
-        code = '#include <string>\n'
+        code = "#include <string>\n"
         result = self.parser.parse(Path("test.cc"), code)
         assert result is not None
         assert result.language == "cc"

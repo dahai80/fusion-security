@@ -4,7 +4,6 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +12,10 @@ logger = logging.getLogger(__name__)
 class DiffResult:
     base_commit: str = ""
     head_commit: str = ""
-    changed_files: List[str] = field(default_factory=list)
-    added_files: List[str] = field(default_factory=list)
-    modified_files: List[str] = field(default_factory=list)
-    deleted_files: List[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    added_files: list[str] = field(default_factory=list)
+    modified_files: list[str] = field(default_factory=list)
+    deleted_files: list[str] = field(default_factory=list)
     diff_content: str = ""
 
 
@@ -30,7 +29,10 @@ class GitHelper:
         cmd = ["git", "-C", str(self.repo_path)] + list(args)
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode != 0:
                 logger.warning(f"git命令失败: {' '.join(cmd)}, stderr={result.stderr.strip()}")
@@ -53,8 +55,10 @@ class GitHelper:
         return self._run_git("merge-base", branch, "HEAD")
 
     def get_changed_files(
-        self, base: str = "HEAD~1", head: str = "HEAD",
-        extensions: Optional[List[str]] = None,
+        self,
+        base: str = "HEAD~1",
+        head: str = "HEAD",
+        extensions: list[str] | None = None,
     ) -> DiffResult:
         result = DiffResult(base_commit=base, head_commit=head)
 
@@ -64,8 +68,21 @@ class GitHelper:
             return result
 
         source_exts = extensions or [
-            ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go",
-            ".rb", ".php", ".c", ".cpp", ".h", ".rs", ".kt", ".swift",
+            ".py",
+            ".js",
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".java",
+            ".go",
+            ".rb",
+            ".php",
+            ".c",
+            ".cpp",
+            ".h",
+            ".rs",
+            ".kt",
+            ".swift",
         ]
 
         for line in name_status.split("\n"):
@@ -97,25 +114,27 @@ class GitHelper:
         )
         return result
 
-    def get_file_at_commit(self, filepath: str, commit: str = "HEAD") -> Optional[str]:
+    def get_file_at_commit(self, filepath: str, commit: str = "HEAD") -> str | None:
         content = self._run_git("show", f"{commit}:{filepath}")
         return content if content else None
 
     def get_blame(self, filepath: str) -> str:
         return self._run_git("blame", filepath)
 
-    def list_commits(self, base: str = "HEAD~10", head: str = "HEAD") -> List[dict]:
-        log = self._run_git(
-            "log", "--oneline", "--format=%H|%s|%an|%ai", f"{base}..{head}"
-        )
+    def list_commits(self, base: str = "HEAD~10", head: str = "HEAD") -> list[dict]:
+        log = self._run_git("log", "--oneline", "--format=%H|%s|%an|%ai", f"{base}..{head}")
         if not log:
             return []
         commits = []
         for line in log.split("\n"):
             parts = line.split("|", 3)
             if len(parts) >= 4:
-                commits.append({
-                    "hash": parts[0], "subject": parts[1],
-                    "author": parts[2], "date": parts[3],
-                })
+                commits.append(
+                    {
+                        "hash": parts[0],
+                        "subject": parts[1],
+                        "author": parts[2],
+                        "date": parts[3],
+                    }
+                )
         return commits

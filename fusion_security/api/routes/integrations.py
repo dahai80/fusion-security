@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...engine.ci.gate import SecurityGate, GatePolicy
-from ...engine.scoring.cvss import CVSS31Scorer
-from ...engine.scoring.compliance import ComplianceMapper
-from ...engine.feedback.loop import FeedbackStore, FeedbackEntry
-from ...engine.rules.custom import CustomRule, CustomRuleStore
+from ...engine.ci.gate import GatePolicy, SecurityGate
 from ...engine.dashboard import DashboardAggregator
-from ...engine.tenant.manager import TenantManager
-from ...engine.tenant.audit import AuditLogger
+from ...engine.feedback.loop import FeedbackEntry, FeedbackStore
+from ...engine.rules.custom import CustomRule, CustomRuleStore
+from ...engine.scoring.compliance import ComplianceMapper
+from ...engine.scoring.cvss import CVSS31Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -27,48 +25,72 @@ dashboard = DashboardAggregator()
 
 
 @router.post("/gate", summary="安全质量门禁")
-async def evaluate_gate(vulnerabilities: List[Dict[str, Any]], policy: str = "standard"):
+async def evaluate_gate(vulnerabilities: list[dict[str, Any]], policy: str = "standard"):
     gate = SecurityGate(GatePolicy(policy))
     from ...models.vulnerability import Vulnerability
+
     vulns = []
     for v in vulnerabilities:
-        vulns.append(Vulnerability(
-            id=v.get("id", ""), title=v.get("title", ""), description=v.get("description", ""),
-            severity=v.get("severity", "medium"), confidence=v.get("confidence", 50),
-            file_path=v.get("file_path", ""), line_number=v.get("line_number", 0),
-            code_snippet=v.get("code_snippet", ""), rule_id=v.get("rule_id", ""),
-        ))
+        vulns.append(
+            Vulnerability(
+                id=v.get("id", ""),
+                title=v.get("title", ""),
+                description=v.get("description", ""),
+                severity=v.get("severity", "medium"),
+                confidence=v.get("confidence", 50),
+                file_path=v.get("file_path", ""),
+                line_number=v.get("line_number", 0),
+                code_snippet=v.get("code_snippet", ""),
+                rule_id=v.get("rule_id", ""),
+            )
+        )
     result = gate.evaluate(vulns)
     return result.to_dict()
 
 
 @router.post("/cvss", summary="CVSS 3.1 评分")
-async def calculate_cvss(av: str = "N", ac: str = "L", pr: str = "N", ui: str = "N", s: str = "U", c: str = "N", i: str = "N", a: str = "N"):
+async def calculate_cvss(
+    av: str = "N", ac: str = "L", pr: str = "N", ui: str = "N", s: str = "U", c: str = "N", i: str = "N", a: str = "N"
+):
     scorer = CVSS31Scorer()
     result = scorer.calculate(av, ac, pr, ui, s, c, i, a)
     return {"vector": result.vector, "base_score": result.base_score, "severity": result.severity}
 
 
 @router.post("/compliance", summary="合规映射")
-async def map_compliance(vulnerabilities: List[Dict[str, Any]]):
+async def map_compliance(vulnerabilities: list[dict[str, Any]]):
     mapper = ComplianceMapper()
     from ...models.vulnerability import Vulnerability
+
     vulns = []
     for v in vulnerabilities:
-        vulns.append(Vulnerability(
-            id=v.get("id", ""), title=v.get("title", ""), description=v.get("description", ""),
-            severity=v.get("severity", "medium"), confidence=50,
-            file_path=v.get("file_path", ""), line_number=0,
-            code_snippet="", rule_id=v.get("rule_id", ""),
-        ))
+        vulns.append(
+            Vulnerability(
+                id=v.get("id", ""),
+                title=v.get("title", ""),
+                description=v.get("description", ""),
+                severity=v.get("severity", "medium"),
+                confidence=50,
+                file_path=v.get("file_path", ""),
+                line_number=0,
+                code_snippet="",
+                rule_id=v.get("rule_id", ""),
+            )
+        )
     return mapper.map_vulnerabilities(vulns)
 
 
 @router.post("/feedback", summary="提交误报反馈")
-async def add_feedback(vuln_id: str, rule_id: str, file_path: str, line_number: int, is_false_positive: bool, reason: str = ""):
+async def add_feedback(
+    vuln_id: str, rule_id: str, file_path: str, line_number: int, is_false_positive: bool, reason: str = ""
+):
     entry = FeedbackEntry(
-        vuln_id=vuln_id, rule_id=rule_id, file_path=file_path,
-        line_number=line_number, is_false_positive=is_false_positive, reason=reason,
+        vuln_id=vuln_id,
+        rule_id=rule_id,
+        file_path=file_path,
+        line_number=line_number,
+        is_false_positive=is_false_positive,
+        reason=reason,
     )
     feedback_store.add_feedback(entry)
     return {"status": "ok", "vuln_id": vuln_id}
@@ -89,7 +111,12 @@ async def create_custom_rule(id: str, name: str, pattern: str, severity: str = "
 @router.get("/rules", summary="列出自定义规则")
 async def list_custom_rules(enabled_only: bool = False):
     rules = custom_rule_store.list_rules(enabled_only)
-    return {"rules": [{"id": r.id, "name": r.name, "pattern": r.pattern, "severity": r.severity, "enabled": r.enabled} for r in rules]}
+    return {
+        "rules": [
+            {"id": r.id, "name": r.name, "pattern": r.pattern, "severity": r.severity, "enabled": r.enabled}
+            for r in rules
+        ]
+    }
 
 
 @router.delete("/rules/{rule_id}", summary="删除自定义规则")
@@ -107,12 +134,15 @@ async def dashboard_stats():
 
 # ===== Webhook CRUD =====
 
-_webhooks: Dict[str, Dict] = {}
+_webhooks: dict[str, dict] = {}
 
 
 @router.post("/webhooks", summary="创建Webhook")
-async def create_webhook(url: str, events: List[str] = ["scan.completed"], secret: str = ""):
+async def create_webhook(url: str, events: list[str] = None, secret: str = ""):
     import uuid
+
+    if events is None:
+        events = ["scan.completed"]
     wid = uuid.uuid4().hex[:16]
     _webhooks[wid] = {"id": wid, "url": url, "events": events, "secret": secret, "enabled": True}
     logger.info(f"创建Webhook: {wid} -> {url}")
@@ -132,9 +162,9 @@ async def get_webhook(webhook_id: str):
 
 
 class WebhookUpdate(BaseModel):
-    url: Optional[str] = None
-    events: Optional[List[str]] = None
-    enabled: Optional[bool] = None
+    url: str | None = None
+    events: list[str] | None = None
+    enabled: bool | None = None
 
 
 @router.patch("/webhooks/{webhook_id}", summary="更新Webhook")
@@ -167,6 +197,7 @@ def _get_dispatcher():
     global _notification_dispatcher
     if _notification_dispatcher is None:
         from ...engine.ci.notifier import NotificationDispatcher
+
         _notification_dispatcher = NotificationDispatcher()
     return _notification_dispatcher
 
@@ -175,23 +206,26 @@ class FeishuConfigModel(BaseModel):
     webhook_url: str
     secret: str = ""
     mention_all: bool = False
-    events: List[str] = ["scan.completed", "gate.failed"]
+    events: list[str] = ["scan.completed", "gate.failed"]
 
 
 class DingTalkConfigModel(BaseModel):
     webhook_url: str
     secret: str = ""
     mention_all: bool = False
-    at_mobiles: List[str] = []
-    events: List[str] = ["scan.completed", "gate.failed"]
+    at_mobiles: list[str] = []
+    events: list[str] = ["scan.completed", "gate.failed"]
 
 
 @router.post("/notify/feishu", summary="添加飞书通知")
 async def add_feishu_notifier(body: FeishuConfigModel):
     from ...engine.ci.notifier import FeishuConfig
+
     config = FeishuConfig(
-        webhook_url=body.webhook_url, secret=body.secret,
-        mention_all=body.mention_all, events=body.events,
+        webhook_url=body.webhook_url,
+        secret=body.secret,
+        mention_all=body.mention_all,
+        events=body.events,
     )
     _get_dispatcher().add_feishu(config)
     return {"status": "ok", "type": "feishu"}
@@ -200,9 +234,12 @@ async def add_feishu_notifier(body: FeishuConfigModel):
 @router.post("/notify/dingtalk", summary="添加钉钉通知")
 async def add_dingtalk_notifier(body: DingTalkConfigModel):
     from ...engine.ci.notifier import DingTalkConfig
+
     config = DingTalkConfig(
-        webhook_url=body.webhook_url, secret=body.secret,
-        mention_all=body.mention_all, at_mobiles=body.at_mobiles,
+        webhook_url=body.webhook_url,
+        secret=body.secret,
+        mention_all=body.mention_all,
+        at_mobiles=body.at_mobiles,
         events=body.events,
     )
     _get_dispatcher().add_dingtalk(config)
@@ -226,17 +263,23 @@ async def send_notification(body: NotifyRequest):
     if not dispatcher.feishu_notifiers and not dispatcher.dingtalk_notifiers:
         raise HTTPException(status_code=400, detail="未配置任何通知渠道")
     results = dispatcher.notify(
-        body.event, body.scan_id, body.total,
-        body.critical, body.high, body.medium, body.low, body.gate_passed,
+        body.event,
+        body.scan_id,
+        body.total,
+        body.critical,
+        body.high,
+        body.medium,
+        body.low,
+        body.gate_passed,
     )
     return {"results": results}
 
 
 # ===== Jira Integration =====
 
-from ...engine.ci.jira import JiraConfig, JiraClient, JiraIssue
+from ...engine.ci.jira import JiraClient, JiraConfig  # noqa: E402
 
-_jira_client: Optional[JiraClient] = None
+_jira_client: JiraClient | None = None
 
 
 class JiraConfigModel(BaseModel):
@@ -245,19 +288,22 @@ class JiraConfigModel(BaseModel):
     api_token: str
     project_key: str
     issue_type: str = "Bug"
-    labels: List[str] = ["security"]
+    labels: list[str] = ["security"]
 
 
 class JiraIssueCreate(BaseModel):
-    vuln_ids: List[str] = []
+    vuln_ids: list[str] = []
 
 
 @router.post("/jira/config", summary="配置Jira连接")
 async def configure_jira(body: JiraConfigModel):
     global _jira_client
     config = JiraConfig(
-        base_url=body.base_url, email=body.email, api_token=body.api_token,
-        project_key=body.project_key, issue_type=body.issue_type,
+        base_url=body.base_url,
+        email=body.email,
+        api_token=body.api_token,
+        project_key=body.project_key,
+        issue_type=body.issue_type,
         labels=body.labels,
     )
     _jira_client = JiraClient(config)
@@ -271,8 +317,9 @@ async def sync_to_jira(body: JiraIssueCreate):
     if _jira_client is None:
         raise HTTPException(status_code=400, detail="未配置Jira连接，请先调用 /jira/config")
     from ...db import get_session
-    from ...db.models import VulnerabilityORM
     from ...db.convert import orm_to_vuln
+    from ...db.models import VulnerabilityORM
+
     db = next(get_session())
     try:
         vulns = []
@@ -282,9 +329,7 @@ async def sync_to_jira(body: JiraIssueCreate):
                 if o:
                     vulns.append(orm_to_vuln(o))
         else:
-            for o in db.query(VulnerabilityORM).filter(
-                VulnerabilityORM.status == "open"
-            ).limit(50).all():
+            for o in db.query(VulnerabilityORM).filter(VulnerabilityORM.status == "open").limit(50).all():
                 vulns.append(orm_to_vuln(o))
         if not vulns:
             return {"synced": 0, "issues": []}

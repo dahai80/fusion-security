@@ -4,9 +4,10 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,10 @@ class ScanTask:
     task_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     priority: TaskPriority = TaskPriority.NORMAL
     project_path: str = ""
-    config: Dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     status: str = TaskStatus.PENDING
-    result: Optional[Any] = None
-    error: Optional[str] = None
+    result: Any | None = None
+    error: str | None = None
     created_at: float = field(default_factory=time.time)
     started_at: float = 0.0
     completed_at: float = 0.0
@@ -48,7 +49,7 @@ class ScanTask:
 class TaskQueue:
     def __init__(self, maxsize: int = 1000, max_completed: int = 1000):
         self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=maxsize)
-        self._tasks: Dict[str, ScanTask] = {}
+        self._tasks: dict[str, ScanTask] = {}
         self._lock = asyncio.Lock()
         self._max_completed = max_completed
 
@@ -59,11 +60,11 @@ class TaskQueue:
         logger.info(f"[TaskQueue] 入队: {task.task_id} priority={task.priority.name} path={task.project_path}")
         return task.task_id
 
-    async def dequeue(self, timeout: float = 30.0) -> Optional[ScanTask]:
+    async def dequeue(self, timeout: float = 30.0) -> ScanTask | None:
         try:
             task = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             return task
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
     async def update_status(self, task_id: str, status: str, **kwargs) -> None:
@@ -76,11 +77,11 @@ class TaskQueue:
         if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
             await self._cleanup_completed()
 
-    async def get_task(self, task_id: str) -> Optional[ScanTask]:
+    async def get_task(self, task_id: str) -> ScanTask | None:
         async with self._lock:
             return self._tasks.get(task_id)
 
-    async def list_tasks(self, status: Optional[str] = None) -> List[ScanTask]:
+    async def list_tasks(self, status: str | None = None) -> list[ScanTask]:
         async with self._lock:
             tasks = list(self._tasks.values())
         if status:
@@ -106,25 +107,25 @@ class TaskQueue:
     async def _cleanup_completed(self) -> None:
         async with self._lock:
             completed = [
-                tid for tid, t in self._tasks.items()
+                tid
+                for tid, t in self._tasks.items()
                 if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
             ]
             if len(completed) > self._max_completed:
-                remove = completed[:len(completed) - self._max_completed]
+                remove = completed[: len(completed) - self._max_completed]
                 for tid in remove:
                     del self._tasks[tid]
                 logger.debug(f"[TaskQueue] 清理 {len(remove)} 个已完成任务")
 
 
 class WorkerPool:
-    def __init__(self, queue: TaskQueue, workers: int = 4,
-                 executor: Optional[Callable[[ScanTask], Coroutine]] = None):
+    def __init__(self, queue: TaskQueue, workers: int = 4, executor: Callable[[ScanTask], Coroutine] | None = None):
         self._queue = queue
         self._workers = workers
         self._executor = executor
         self._running = False
-        self._tasks: List[asyncio.Task] = []
-        self._active: Dict[str, asyncio.Task] = {}
+        self._tasks: list[asyncio.Task] = []
+        self._active: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         if self._running:
@@ -162,15 +163,19 @@ class WorkerPool:
                     task.status = TaskStatus.COMPLETED
                     task.completed_at = time.time()
                     await self._queue.update_status(
-                        task.task_id, TaskStatus.COMPLETED,
-                        result=result, completed_at=task.completed_at,
+                        task.task_id,
+                        TaskStatus.COMPLETED,
+                        result=result,
+                        completed_at=task.completed_at,
                     )
                     logger.info(f"[Worker-{worker_id}] 完成: {task.task_id}")
                 else:
                     task.status = TaskStatus.FAILED
                     task.error = "No executor configured"
                     await self._queue.update_status(
-                        task.task_id, TaskStatus.FAILED, error=task.error,
+                        task.task_id,
+                        TaskStatus.FAILED,
+                        error=task.error,
                     )
             except asyncio.CancelledError:
                 task.status = TaskStatus.CANCELLED
@@ -181,8 +186,10 @@ class WorkerPool:
                 task.error = str(e)
                 task.completed_at = time.time()
                 await self._queue.update_status(
-                    task.task_id, TaskStatus.FAILED,
-                    error=str(e), completed_at=task.completed_at,
+                    task.task_id,
+                    TaskStatus.FAILED,
+                    error=str(e),
+                    completed_at=task.completed_at,
                 )
                 logger.error(f"[Worker-{worker_id}] 任务失败: {task.task_id} error={e}")
             finally:

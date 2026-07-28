@@ -1,7 +1,5 @@
 import time
 
-import pytest
-
 from fusion_security.engine.resume import (
     CheckpointManager,
     CircuitBreaker,

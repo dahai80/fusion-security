@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
-import base64
 import json
 import logging
 import time
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-from urllib.request import Request, urlopen
+from typing import Any
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class FeishuConfig:
     webhook_url: str = ""
     secret: str = ""
     mention_all: bool = False
-    events: List[str] = field(default_factory=lambda: ["scan.completed", "gate.failed"])
+    events: list[str] = field(default_factory=lambda: ["scan.completed", "gate.failed"])
 
 
 @dataclass
@@ -28,11 +28,11 @@ class DingTalkConfig:
     webhook_url: str = ""
     secret: str = ""
     mention_all: bool = False
-    at_mobiles: List[str] = field(default_factory=list)
-    events: List[str] = field(default_factory=lambda: ["scan.completed", "gate.failed"])
+    at_mobiles: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=lambda: ["scan.completed", "gate.failed"])
 
 
-def _urllib_post(url: str, data: bytes, headers: Dict[str, str], timeout: int = 10) -> bool:
+def _urllib_post(url: str, data: bytes, headers: dict[str, str], timeout: int = 10) -> bool:
     try:
         req = Request(url, data=data, headers=headers, method="POST")
         with urlopen(req, timeout=timeout) as resp:
@@ -68,9 +68,17 @@ class FeishuNotifier:
         sep = "&" if "?" in self.config.webhook_url else "?"
         return f"{self.config.webhook_url}{sep}timestamp={ts}&sign={sign}"
 
-    def send(self, event: str, scan_id: str, total: int,
-             critical: int, high: int, medium: int, low: int,
-             gate_passed: bool = True) -> bool:
+    def send(
+        self,
+        event: str,
+        scan_id: str,
+        total: int,
+        critical: int,
+        high: int,
+        medium: int,
+        low: int,
+        gate_passed: bool = True,
+    ) -> bool:
         if event not in self.config.events:
             return True
 
@@ -83,15 +91,15 @@ class FeishuNotifier:
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"**扫描ID:** {scan_id}\n**安全门禁:** {status_text}\n**漏洞总数:** {total}"
-                }
+                    "content": f"**扫描ID:** {scan_id}\n**安全门禁:** {status_text}\n**漏洞总数:** {total}",
+                },
             },
             {
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"🔴 Critical: **{critical}**  🟠 High: **{high}**  🟡 Medium: **{medium}**  🟢 Low: **{low}**"
-                }
+                    "content": f"🔴 Critical: **{critical}**  🟠 High: **{high}**  🟡 Medium: **{medium}**  🟢 Low: **{low}**",
+                },
             },
         ]
         if mention:
@@ -131,15 +139,23 @@ class DingTalkNotifier:
         sep = "&" if "?" in self.config.webhook_url else "?"
         return f"{self.config.webhook_url}{sep}timestamp={ts}&sign={sign}"
 
-    def send(self, event: str, scan_id: str, total: int,
-             critical: int, high: int, medium: int, low: int,
-             gate_passed: bool = True) -> bool:
+    def send(
+        self,
+        event: str,
+        scan_id: str,
+        total: int,
+        critical: int,
+        high: int,
+        medium: int,
+        low: int,
+        gate_passed: bool = True,
+    ) -> bool:
         if event not in self.config.events:
             return True
 
         status_text = "通过 ✅" if gate_passed else "未通过 ❌"
 
-        at_dict: Dict[str, Any] = {"isAtAll": self.config.mention_all}
+        at_dict: dict[str, Any] = {"isAtAll": self.config.mention_all}
         if self.config.at_mobiles:
             at_dict["atMobiles"] = self.config.at_mobiles
 
@@ -167,8 +183,8 @@ class DingTalkNotifier:
 
 class NotificationDispatcher:
     def __init__(self):
-        self.feishu_notifiers: List[FeishuNotifier] = []
-        self.dingtalk_notifiers: List[DingTalkNotifier] = []
+        self.feishu_notifiers: list[FeishuNotifier] = []
+        self.dingtalk_notifiers: list[DingTalkNotifier] = []
 
     def add_feishu(self, config: FeishuConfig) -> None:
         self.feishu_notifiers.append(FeishuNotifier(config))
@@ -178,10 +194,18 @@ class NotificationDispatcher:
         self.dingtalk_notifiers.append(DingTalkNotifier(config))
         logger.info(f"[Notifier] 添加钉钉通知: {config.webhook_url[:40]}")
 
-    def notify(self, event: str, scan_id: str, total: int,
-               critical: int, high: int, medium: int, low: int,
-               gate_passed: bool = True) -> Dict[str, List[bool]]:
-        results: Dict[str, List[bool]] = {}
+    def notify(
+        self,
+        event: str,
+        scan_id: str,
+        total: int,
+        critical: int,
+        high: int,
+        medium: int,
+        low: int,
+        gate_passed: bool = True,
+    ) -> dict[str, list[bool]]:
+        results: dict[str, list[bool]] = {}
         for n in self.feishu_notifiers:
             ok = n.send(event, scan_id, total, critical, high, medium, low, gate_passed)
             results.setdefault("feishu", []).append(ok)

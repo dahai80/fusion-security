@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
 import logging
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from ...models.vulnerability import Vulnerability
 from ...models.patch import Patch
+from ...models.vulnerability import Vulnerability
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ class FixGenerator:
         p.strategy = "template"
         return p
 
-    def generate_alternatives(self, vuln: Vulnerability, max_strategies: int = 3) -> List[Patch]:
+    def generate_alternatives(self, vuln: Vulnerability, max_strategies: int = 3) -> list[Patch]:
         original = self._extract_context(vuln)
         strategies = self._get_all_strategies(vuln, original)
         patches = []
@@ -55,7 +54,7 @@ class FixGenerator:
         logger.info(f"生成 {len(patches)} 个修复方案: vuln={vuln.id}")
         return patches
 
-    def _get_all_strategies(self, vuln: Vulnerability, code: str) -> List[tuple]:
+    def _get_all_strategies(self, vuln: Vulnerability, code: str) -> list[tuple]:
         strategies = []
         template = self._apply_template_fix(vuln, code)
         if template and template != code:
@@ -70,18 +69,32 @@ class FixGenerator:
 
     def _apply_safe_api_fix(self, vuln: Vulnerability, code: str) -> str:
         safe_fixes = {
-            "SQL001": code.replace("execute(", "execute_query(") + "\n# 使用参数化查询代替字符串拼接" if "execute(" in code else "",
-            "CMD001": code.replace("os.system(", "subprocess.run(shlex.split(") + ", check=True)" if "os.system(" in code else "",
-            "XSS001": code.replace("innerHTML", "textContent") + "\n// 使用textContent避免XSS" if "innerHTML" in code else "",
+            "SQL001": code.replace("execute(", "execute_query(") + "\n# 使用参数化查询代替字符串拼接"
+            if "execute(" in code
+            else "",
+            "CMD001": code.replace("os.system(", "subprocess.run(shlex.split(") + ", check=True)"
+            if "os.system(" in code
+            else "",
+            "XSS001": code.replace("innerHTML", "textContent") + "\n// 使用textContent避免XSS"
+            if "innerHTML" in code
+            else "",
             "EVAL001": code.replace("eval(", "ast.literal_eval(") if "eval(" in code else "",
         }
         return safe_fixes.get(vuln.rule_id, "")
 
     def _apply_validation_fix(self, vuln: Vulnerability, code: str) -> str:
         validation_fixes = {
-            "SQL001": "if not re.match(r'^[a-zA-Z0-9_]+$', user_input):\n    raise ValueError('Invalid input')\n" + code if "execute(" in code else "",
-            "CMD001": "if not re.match(r'^[a-zA-Z0-9_\\-]+$', cmd_arg):\n    raise ValueError('Invalid command argument')\n" + code if "os.system(" in code else "",
-            "SSRF001": "if not url.startswith(('https://api.', 'https://trusted.')):\n    raise ValueError('URL not allowed')\n" + code if "requests.get" in code else "",
+            "SQL001": "if not re.match(r'^[a-zA-Z0-9_]+$', user_input):\n    raise ValueError('Invalid input')\n" + code
+            if "execute(" in code
+            else "",
+            "CMD001": "if not re.match(r'^[a-zA-Z0-9_\\-]+$', cmd_arg):\n    raise ValueError('Invalid command argument')\n"
+            + code
+            if "os.system(" in code
+            else "",
+            "SSRF001": "if not url.startswith(('https://api.', 'https://trusted.')):\n    raise ValueError('URL not allowed')\n"
+            + code
+            if "requests.get" in code
+            else "",
         }
         return validation_fixes.get(vuln.rule_id, "")
 
@@ -118,6 +131,7 @@ class FixGenerator:
         if self.ai_analyzer:
             try:
                 from ...models.vulnerability import Vulnerability
+
                 dummy_vuln = Vulnerability(
                     id=patch.vuln_id,
                     title="",

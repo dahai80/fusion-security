@@ -1,19 +1,18 @@
 """Fusion-Security Phase1 tests — AST parser, taint tracker, DB, API, models."""
 
-import pytest
 from pathlib import Path
-from fusion_security.engine.rules.ast_parser import ASTParser, ASTResult
-from fusion_security.engine.rules.taint_tracker import TaintTracker, TaintResult
-from fusion_security.engine.ai.adversarial import AdversarialVerifier
-from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
-from fusion_security.db import init_db, get_session, Base
-from fusion_security.db.models import ProjectORM, ScanORM, VulnerabilityORM
-from fusion_security.db.convert import vuln_to_orm, orm_to_vuln, project_to_orm, orm_to_project
-from fusion_security.models.vulnerability import Vulnerability
-from fusion_security.models.project import Project, Scan
-from fusion_security.models.patch import Patch
-from fusion_security.models.rule import Rule, RuleSet
+
 from fusion_security.api.app import app
+from fusion_security.db import get_session, init_db
+from fusion_security.db.convert import orm_to_project, orm_to_vuln, project_to_orm, vuln_to_orm
+from fusion_security.db.models import ProjectORM, VulnerabilityORM
+from fusion_security.engine.rules.ast_parser import ASTParser
+from fusion_security.engine.rules.taint_tracker import TaintTracker
+from fusion_security.engine.scanner import ScanResult, ScanTarget
+from fusion_security.models.patch import Patch
+from fusion_security.models.project import Project, Scan
+from fusion_security.models.rule import Rule
+from fusion_security.models.vulnerability import Vulnerability
 
 
 class TestASTParser:
@@ -121,9 +120,13 @@ class TestDatabase:
         session = get_session()
 
         v = VulnerabilityORM(
-            id="V001", title="SQL注入", description="test",
-            severity="critical", confidence=90,
-            file_path="test.py", line_number=10,
+            id="V001",
+            title="SQL注入",
+            description="test",
+            severity="critical",
+            confidence=90,
+            file_path="test.py",
+            line_number=10,
             code_snippet="execute(sql)",
         )
         session.add(v)
@@ -138,12 +141,20 @@ class TestDatabase:
 class TestConverters:
     def test_vuln_roundtrip(self):
         v = Vulnerability(
-            id="V001", title="Test", description="test desc",
-            severity="high", confidence=80,
-            file_path="a.py", line_number=5,
-            code_snippet="code", rule_id="SQL001",
-            cwe_id="CWE-89", fix_suggestion="fix it",
-            verified=True, status="open", data_flow_path="a->b",
+            id="V001",
+            title="Test",
+            description="test desc",
+            severity="high",
+            confidence=80,
+            file_path="a.py",
+            line_number=5,
+            code_snippet="code",
+            rule_id="SQL001",
+            cwe_id="CWE-89",
+            fix_suggestion="fix it",
+            verified=True,
+            status="open",
+            data_flow_path="a->b",
         )
         orm = vuln_to_orm(v)
         assert orm.id == "V001"
@@ -163,9 +174,15 @@ class TestConverters:
 class TestModels:
     def test_vulnerability_with_status(self):
         v = Vulnerability(
-            id="V1", title="T", description="D", severity="high",
-            confidence=80, file_path="f.py", line_number=1,
-            code_snippet="c", status="false_positive",
+            id="V1",
+            title="T",
+            description="D",
+            severity="high",
+            confidence=80,
+            file_path="f.py",
+            line_number=1,
+            code_snippet="c",
+            status="false_positive",
         )
         assert v.status == "false_positive"
 
@@ -206,6 +223,7 @@ class TestFastAPIApp:
 
     def test_health_endpoint(self):
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
         resp = client.get("/api/v1/system/health")
         assert resp.status_code == 200
@@ -213,6 +231,7 @@ class TestFastAPIApp:
 
     def test_info_endpoint(self):
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
         resp = client.get("/api/v1/system/info")
         assert resp.status_code == 200
@@ -221,6 +240,7 @@ class TestFastAPIApp:
 
     def test_rules_endpoint(self):
         from fastapi.testclient import TestClient
+
         client = TestClient(app)
         resp = client.get("/api/v1/system/rules")
         assert resp.status_code == 200

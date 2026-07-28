@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class AuditEntry:
     tenant_id: str = ""
     resource_type: str = ""
     resource_id: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
     ip_address: str = ""
 
@@ -27,11 +27,16 @@ class AuditEntry:
         if not self.timestamp:
             self.timestamp = time.time()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "action": self.action, "actor": self.actor, "tenant_id": self.tenant_id,
-            "resource_type": self.resource_type, "resource_id": self.resource_id,
-            "details": self.details, "timestamp": self.timestamp, "ip_address": self.ip_address,
+            "action": self.action,
+            "actor": self.actor,
+            "tenant_id": self.tenant_id,
+            "resource_type": self.resource_type,
+            "resource_id": self.resource_id,
+            "details": self.details,
+            "timestamp": self.timestamp,
+            "ip_address": self.ip_address,
         }
 
 
@@ -40,13 +45,25 @@ class AuditLogger:
         self.log_dir = log_dir or str(Path.home() / ".fusion_security" / "audit")
         self.tenant_id = tenant_id
         self.max_entries = max_entries
-        self.entries: List[AuditEntry] = []
+        self.entries: list[AuditEntry] = []
 
-    def log(self, action: str, actor: str = "", resource_type: str = "", resource_id: str = "", details: Optional[Dict[str, Any]] = None, ip_address: str = "") -> AuditEntry:
+    def log(
+        self,
+        action: str,
+        actor: str = "",
+        resource_type: str = "",
+        resource_id: str = "",
+        details: dict[str, Any] | None = None,
+        ip_address: str = "",
+    ) -> AuditEntry:
         entry = AuditEntry(
-            action=action, actor=actor, tenant_id=self.tenant_id,
-            resource_type=resource_type, resource_id=resource_id,
-            details=details or {}, ip_address=ip_address,
+            action=action,
+            actor=actor,
+            tenant_id=self.tenant_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details or {},
+            ip_address=ip_address,
         )
         self.entries.append(entry)
         if len(self.entries) > self.max_entries:
@@ -57,7 +74,7 @@ class AuditLogger:
         logger.info(f"[Audit] {action} actor={actor} resource={resource_type}/{resource_id}")
         return entry
 
-    def query(self, action: str = "", actor: str = "", resource_type: str = "", limit: int = 100) -> List[AuditEntry]:
+    def query(self, action: str = "", actor: str = "", resource_type: str = "", limit: int = 100) -> list[AuditEntry]:
         results = self.entries
         if action:
             results = [e for e in results if e.action == action]

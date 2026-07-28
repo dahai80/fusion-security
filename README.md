@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/tests-672%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-690%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -151,7 +151,7 @@ cd frontend && npm install && npm run dev
 | **Feedback Loop** | False-positive learning and suppression |
 | **Fix Generator** | Template + AI-enhanced patch generation with verification |
 | **Jira Integration** | Create Jira issues from vulnerabilities (REST API v2, basic auth) |
-| **Scan Cache** | LRU cache with TTL for incremental scan speedup |
+| **Scan Cache** | LRU cache with TTL + project-level persistent cache (file hash → results) |
 | **HTML Report** | Jinja2 template engine with XSS auto-escaping |
 | **Compliance Mapper** | 等保2.0 / ISO 27001 / PCI DSS mapping |
 | **SARIF Export** | SARIF 2.1.0 format for IDE/CI integration |
@@ -313,6 +313,7 @@ fusion-security serve --host 0.0.0.0 --port 8080
 | GET | `/api/v1/projects/{id}` | Get project details |
 | PUT | `/api/v1/projects/{id}` | Update project |
 | DELETE | `/api/v1/projects/{id}` | Delete project |
+| GET | `/api/v1/projects/{id}/scan-summary` | Project scan summary (scans, vulns, cache stats) |
 | **Scans** | | |
 | POST | `/api/v1/scans` | Start scan (async background) |
 | GET | `/api/v1/scans` | List scans (filter by project/status) |
@@ -485,7 +486,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 ```
 
-672 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 91% coverage.
+690 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 91% coverage.
 
 ---
 
@@ -535,7 +536,7 @@ MIT License. See [LICENSE](LICENSE) for details.
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/测试-672%20通过-brightgreen" alt="测试">
+  <img src="https://img.shields.io/badge/测试-690%20通过-brightgreen" alt="测试">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -783,7 +784,7 @@ fusion-security serve
 ```bash
 pip install -e ".[test]"
 pytest tests/ -v
-# 672 tests, 91% coverage
+# 690 tests, 91% coverage
 ```
 
 ### 安全合规

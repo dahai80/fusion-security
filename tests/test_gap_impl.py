@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
-import time
-import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from fusion_security.engine.rules.engine import RuleEngine, ScanRule, AI_SEMANTIC_RULES, AISemanticRule
-from fusion_security.engine.sca.scanner import SCAScanner, Dependency, DEPRECATED_PACKAGES, LICENSE_RISKS
-from fusion_security.engine.ci.jira import JiraClient, JiraConfig, JiraIssue, SEVERITY_JIRA_PRIORITY
-from fusion_security.engine.scanner import ScanTarget, ScanResult, Scanner
+from fusion_security.engine.ci.jira import SEVERITY_JIRA_PRIORITY, JiraClient, JiraConfig, JiraIssue
+from fusion_security.engine.rules.engine import AI_SEMANTIC_RULES, RuleEngine
+from fusion_security.engine.sca.scanner import Dependency, SCAScanner
+from fusion_security.engine.scanner import ScanTarget
 from fusion_security.models.vulnerability import Vulnerability
 
 
@@ -220,10 +217,17 @@ class TestJiraClient:
         )
         jira = JiraClient(config)
         vuln = Vulnerability(
-            id="test-vuln-1", title="SQL注入", description="检测到SQL注入",
-            severity="critical", confidence=90, file_path="app.py",
-            line_number=10, code_snippet="execute(sql)", rule_id="SQL001",
-            cwe_id="CWE-89", fix_suggestion="使用参数化查询",
+            id="test-vuln-1",
+            title="SQL注入",
+            description="检测到SQL注入",
+            severity="critical",
+            confidence=90,
+            file_path="app.py",
+            line_number=10,
+            code_snippet="execute(sql)",
+            rule_id="SQL001",
+            cwe_id="CWE-89",
+            fix_suggestion="使用参数化查询",
         )
         mock_resp = MagicMock()
         mock_resp.status_code = 201
@@ -246,9 +250,15 @@ class TestJiraClient:
         )
         jira = JiraClient(config)
         vuln = Vulnerability(
-            id="test-vuln-2", title="XSS", description="XSS漏洞",
-            severity="high", confidence=85, file_path="view.html",
-            line_number=5, code_snippet="innerHTML=", rule_id="XSS001",
+            id="test-vuln-2",
+            title="XSS",
+            description="XSS漏洞",
+            severity="high",
+            confidence=85,
+            file_path="view.html",
+            line_number=5,
+            code_snippet="innerHTML=",
+            rule_id="XSS001",
             cwe_id="CWE-79",
         )
         mock_resp = MagicMock()
@@ -269,11 +279,26 @@ class TestJiraClient:
         )
         client = JiraClient(config)
         vulns = [
-            Vulnerability(id="v1", title="V1", description="d1", severity="high",
-                         confidence=80, file_path="a.py", line_number=1,
-                         code_snippet="code", rule_id="R001", cwe_id="CWE-1"),
+            Vulnerability(
+                id="v1",
+                title="V1",
+                description="d1",
+                severity="high",
+                confidence=80,
+                file_path="a.py",
+                line_number=1,
+                code_snippet="code",
+                rule_id="R001",
+                cwe_id="CWE-1",
+            ),
         ]
-        with patch.object(client, 'create_issue', return_value=JiraIssue(key="SEC-1", summary="V1", status="Open", url="https://jira.example.com/browse/SEC-1")):
+        with patch.object(
+            client,
+            "create_issue",
+            return_value=JiraIssue(
+                key="SEC-1", summary="V1", status="Open", url="https://jira.example.com/browse/SEC-1"
+            ),
+        ):
             issues = client.create_issues_batch(vulns)
             assert len(issues) == 1
 
@@ -307,10 +332,17 @@ class TestJiraClient:
         )
         client = JiraClient(config)
         vuln = Vulnerability(
-            id="v1", title="Test Vuln", description="Description text",
-            severity="high", confidence=80, file_path="app.py",
-            line_number=10, code_snippet="code snippet here",
-            rule_id="R001", cwe_id="CWE-89", fix_suggestion="Fix it",
+            id="v1",
+            title="Test Vuln",
+            description="Description text",
+            severity="high",
+            confidence=80,
+            file_path="app.py",
+            line_number=10,
+            code_snippet="code snippet here",
+            rule_id="R001",
+            cwe_id="CWE-89",
+            fix_suggestion="Fix it",
         )
         desc = client._build_description(vuln)
         assert "Test Vuln" in desc
@@ -352,11 +384,16 @@ def _make_mock_db():
 
 
 def _make_project_orm(**overrides):
-    defaults = dict(
-        id="proj-update-1", name="OldName", repo_url="",
-        tech_stack="", default_branch="main", ruleset_id="",
-        local_path="", status="active",
-    )
+    defaults = {
+        "id": "proj-update-1",
+        "name": "OldName",
+        "repo_url": "",
+        "tech_stack": "",
+        "default_branch": "main",
+        "ruleset_id": "",
+        "local_path": "",
+        "status": "active",
+    }
     defaults.update(overrides)
     orm = MagicMock()
     for k, v in defaults.items():
@@ -365,13 +402,22 @@ def _make_project_orm(**overrides):
 
 
 def _make_vuln_orm(**overrides):
-    defaults = dict(
-        id="vuln-status-1", title="Test", description="d",
-        severity="high", confidence=80.0, file_path="a.py",
-        line_number=1, code_snippet="c", rule_id="R1",
-        cwe_id="CWE-1", fix_suggestion="", verified=False, status="open",
-        data_flow_path="",
-    )
+    defaults = {
+        "id": "vuln-status-1",
+        "title": "Test",
+        "description": "d",
+        "severity": "high",
+        "confidence": 80.0,
+        "file_path": "a.py",
+        "line_number": 1,
+        "code_snippet": "c",
+        "rule_id": "R1",
+        "cwe_id": "CWE-1",
+        "fix_suggestion": "",
+        "verified": False,
+        "status": "open",
+        "data_flow_path": "",
+    }
     defaults.update(overrides)
     orm = MagicMock()
     for k, v in defaults.items():
@@ -380,12 +426,18 @@ def _make_vuln_orm(**overrides):
 
 
 def _make_patch_orm(**overrides):
-    defaults = dict(
-        id="patch-verify-1", vuln_id="v1", scan_id="s1",
-        diff_content="", original_code="", patched_code="",
-        description="test", status="generated", strategy="template",
-        verified=False,
-    )
+    defaults = {
+        "id": "patch-verify-1",
+        "vuln_id": "v1",
+        "scan_id": "s1",
+        "diff_content": "",
+        "original_code": "",
+        "patched_code": "",
+        "description": "test",
+        "status": "generated",
+        "strategy": "template",
+        "verified": False,
+    }
     defaults.update(overrides)
     orm = MagicMock()
     for k, v in defaults.items():
@@ -398,6 +450,7 @@ class TestNewAPIEndpoints:
     def setup(self):
         from fusion_security.api.app import create_app
         from fusion_security.db import get_session
+
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
@@ -512,35 +565,42 @@ class TestJiraAPIEndpoints:
     def setup(self):
         from fusion_security.api.app import create_app
         from fusion_security.db import get_session
+
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
         self.client = TestClient(self.app)
 
     def test_jira_config(self):
-        resp = self.client.post("/api/v1/integrations/jira/config", json={
-            "base_url": "https://jira.example.com",
-            "email": "test@example.com",
-            "api_token": "token123",
-            "project_key": "SEC",
-        })
+        resp = self.client.post(
+            "/api/v1/integrations/jira/config",
+            json={
+                "base_url": "https://jira.example.com",
+                "email": "test@example.com",
+                "api_token": "token123",
+                "project_key": "SEC",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["project_key"] == "SEC"
 
     def test_jira_sync_no_config(self):
         import fusion_security.api.routes.integrations as integ
+
         integ._jira_client = None
         resp = self.client.post("/api/v1/integrations/jira/sync", json={"vuln_ids": []})
         assert resp.status_code == 400
 
     def test_jira_get_issue_no_config(self):
         import fusion_security.api.routes.integrations as integ
+
         integ._jira_client = None
         resp = self.client.get("/api/v1/integrations/jira/issue/SEC-1")
         assert resp.status_code == 400
 
     def test_jira_get_issue_with_config(self):
         import fusion_security.api.routes.integrations as integ
+
         mock_client = MagicMock()
         mock_client.get_issue.return_value = JiraIssue(
             key="SEC-1", summary="Test", status="Open", url="https://jira.example.com/browse/SEC-1"
@@ -555,6 +615,7 @@ class TestJiraAPIEndpoints:
 
     def test_jira_get_issue_not_found(self):
         import fusion_security.api.routes.integrations as integ
+
         mock_client = MagicMock()
         mock_client.get_issue.return_value = None
         integ._jira_client = mock_client

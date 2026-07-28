@@ -4,34 +4,36 @@ from __future__ import annotations
 
 import json
 import tempfile
-import time
 from pathlib import Path
-from typing import Any, Dict
 
-import pytest
-
-from fusion_security.engine.ci.gate import SecurityGate, GatePolicy, GateResult, POLICY_THRESHOLDS
-from fusion_security.engine.ci.webhook import WebhookNotifier, WebhookConfig
-from fusion_security.engine.scoring.cvss import CVSS31Scorer, CVSSResult
-from fusion_security.engine.scoring.compliance import ComplianceMapper, ComplianceMapping, COMPLIANCE_MAP
-from fusion_security.engine.feedback.loop import FeedbackStore, FeedbackEntry
-from fusion_security.api.auth import AuthManager, APIKey, ROLES
-from fusion_security.engine.tenant.manager import TenantManager, Tenant
-from fusion_security.engine.tenant.audit import AuditLogger, AuditEntry
+from fusion_security.api.auth import AuthManager
+from fusion_security.engine.ci.gate import GatePolicy, GateResult, SecurityGate
+from fusion_security.engine.ci.webhook import WebhookConfig, WebhookNotifier
+from fusion_security.engine.dashboard import DashboardAggregator
+from fusion_security.engine.feedback.loop import FeedbackEntry, FeedbackStore
+from fusion_security.engine.fix.patch_verify import PatchVerifier
 from fusion_security.engine.rules.custom import CustomRule, CustomRuleStore
-from fusion_security.engine.dashboard import DashboardAggregator, DashboardStats
 from fusion_security.engine.scheduler import ScanScheduler, ScheduledScan, ScheduleFrequency
-from fusion_security.engine.fix.patch_verify import PatchVerifier, PatchVerifyResult
-from fusion_security.report.sarif import vulnerabilities_to_sarif, _severity_to_level
-from fusion_security.models.vulnerability import Vulnerability
+from fusion_security.engine.scoring.compliance import ComplianceMapper
+from fusion_security.engine.scoring.cvss import CVSS31Scorer
+from fusion_security.engine.tenant.audit import AuditLogger
+from fusion_security.engine.tenant.manager import TenantManager
 from fusion_security.models.patch import Patch
+from fusion_security.models.vulnerability import Vulnerability
+from fusion_security.report.sarif import _severity_to_level, vulnerabilities_to_sarif
 
 
 def _make_vuln(severity: str = "high", rule_id: str = "SQL001") -> Vulnerability:
     return Vulnerability(
-        id="V-TEST", title="Test Vuln", description="test",
-        severity=severity, confidence=90, file_path="test.py",
-        line_number=1, code_snippet="test", rule_id=rule_id,
+        id="V-TEST",
+        title="Test Vuln",
+        description="test",
+        severity=severity,
+        confidence=90,
+        file_path="test.py",
+        line_number=1,
+        code_snippet="test",
+        rule_id=rule_id,
     )
 
 
@@ -158,7 +160,9 @@ class TestFeedback:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = str(Path(tmpdir) / "feedback.json")
             store = FeedbackStore(path)
-            store.add_feedback(FeedbackEntry(vuln_id="V1", rule_id="SQL001", file_path="a.py", line_number=1, is_false_positive=True))
+            store.add_feedback(
+                FeedbackEntry(vuln_id="V1", rule_id="SQL001", file_path="a.py", line_number=1, is_false_positive=True)
+            )
             store2 = FeedbackStore(path)
             assert store2.is_false_positive("SQL001", "a.py", 1)
 
@@ -320,13 +324,16 @@ class TestDashboard:
 
     def test_record_scan(self):
         agg = DashboardAggregator()
-        agg.record_scan({
-            "scan_id": "s1", "duration_ms": 100,
-            "vulnerabilities": [
-                {"severity": "high", "rule_id": "SQL001", "file_path": "a.py"},
-                {"severity": "medium", "rule_id": "XSS001", "file_path": "b.py"},
-            ],
-        })
+        agg.record_scan(
+            {
+                "scan_id": "s1",
+                "duration_ms": 100,
+                "vulnerabilities": [
+                    {"severity": "high", "rule_id": "SQL001", "file_path": "a.py"},
+                    {"severity": "medium", "rule_id": "XSS001", "file_path": "b.py"},
+                ],
+            }
+        )
         stats = agg.get_stats()
         assert stats.total_scans == 1
         assert stats.total_vulnerabilities == 2
@@ -414,6 +421,7 @@ class TestSARIF:
     def test_sarif_save(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from fusion_security.report.sarif import save_sarif
+
             vulns = [_make_vuln("high", "SQL001")]
             path = save_sarif(vulns, str(Path(tmpdir) / "test.sarif"))
             assert Path(path).exists()

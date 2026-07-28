@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Float, Boolean, Text, DateTime, ForeignKey, JSON, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .session import Base
@@ -31,7 +31,7 @@ class ProjectORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
-    scans: Mapped[list["ScanORM"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    scans: Mapped[list[ScanORM]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class ScanORM(Base):
@@ -61,9 +61,9 @@ class ScanORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
-    project: Mapped["ProjectORM"] = relationship(back_populates="scans")
-    findings: Mapped[list["FindingORM"]] = relationship(back_populates="scan", cascade="all, delete-orphan")
-    patches: Mapped[list["PatchORM"]] = relationship(back_populates="scan", cascade="all, delete-orphan")
+    project: Mapped[ProjectORM] = relationship(back_populates="scans")
+    findings: Mapped[list[FindingORM]] = relationship(back_populates="scan", cascade="all, delete-orphan")
+    patches: Mapped[list[PatchORM]] = relationship(back_populates="scan", cascade="all, delete-orphan")
 
 
 class VulnerabilityORM(Base):
@@ -86,8 +86,8 @@ class VulnerabilityORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
-    findings: Mapped[list["FindingORM"]] = relationship(back_populates="vulnerability")
-    patches: Mapped[list["PatchORM"]] = relationship(back_populates="vulnerability")
+    findings: Mapped[list[FindingORM]] = relationship(back_populates="vulnerability")
+    patches: Mapped[list[PatchORM]] = relationship(back_populates="vulnerability")
 
 
 class FindingORM(Base):
@@ -106,8 +106,8 @@ class FindingORM(Base):
     data_flow_path: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
-    vulnerability: Mapped["VulnerabilityORM"] = relationship(back_populates="findings")
-    scan: Mapped["ScanORM"] = relationship(back_populates="findings")
+    vulnerability: Mapped[VulnerabilityORM] = relationship(back_populates="findings")
+    scan: Mapped[ScanORM] = relationship(back_populates="findings")
 
 
 class PatchORM(Base):
@@ -126,8 +126,21 @@ class PatchORM(Base):
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    vulnerability: Mapped["VulnerabilityORM"] = relationship(back_populates="patches")
-    scan: Mapped["ScanORM"] = relationship(back_populates="patches")
+    vulnerability: Mapped[VulnerabilityORM] = relationship(back_populates="patches")
+    scan: Mapped[ScanORM] = relationship(back_populates="patches")
+
+
+class ScanCacheORM(Base):
+    __tablename__ = "scan_cache"
+    __table_args__ = (Index("ix_cache_project_file", "project_id", "file_path"),)
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(16), nullable=False)
+    results_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
 class RuleORM(Base):

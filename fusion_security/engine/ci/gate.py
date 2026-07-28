@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 from ...models.vulnerability import Vulnerability
 
 logger = logging.getLogger(__name__)
 
 
-class GatePolicy(str, Enum):
+class GatePolicy(StrEnum):
     STRICT = "strict"
     STANDARD = "standard"
     PERMISSIVE = "permissive"
@@ -28,10 +28,10 @@ class GateResult:
     high_count: int = 0
     medium_count: int = 0
     low_count: int = 0
-    blocked_by: List[str] = field(default_factory=list)
-    details: Dict[str, Any] = field(default_factory=dict)
+    blocked_by: list[str] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
             "policy": self.policy.value,
@@ -58,12 +58,12 @@ POLICY_THRESHOLDS = {
 
 
 class SecurityGate:
-    def __init__(self, policy: GatePolicy = GatePolicy.STANDARD, custom_thresholds: Optional[Dict[str, int]] = None):
+    def __init__(self, policy: GatePolicy = GatePolicy.STANDARD, custom_thresholds: dict[str, int] | None = None):
         self.policy = policy
         self.thresholds = custom_thresholds or POLICY_THRESHOLDS[policy]
         logger.info(f"[Gate] 初始化 policy={policy.value} thresholds={self.thresholds}")
 
-    def evaluate(self, vulnerabilities: List[Vulnerability]) -> GateResult:
+    def evaluate(self, vulnerabilities: list[Vulnerability]) -> GateResult:
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for v in vulnerabilities:
             sev = v.severity if v.severity in counts else "low"
@@ -91,16 +91,25 @@ class SecurityGate:
 
         return result
 
-    def evaluate_from_pipeline(self, stage_results: Dict[str, Dict[str, Any]]) -> GateResult:
+    def evaluate_from_pipeline(self, stage_results: dict[str, dict[str, Any]]) -> GateResult:
         triage = stage_results.get("triage", {})
         vulns = []
         for sev in ("critical", "high", "medium", "low"):
             count = triage.get(sev, 0)
             for _ in range(count):
                 from ...models.vulnerability import Vulnerability as V
-                vulns.append(V(
-                    id="gate-v", title=f"gate-{sev}", description="",
-                    severity=sev, confidence=100, file_path="", line_number=0,
-                    code_snippet="", rule_id="GATE",
-                ))
+
+                vulns.append(
+                    V(
+                        id="gate-v",
+                        title=f"gate-{sev}",
+                        description="",
+                        severity=sev,
+                        confidence=100,
+                        file_path="",
+                        line_number=0,
+                        code_snippet="",
+                        rule_id="GATE",
+                    )
+                )
         return self.evaluate(vulns)

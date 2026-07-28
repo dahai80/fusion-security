@@ -3,39 +3,73 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from .ast_parser import ASTParser, ASTResult, FunctionDef, ImportStmt
+from .ast_parser import ASTParser, ASTResult
 
 logger = logging.getLogger(__name__)
 
 SOURCES = {
-    "request.args", "request.form", "request.data", "request.json",
-    "request.files", "request.headers", "request.cookies",
-    "request.query_params", "request.body",
-    "input(", "sys.stdin", "os.environ",
-    "req.params", "req.query", "req.body", "req.headers",
-    "params", "query", "HttpContext",
-    "r.FormValue", "r.URL.Query",
+    "request.args",
+    "request.form",
+    "request.data",
+    "request.json",
+    "request.files",
+    "request.headers",
+    "request.cookies",
+    "request.query_params",
+    "request.body",
+    "input(",
+    "sys.stdin",
+    "os.environ",
+    "req.params",
+    "req.query",
+    "req.body",
+    "req.headers",
+    "params",
+    "query",
+    "HttpContext",
+    "r.FormValue",
+    "r.URL.Query",
 }
 
 SINKS = {
-    "execute": "SQL注入", "exec": "命令注入", "query": "SQL注入",
-    "os.system": "命令注入", "subprocess.call": "命令注入",
-    "subprocess.Popen": "命令注入", "subprocess.run": "命令注入",
-    "eval": "代码注入", "innerHTML": "XSS", "document.write": "XSS",
-    "open": "路径穿越", "Path": "路径穿越",
-    "redirect": "开放重定向", "send_file": "路径穿越",
+    "execute": "SQL注入",
+    "exec": "命令注入",
+    "query": "SQL注入",
+    "os.system": "命令注入",
+    "subprocess.call": "命令注入",
+    "subprocess.Popen": "命令注入",
+    "subprocess.run": "命令注入",
+    "eval": "代码注入",
+    "innerHTML": "XSS",
+    "document.write": "XSS",
+    "open": "路径穿越",
+    "Path": "路径穿越",
+    "redirect": "开放重定向",
+    "send_file": "路径穿越",
     "render_template_string": "SSTI",
-    "system": "命令注入", "Popen": "命令注入",
-    "run": "命令注入", "call": "命令注入",
+    "system": "命令注入",
+    "Popen": "命令注入",
+    "run": "命令注入",
+    "call": "命令注入",
 }
 
 SANITIZERS = {
-    "escape", "html_escape", "bleach.clean", "markupsafe.escape",
-    "parameterize", "bind_param", "prepare", "quote",
-    "sanitize", "validate", "check_path", "abspath",
-    "escape_string", "realpath",
+    "escape",
+    "html_escape",
+    "bleach.clean",
+    "markupsafe.escape",
+    "parameterize",
+    "bind_param",
+    "prepare",
+    "quote",
+    "sanitize",
+    "validate",
+    "check_path",
+    "abspath",
+    "escape_string",
+    "realpath",
 }
 
 
@@ -58,14 +92,14 @@ class TaintSink:
 class TaintPath:
     source: TaintSource
     sink: TaintSink
-    propagation: List[Dict[str, Any]]
+    propagation: list[dict[str, Any]]
     is_sanitized: bool
 
 
 @dataclass
 class TaintResult:
     file_path: str
-    taint_paths: List[TaintPath] = field(default_factory=list)
+    taint_paths: list[TaintPath] = field(default_factory=list)
 
 
 class TaintTracker:
@@ -87,16 +121,20 @@ class TaintTracker:
                 is_sanitized = self._check_sanitization(source, sink, ast_result)
 
                 if not is_sanitized:
-                    result.taint_paths.append(TaintPath(
-                        source=source, sink=sink,
-                        propagation=propagation, is_sanitized=False,
-                    ))
+                    result.taint_paths.append(
+                        TaintPath(
+                            source=source,
+                            sink=sink,
+                            propagation=propagation,
+                            is_sanitized=False,
+                        )
+                    )
 
         return result
 
-    def analyze_project(self, files: List[Tuple[Path, str]]) -> List[TaintPath]:
-        all_results: List[TaintPath] = []
-        file_asts: Dict[str, ASTResult] = {}
+    def analyze_project(self, files: list[tuple[Path, str]]) -> list[TaintPath]:
+        all_results: list[TaintPath] = []
+        file_asts: dict[str, ASTResult] = {}
 
         for file_path, content in files:
             ast_result = self._ast_parser.parse(file_path, content)
@@ -110,45 +148,50 @@ class TaintTracker:
 
         return all_results
 
-    def _find_sources(self, ast_result: ASTResult) -> List[TaintSource]:
+    def _find_sources(self, ast_result: ASTResult) -> list[TaintSource]:
         sources = []
         for call in ast_result.calls:
             name = call.get("name", "")
             if self._is_source(name):
-                sources.append(TaintSource(
-                    name=name,
-                    line=call.get("line", 0),
-                    variable="",
-                    source_type=self._classify_source(name),
-                ))
+                sources.append(
+                    TaintSource(
+                        name=name,
+                        line=call.get("line", 0),
+                        variable="",
+                        source_type=self._classify_source(name),
+                    )
+                )
 
         for assign in ast_result.assignments:
             value = assign.get("value", "")
             for src in SOURCES:
                 if src in value:
-                    sources.append(TaintSource(
-                        name=src,
-                        line=assign.get("line", 0),
-                        variable=assign.get("name", ""),
-                        source_type=self._classify_source(src),
-                    ))
+                    sources.append(
+                        TaintSource(
+                            name=src,
+                            line=assign.get("line", 0),
+                            variable=assign.get("name", ""),
+                            source_type=self._classify_source(src),
+                        )
+                    )
         return sources
 
-    def _find_sinks(self, ast_result: ASTResult) -> List[TaintSink]:
+    def _find_sinks(self, ast_result: ASTResult) -> list[TaintSink]:
         sinks = []
         for call in ast_result.calls:
             name = call.get("name", "")
             base = name.split(".")[-1] if "." in name else name
             if base in SINKS:
-                sinks.append(TaintSink(
-                    name=name,
-                    line=call.get("line", 0),
-                    sink_type=SINKS[base],
-                ))
+                sinks.append(
+                    TaintSink(
+                        name=name,
+                        line=call.get("line", 0),
+                        sink_type=SINKS[base],
+                    )
+                )
         return sinks
 
-    def _trace_propagation(self, source: TaintSource, sink: TaintSink,
-                           ast_result: ASTResult) -> List[Dict[str, Any]]:
+    def _trace_propagation(self, source: TaintSource, sink: TaintSink, ast_result: ASTResult) -> list[dict[str, Any]]:
         path = []
         path.append({"type": "source", "name": source.name, "line": source.line})
 
@@ -164,8 +207,7 @@ class TaintTracker:
         path.append({"type": "sink", "name": sink.name, "line": sink.line})
         return path
 
-    def _check_sanitization(self, source: TaintSource, sink: TaintSink,
-                            ast_result: ASTResult) -> bool:
+    def _check_sanitization(self, source: TaintSource, sink: TaintSink, ast_result: ASTResult) -> bool:
         for call in ast_result.calls:
             line = call.get("line", 0)
             if source.line < line < sink.line:
@@ -175,22 +217,20 @@ class TaintTracker:
                     return True
         return False
 
-    def _cross_file_analysis(self, file_asts: Dict[str, ASTResult]) -> List[TaintPath]:
+    def _cross_file_analysis(self, file_asts: dict[str, ASTResult]) -> list[TaintPath]:
         paths = []
 
-        exports: Dict[str, List[Tuple[str, int, str, List[str]]]] = {}
+        exports: dict[str, list[tuple[str, int, str, list[str]]]] = {}
         for fpath, ast_result in file_asts.items():
             for func in ast_result.functions:
-                exports.setdefault(func.name, []).append(
-                    (fpath, func.start_line, func.name, func.calls)
-                )
+                exports.setdefault(func.name, []).append((fpath, func.start_line, func.name, func.calls))
 
         for fpath, ast_result in file_asts.items():
             sources = self._find_sources(ast_result)
             if not sources:
                 continue
 
-            imported_names: Set[str] = set()
+            imported_names: set[str] = set()
             for imp in ast_result.imports:
                 if imp.names:
                     for n in imp.names:
@@ -205,28 +245,27 @@ class TaintTracker:
                 for imp_name in imported_names:
                     if imp_name not in exports:
                         continue
-                    for exp_fpath, exp_line, exp_func_name, exp_calls in exports[imp_name]:
+                    for exp_fpath, exp_line, _exp_func_name, exp_calls in exports[imp_name]:
                         for call_name in exp_calls:
                             base = call_name.split(".")[-1] if "." in call_name else call_name
                             if base in SINKS:
-                                paths.append(TaintPath(
-                                    source=source,
-                                    sink=TaintSink(name=call_name, line=exp_line, sink_type=SINKS[base]),
-                                    propagation=[
-                                        {"type": "source", "name": source.name, "line": source.line, "file": fpath},
-                                        {"type": "import", "name": imp_name, "file": exp_fpath},
-                                        {"type": "sink", "name": call_name, "line": exp_line, "file": exp_fpath},
-                                    ],
-                                    is_sanitized=False,
-                                ))
+                                paths.append(
+                                    TaintPath(
+                                        source=source,
+                                        sink=TaintSink(name=call_name, line=exp_line, sink_type=SINKS[base]),
+                                        propagation=[
+                                            {"type": "source", "name": source.name, "line": source.line, "file": fpath},
+                                            {"type": "import", "name": imp_name, "file": exp_fpath},
+                                            {"type": "sink", "name": call_name, "line": exp_line, "file": exp_fpath},
+                                        ],
+                                        is_sanitized=False,
+                                    )
+                                )
 
         return paths
 
     def _is_source(self, name: str) -> bool:
-        for src in SOURCES:
-            if src in name or name.endswith(src.replace("(", "")):
-                return True
-        return False
+        return any(src in name or name.endswith(src.replace("(", "")) for src in SOURCES)
 
     def _classify_source(self, name: str) -> str:
         if any(k in name for k in ["args", "form", "query", "params", "body"]):

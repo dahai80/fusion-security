@@ -3,20 +3,25 @@ from __future__ import annotations
 import pytest
 
 from fusion_security.engine.fix.fix_generator import FixGenerator
-from fusion_security.models.vulnerability import Vulnerability
 from fusion_security.models.patch import Patch
+from fusion_security.models.vulnerability import Vulnerability
 
 
 def _make_vuln(rule_id="SQL001", code="cursor.execute(query)"):
     return Vulnerability(
-        id="V-test", title="Test vuln", description="test",
-        severity="high", confidence=80, file_path="test.py",
-        line_number=1, code_snippet=code, rule_id=rule_id,
+        id="V-test",
+        title="Test vuln",
+        description="test",
+        severity="high",
+        confidence=80,
+        file_path="test.py",
+        line_number=1,
+        code_snippet=code,
+        rule_id=rule_id,
     )
 
 
 class TestFixGeneratorAlternatives:
-
     def test_generate_alternatives_returns_multiple(self):
         gen = FixGenerator()
         vuln = _make_vuln()
@@ -69,10 +74,10 @@ class TestFixGeneratorAlternatives:
 
 
 class TestPipelineRetest:
-
     @pytest.mark.asyncio
     async def test_retest_stage_no_patches(self):
-        from fusion_security.engine.pipeline import ScanPipeline, PipelineContext, PipelineStage
+        from fusion_security.engine.pipeline import PipelineContext, ScanPipeline
+
         pipeline = ScanPipeline()
         ctx = PipelineContext(project_path="/tmp/nonexistent")
         await pipeline._stage_retest(ctx)
@@ -81,7 +86,8 @@ class TestPipelineRetest:
 
     @pytest.mark.asyncio
     async def test_retest_stage_with_verified_patch(self):
-        from fusion_security.engine.pipeline import ScanPipeline, PipelineContext
+        from fusion_security.engine.pipeline import PipelineContext, ScanPipeline
+
         pipeline = ScanPipeline()
         ctx = PipelineContext(project_path="/tmp/nonexistent")
         patch = Patch()
@@ -99,7 +105,8 @@ class TestPipelineRetest:
 
     @pytest.mark.asyncio
     async def test_retest_stage_patch_still_vulnerable(self):
-        from fusion_security.engine.pipeline import ScanPipeline, PipelineContext
+        from fusion_security.engine.pipeline import PipelineContext, ScanPipeline
+
         pipeline = ScanPipeline()
         ctx = PipelineContext(project_path="/tmp/nonexistent")
         patch = Patch()
@@ -116,7 +123,8 @@ class TestPipelineRetest:
 
     @pytest.mark.asyncio
     async def test_retest_skips_non_applied_patches(self):
-        from fusion_security.engine.pipeline import ScanPipeline, PipelineContext
+        from fusion_security.engine.pipeline import PipelineContext, ScanPipeline
+
         pipeline = ScanPipeline()
         ctx = PipelineContext(project_path="/tmp/nonexistent")
         patch = Patch()

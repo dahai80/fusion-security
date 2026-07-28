@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...db import get_session
-from ...db.models import ScanORM, VulnerabilityORM
 from ...db.convert import orm_to_vuln
+from ...db.models import ScanORM, VulnerabilityORM
 from ...report.report import ReportGenerator
 from ...report.sarif import vulnerabilities_to_sarif
 
@@ -30,6 +29,7 @@ def generate_report(body: ReportRequest, db: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Scan not found")
 
     from ...engine.scanner import ScanResult, ScanTarget
+
     target = ScanTarget(scan_orm.project_id or ".")
     result = ScanResult(target)
     result.files_scanned = scan_orm.files_scanned
@@ -41,12 +41,10 @@ def generate_report(body: ReportRequest, db: Session = Depends(get_session)):
     result.low = scan_orm.low
     result.summary = scan_orm.summary
 
-    vuln_orms = db.query(VulnerabilityORM).join(
-        "findings"
-    ).filter_by(scan_id=scan_orm.id).all() if scan_orm.findings else []
-    result.vulnerabilities = [orm_to_vuln(v) for v in db.query(
-        VulnerabilityORM
-    ).all()[:scan_orm.total_vulnerabilities]]
+    db.query(VulnerabilityORM).join("findings").filter_by(scan_id=scan_orm.id).all() if scan_orm.findings else []
+    result.vulnerabilities = [
+        orm_to_vuln(v) for v in db.query(VulnerabilityORM).all()[: scan_orm.total_vulnerabilities]
+    ]
 
     reporter = ReportGenerator()
 
@@ -66,8 +64,6 @@ def scan_sarif(scan_id: str, db: Session = Depends(get_session)):
     scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    vulns = [orm_to_vuln(v) for v in db.query(
-        VulnerabilityORM
-    ).all()[:scan_orm.total_vulnerabilities]]
+    vulns = [orm_to_vuln(v) for v in db.query(VulnerabilityORM).all()[: scan_orm.total_vulnerabilities]]
     sarif_data = vulnerabilities_to_sarif(vulns)
     return JSONResponse(content=sarif_data)

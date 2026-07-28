@@ -14,8 +14,8 @@ def client():
 
 # ===== Patches API =====
 
-class TestPatchesAPI:
 
+class TestPatchesAPI:
     def test_list_patches_empty(self, client):
         resp = client.get("/api/v1/patches")
         assert resp.status_code == 200
@@ -40,8 +40,8 @@ class TestPatchesAPI:
 
 # ===== Reports API =====
 
-class TestReportsAPI:
 
+class TestReportsAPI:
     def test_generate_report_scan_not_found(self, client):
         body = {"scan_id": "nonexistent", "format": "md"}
         resp = client.post("/api/v1/reports/generate", json=body)
@@ -60,13 +60,16 @@ class TestReportsAPI:
 
 # ===== Webhooks API =====
 
-class TestWebhooksAPI:
 
+class TestWebhooksAPI:
     def test_create_webhook(self, client):
-        resp = client.post("/api/v1/integrations/webhooks", params={
-            "url": "https://example.com/hook",
-            "events": ["scan.completed"],
-        })
+        resp = client.post(
+            "/api/v1/integrations/webhooks",
+            params={
+                "url": "https://example.com/hook",
+                "events": ["scan.completed"],
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["url"] == "https://example.com/hook"
@@ -111,8 +114,8 @@ class TestWebhooksAPI:
 
 # ===== Vulnerabilities Extended API =====
 
-class TestVulnerabilitiesExtendedAPI:
 
+class TestVulnerabilitiesExtendedAPI:
     def test_vulnerabilities_list(self, client):
         resp = client.get("/api/v1/vulnerabilities")
         assert resp.status_code == 200
@@ -134,8 +137,8 @@ class TestVulnerabilitiesExtendedAPI:
 
 # ===== System Extended API =====
 
-class TestSystemExtendedAPI:
 
+class TestSystemExtendedAPI:
     def test_system_info(self, client):
         resp = client.get("/api/v1/system/info")
         assert resp.status_code == 200
@@ -174,16 +177,19 @@ class TestSystemExtendedAPI:
 
 # ===== Scans API =====
 
-class TestScansAPI:
 
+class TestScansAPI:
     def test_list_scans(self, client):
         resp = client.get("/api/v1/scans")
         assert resp.status_code == 200
 
     def test_incremental_scan_endpoint_exists(self, client):
-        resp = client.post("/api/v1/scans/incremental", json={
-            "path": "/tmp/nonexistent",
-            "base": "HEAD~1",
-            "head": "HEAD",
-        })
+        resp = client.post(
+            "/api/v1/scans/incremental",
+            json={
+                "path": "/tmp/nonexistent",
+                "base": "HEAD~1",
+                "head": "HEAD",
+            },
+        )
         assert resp.status_code in (200, 400, 500)

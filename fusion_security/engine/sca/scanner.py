@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -35,7 +34,7 @@ class KnownVuln:
     fixed_version: str = ""
 
 
-KNOWN_VULNS: List[KnownVuln] = [
+KNOWN_VULNS: list[KnownVuln] = [
     KnownVuln("CVE-2023-36664", "pypdf", "<3.16.0", "critical", "pypdf 注入漏洞", "3.16.0"),
     KnownVuln("CVE-2023-40217", "cryptography", "<41.0.6", "high", "cryptography 中间人攻击", "41.0.6"),
     KnownVuln("CVE-2023-43804", "urllib3", "<2.0.7", "high", "urllib3 Cookie 泄露", "2.0.7"),
@@ -48,7 +47,7 @@ KNOWN_VULNS: List[KnownVuln] = [
     KnownVuln("CVE-2022-32149", "golang.org/x/text", "<0.3.8", "high", "Go x/text DoS", "0.3.8"),
 ]
 
-DEPRECATED_PACKAGES: List[Dict[str, str]] = [
+DEPRECATED_PACKAGES: list[dict[str, str]] = [
     {"name": "pycrypto", "reason": "已停止维护，存在已知漏洞，使用pycryptodome替代", "alternative": "pycryptodome"},
     {"name": "paramiko", "reason": "旧版本存在安全漏洞", "alternative": "paramiko>=3.0"},
     {"name": "request", "reason": "已废弃，使用requests替代", "alternative": "requests"},
@@ -56,7 +55,7 @@ DEPRECATED_PACKAGES: List[Dict[str, str]] = [
     {"name": "md5", "reason": "MD5已不安全，使用hashlib.sha256替代", "alternative": "hashlib"},
 ]
 
-LICENSE_RISKS: Dict[str, str] = {
+LICENSE_RISKS: dict[str, str] = {
     "GPL-2.0": "copyleft — 商用需开源衍生作品",
     "GPL-3.0": "copyleft — 商用需开源衍生作品",
     "AGPL-3.0": "强copyleft — 网络服务也需开源",
@@ -84,15 +83,15 @@ SEVERITY_ORDER = {"LOW": "low", "MODERATE": "medium", "MEDIUM": "medium", "HIGH"
 class OSVClient:
     def __init__(self, timeout: float = 10.0):
         self.timeout = timeout
-        self._client: Optional[httpx.Client] = None
+        self._client: httpx.Client | None = None
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
             self._client = httpx.Client(timeout=self.timeout)
         return self._client
 
-    def query_batch(self, deps: List[Dependency]) -> Dict[str, List[Dict]]:
-        results: Dict[str, List[Dict]] = {}
+    def query_batch(self, deps: list[Dependency]) -> dict[str, list[dict]]:
+        results: dict[str, list[dict]] = {}
         if not deps:
             return results
         queries = []
@@ -100,10 +99,12 @@ class OSVClient:
             osv_eco = ECOSYSTEM_MAP.get(dep.ecosystem)
             if not osv_eco:
                 continue
-            queries.append({
-                "version": dep.version,
-                "package": {"name": dep.name, "ecosystem": osv_eco},
-            })
+            queries.append(
+                {
+                    "version": dep.version,
+                    "package": {"name": dep.name, "ecosystem": osv_eco},
+                }
+            )
         if not queries:
             return results
         batch_payload = {"queries": queries}
@@ -145,7 +146,7 @@ class SCAScanner:
             "Gemfile": self._parse_gemfile,
         }
 
-    def scan(self, project_path: str) -> List[Vulnerability]:
+    def scan(self, project_path: str) -> list[Vulnerability]:
         deps = self.collect_dependencies(project_path)
         logger.info(f"[SCA] 收集到 {len(deps)} 个依赖")
         vulns = self.check_vulnerabilities(deps)
@@ -156,12 +157,12 @@ class SCAScanner:
             self.osv_client.close()
         return vulns
 
-    def collect_dependencies(self, project_path: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def collect_dependencies(self, project_path: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         root = Path(project_path)
         for pattern, parser in self.parsers.items():
             for dep_file in root.rglob(pattern):
-                if any(p in dep_file.parts for p in {'.git', 'node_modules', '.venv', '__pycache__'}):
+                if any(p in dep_file.parts for p in {".git", "node_modules", ".venv", "__pycache__"}):
                     continue
                 try:
                     content = dep_file.read_text(encoding="utf-8", errors="ignore")
@@ -171,9 +172,9 @@ class SCAScanner:
                     logger.debug(f"[SCA] 解析 {dep_file} 失败: {e}")
         return deps
 
-    def check_vulnerabilities(self, deps: List[Dependency]) -> List[Vulnerability]:
-        vulns: List[Vulnerability] = []
-        osv_results: Dict[str, List[Dict]] = {}
+    def check_vulnerabilities(self, deps: list[Dependency]) -> list[Vulnerability]:
+        vulns: list[Vulnerability] = []
+        osv_results: dict[str, list[dict]] = {}
         if self.use_osv and self.osv_client:
             osv_results = self.osv_client.query_batch(deps)
             if osv_results:
@@ -205,7 +206,7 @@ class SCAScanner:
         logger.info(f"[SCA] 发现 {len(vulns)} 个依赖漏洞")
         return vulns
 
-    def _osv_to_vulnerability(self, dep: Dependency, osv_vuln: Dict) -> Optional[Vulnerability]:
+    def _osv_to_vulnerability(self, dep: Dependency, osv_vuln: dict) -> Vulnerability | None:
         vuln_id = osv_vuln.get("id", "OSV-UNKNOWN")
         summary = osv_vuln.get("summary", "")
         details = osv_vuln.get("details", "")
@@ -242,7 +243,9 @@ class SCAScanner:
             code_snippet=f"{dep.name}=={dep.version}",
             rule_id="FUS-SCA-001",
             cwe_id=cwe_id,
-            fix_suggestion=f"升级 {dep.name} 到 {fixed_version} 或更高版本" if fixed_version else "查看 OSV 漏洞详情获取修复建议",
+            fix_suggestion=f"升级 {dep.name} 到 {fixed_version} 或更高版本"
+            if fixed_version
+            else "查看 OSV 漏洞详情获取修复建议",
         )
 
     def _map_severity(self, raw: str) -> str:
@@ -277,37 +280,39 @@ class SCAScanner:
         return False
 
     def _parse_version(self, version: str) -> tuple:
-        cleaned = re.sub(r'[^0-9.]', '', version)
+        cleaned = re.sub(r"[^0-9.]", "", version)
         parts = cleaned.split(".")
         parsed = tuple(int(p) for p in parts if p.isdigit())
         if not parsed:
             raise ValueError(f"无法解析版本号: {version}")
         return parsed
 
-    def check_deprecated(self, deps: List[Dependency]) -> List[Vulnerability]:
-        vulns: List[Vulnerability] = []
+    def check_deprecated(self, deps: list[Dependency]) -> list[Vulnerability]:
+        vulns: list[Vulnerability] = []
         for dep in deps:
             for pkg in DEPRECATED_PACKAGES:
                 if dep.name.lower() == pkg["name"].lower():
-                    vulns.append(Vulnerability(
-                        id=f"SCA-DEPRECATED-{dep.name}",
-                        title=f"已废弃组件: {dep.name}",
-                        description=f"{dep.name} {dep.version} 已废弃: {pkg['reason']}",
-                        severity="medium",
-                        confidence=90,
-                        file_path=dep.source_file,
-                        line_number=0,
-                        code_snippet=f"{dep.name}=={dep.version}",
-                        rule_id="FUS-SCA-002",
-                        cwe_id="CWE-1104",
-                        fix_suggestion=f"替换为 {pkg['alternative']}",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            id=f"SCA-DEPRECATED-{dep.name}",
+                            title=f"已废弃组件: {dep.name}",
+                            description=f"{dep.name} {dep.version} 已废弃: {pkg['reason']}",
+                            severity="medium",
+                            confidence=90,
+                            file_path=dep.source_file,
+                            line_number=0,
+                            code_snippet=f"{dep.name}=={dep.version}",
+                            rule_id="FUS-SCA-002",
+                            cwe_id="CWE-1104",
+                            fix_suggestion=f"替换为 {pkg['alternative']}",
+                        )
+                    )
                     break
         logger.info(f"[SCA-002] 发现 {len(vulns)} 个已废弃组件")
         return vulns
 
-    def check_license(self, project_path: str) -> List[Vulnerability]:
-        vulns: List[Vulnerability] = []
+    def check_license(self, project_path: str) -> list[Vulnerability]:
+        vulns: list[Vulnerability] = []
         root = Path(project_path)
         license_files = list(root.glob("LICENSE*")) + list(root.glob("COPYING*"))
         for lf in license_files:
@@ -315,57 +320,59 @@ class SCAScanner:
                 content = lf.read_text(encoding="utf-8", errors="ignore")
                 for license_name, risk in LICENSE_RISKS.items():
                     if license_name.lower() in content.lower():
-                        vulns.append(Vulnerability(
-                            id=f"SCA-LICENSE-{license_name}",
-                            title=f"许可证合规风险: {license_name}",
-                            description=f"项目使用 {license_name} 许可证: {risk}",
-                            severity="medium",
-                            confidence=80,
-                            file_path=str(lf),
-                            line_number=1,
-                            code_snippet=license_name,
-                            rule_id="FUS-SCA-003",
-                            cwe_id="CWE-1104",
-                            fix_suggestion=f"评估 {license_name} 许可证对业务的影响，必要时替换为MIT/Apache-2.0等宽松许可证的组件",
-                        ))
+                        vulns.append(
+                            Vulnerability(
+                                id=f"SCA-LICENSE-{license_name}",
+                                title=f"许可证合规风险: {license_name}",
+                                description=f"项目使用 {license_name} 许可证: {risk}",
+                                severity="medium",
+                                confidence=80,
+                                file_path=str(lf),
+                                line_number=1,
+                                code_snippet=license_name,
+                                rule_id="FUS-SCA-003",
+                                cwe_id="CWE-1104",
+                                fix_suggestion=f"评估 {license_name} 许可证对业务的影响，必要时替换为MIT/Apache-2.0等宽松许可证的组件",
+                            )
+                        )
                         break
             except Exception as e:
                 logger.debug(f"[SCA-003] 读取 {lf} 失败: {e}")
 
         for dep_file in root.rglob("package.json"):
-            if any(p in dep_file.parts for p in {'.git', 'node_modules', '.venv', '__pycache__'}):
+            if any(p in dep_file.parts for p in {".git", "node_modules", ".venv", "__pycache__"}):
                 continue
             try:
                 data = json.loads(dep_file.read_text(encoding="utf-8", errors="ignore"))
                 for dep_name, dep_info in data.get("dependencies", {}).items():
-                    if isinstance(dep_info, dict):
-                        lic = dep_info.get("license", "")
-                    else:
-                        lic = ""
+                    lic = dep_info.get("license", "") if isinstance(dep_info, dict) else ""
                     for license_name, risk in LICENSE_RISKS.items():
                         if license_name.lower() == lic.lower():
-                            vulns.append(Vulnerability(
-                                id=f"SCA-LICENSE-{dep_name}-{license_name}",
-                                title=f"许可证合规风险: {dep_name} ({license_name})",
-                                description=f"依赖 {dep_name} 使用 {license_name}: {risk}",
-                                severity="medium",
-                                confidence=85,
-                                file_path=str(dep_file),
-                                line_number=0,
-                                code_snippet=f"{dep_name}: {license_name}",
-                                rule_id="FUS-SCA-003",
-                                cwe_id="CWE-1104",
-                                fix_suggestion=f"评估 {dep_name} ({license_name}) 对业务的影响，考虑替换为宽松许可证的替代方案",
-                            ))
+                            vulns.append(
+                                Vulnerability(
+                                    id=f"SCA-LICENSE-{dep_name}-{license_name}",
+                                    title=f"许可证合规风险: {dep_name} ({license_name})",
+                                    description=f"依赖 {dep_name} 使用 {license_name}: {risk}",
+                                    severity="medium",
+                                    confidence=85,
+                                    file_path=str(dep_file),
+                                    line_number=0,
+                                    code_snippet=f"{dep_name}: {license_name}",
+                                    rule_id="FUS-SCA-003",
+                                    cwe_id="CWE-1104",
+                                    fix_suggestion=f"评估 {dep_name} ({license_name}) 对业务的影响，考虑替换为宽松许可证的替代方案",
+                                )
+                            )
             except Exception as e:
                 logger.debug(f"[SCA-003] 解析 {dep_file} 失败: {e}")
 
         logger.info(f"[SCA-003] 发现 {len(vulns)} 个许可证合规风险")
         return vulns
 
-    def check_stale_versions(self, deps: List[Dependency]) -> List[Vulnerability]:
+    def check_stale_versions(self, deps: list[Dependency]) -> list[Vulnerability]:
         import time
-        vulns: List[Vulnerability] = []
+
+        vulns: list[Vulnerability] = []
         current_year = time.gmtime().tm_year
         for dep in deps:
             try:
@@ -375,40 +382,46 @@ class SCAScanner:
                     continue
                 year_hint = 2000 + major if major < 100 else major
                 if current_year - year_hint > STALE_VERSION_YEARS:
-                    vulns.append(Vulnerability(
-                        id=f"SCA-STALE-{dep.name}",
-                        title=f"组件版本过旧: {dep.name} {dep.version}",
-                        description=f"{dep.name} {dep.version} 可能已过旧({STALE_VERSION_YEARS}年以上)，建议升级到最新版本",
-                        severity="low",
-                        confidence=50,
-                        file_path=dep.source_file,
-                        line_number=0,
-                        code_snippet=f"{dep.name}=={dep.version}",
-                        rule_id="FUS-SCA-004",
-                        cwe_id="CWE-1104",
-                        fix_suggestion=f"升级 {dep.name} 到最新版本以获取安全补丁和功能改进",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            id=f"SCA-STALE-{dep.name}",
+                            title=f"组件版本过旧: {dep.name} {dep.version}",
+                            description=f"{dep.name} {dep.version} 可能已过旧({STALE_VERSION_YEARS}年以上)，建议升级到最新版本",
+                            severity="low",
+                            confidence=50,
+                            file_path=dep.source_file,
+                            line_number=0,
+                            code_snippet=f"{dep.name}=={dep.version}",
+                            rule_id="FUS-SCA-004",
+                            cwe_id="CWE-1104",
+                            fix_suggestion=f"升级 {dep.name} 到最新版本以获取安全补丁和功能改进",
+                        )
+                    )
             except (ValueError, IndexError):
                 continue
         logger.info(f"[SCA-004] 发现 {len(vulns)} 个过旧组件")
         return vulns
 
-    def _parse_requirements(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_requirements(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         for line in content.splitlines():
             line = line.strip()
             if not line or line.startswith("#") or line.startswith("-"):
                 continue
-            match = re.match(r'^([a-zA-Z0-9_.-]+)\s*[=~><!]+\s*([0-9][0-9.a-zA-Z*-]*)', line)
+            match = re.match(r"^([a-zA-Z0-9_.-]+)\s*[=~><!]+\s*([0-9][0-9.a-zA-Z*-]*)", line)
             if match:
-                deps.append(Dependency(
-                    name=match.group(1), version=match.group(2),
-                    ecosystem="pypi", source_file=file_path,
-                ))
+                deps.append(
+                    Dependency(
+                        name=match.group(1),
+                        version=match.group(2),
+                        ecosystem="pypi",
+                        source_file=file_path,
+                    )
+                )
         return deps
 
-    def _parse_pipfile(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_pipfile(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         in_packages = False
         in_dev = False
         for line in content.splitlines():
@@ -429,14 +442,19 @@ class SCAScanner:
                 name = name.strip()
                 ver_match = re.search(r'"([0-9][0-9.a-zA-Z*-]*)"', rest)
                 if ver_match:
-                    deps.append(Dependency(
-                        name=name, version=ver_match.group(1),
-                        ecosystem="pypi", source_file=file_path, is_dev=in_dev,
-                    ))
+                    deps.append(
+                        Dependency(
+                            name=name,
+                            version=ver_match.group(1),
+                            ecosystem="pypi",
+                            source_file=file_path,
+                            is_dev=in_dev,
+                        )
+                    )
         return deps
 
-    def _parse_pyproject(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_pyproject(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         in_deps = False
         for line in content.splitlines():
             stripped = line.strip()
@@ -449,32 +467,40 @@ class SCAScanner:
             if in_deps:
                 match = re.match(r'^"([a-zA-Z0-9_.-]+)([><=!~]+[0-9][0-9.a-zA-Z*-]*)', stripped)
                 if match:
-                    ver = re.search(r'[0-9][0-9.a-zA-Z*-]*', match.group(2))
-                    deps.append(Dependency(
-                        name=match.group(1),
-                        version=ver.group(0) if ver else "0",
-                        ecosystem="pypi", source_file=file_path,
-                    ))
+                    ver = re.search(r"[0-9][0-9.a-zA-Z*-]*", match.group(2))
+                    deps.append(
+                        Dependency(
+                            name=match.group(1),
+                            version=ver.group(0) if ver else "0",
+                            ecosystem="pypi",
+                            source_file=file_path,
+                        )
+                    )
         return deps
 
-    def _parse_package_json(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_package_json(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         try:
             data = json.loads(content)
             for section, is_dev in [("dependencies", False), ("devDependencies", True)]:
                 for name, ver in data.get(section, {}).items():
-                    clean_ver = re.sub(r'[^0-9.]', '', ver)
+                    clean_ver = re.sub(r"[^0-9.]", "", ver)
                     if clean_ver:
-                        deps.append(Dependency(
-                            name=name, version=clean_ver,
-                            ecosystem="npm", source_file=file_path, is_dev=is_dev,
-                        ))
+                        deps.append(
+                            Dependency(
+                                name=name,
+                                version=clean_ver,
+                                ecosystem="npm",
+                                source_file=file_path,
+                                is_dev=is_dev,
+                            )
+                        )
         except json.JSONDecodeError:
             pass
         return deps
 
-    def _parse_gomod(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_gomod(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         in_require = False
         for line in content.splitlines():
             stripped = line.strip()
@@ -485,16 +511,20 @@ class SCAScanner:
                 in_require = False
                 continue
             if in_require or stripped.startswith("require "):
-                match = re.match(r'^\s*(\S+)\s+(v[0-9][0-9.]+)', stripped)
+                match = re.match(r"^\s*(\S+)\s+(v[0-9][0-9.]+)", stripped)
                 if match:
-                    deps.append(Dependency(
-                        name=match.group(1), version=match.group(2).lstrip("v"),
-                        ecosystem="gomod", source_file=file_path,
-                    ))
+                    deps.append(
+                        Dependency(
+                            name=match.group(1),
+                            version=match.group(2).lstrip("v"),
+                            ecosystem="gomod",
+                            source_file=file_path,
+                        )
+                    )
         return deps
 
-    def _parse_cargo(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_cargo(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         in_deps = False
         for line in content.splitlines():
             stripped = line.strip()
@@ -509,20 +539,27 @@ class SCAScanner:
                 name = name.strip()
                 ver = re.search(r'"([0-9][0-9.a-zA-Z*-]*)"', rest)
                 if ver:
-                    deps.append(Dependency(
-                        name=name, version=ver.group(1),
-                        ecosystem="cargo", source_file=file_path,
-                    ))
+                    deps.append(
+                        Dependency(
+                            name=name,
+                            version=ver.group(1),
+                            ecosystem="cargo",
+                            source_file=file_path,
+                        )
+                    )
         return deps
 
-    def _parse_gemfile(self, file_path: str, content: str) -> List[Dependency]:
-        deps: List[Dependency] = []
+    def _parse_gemfile(self, file_path: str, content: str) -> list[Dependency]:
+        deps: list[Dependency] = []
         for line in content.splitlines():
             match = re.match(r"gem\s+'([^']+)'(?:\s*,\s*'([^']+)')?", line.strip())
             if match:
-                deps.append(Dependency(
-                    name=match.group(1),
-                    version=match.group(2) or "0",
-                    ecosystem="rubygems", source_file=file_path,
-                ))
+                deps.append(
+                    Dependency(
+                        name=match.group(1),
+                        version=match.group(2) or "0",
+                        ecosystem="rubygems",
+                        source_file=file_path,
+                    )
+                )
         return deps

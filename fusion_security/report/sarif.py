@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any
 
 from ..models.vulnerability import Vulnerability
 
@@ -14,8 +15,10 @@ SARIF_VERSION = "2.1.0"
 SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 
 
-def vulnerabilities_to_sarif(vulnerabilities: List[Vulnerability], tool_name: str = "fusion-security", tool_version: str = "0.5.0") -> Dict[str, Any]:
-    rules_map: Dict[str, Dict[str, Any]] = {}
+def vulnerabilities_to_sarif(
+    vulnerabilities: list[Vulnerability], tool_name: str = "fusion-security", tool_version: str = "0.5.0"
+) -> dict[str, Any]:
+    rules_map: dict[str, dict[str, Any]] = {}
     results = []
 
     for v in vulnerabilities:
@@ -27,7 +30,9 @@ def vulnerabilities_to_sarif(vulnerabilities: List[Vulnerability], tool_name: st
                 "properties": {"severity": v.severity},
             }
             if v.cwe_id:
-                rules_map[v.rule_id]["helpUri"] = f"https://cwe.mitre.org/data/definitions/{v.cwe_id.replace('CWE-', '')}.html"
+                rules_map[v.rule_id]["helpUri"] = (
+                    f"https://cwe.mitre.org/data/definitions/{v.cwe_id.replace('CWE-', '')}.html"
+                )
 
         location = {
             "physicalLocation": {
@@ -43,33 +48,44 @@ def vulnerabilities_to_sarif(vulnerabilities: List[Vulnerability], tool_name: st
             "locations": [location],
         }
         if v.data_flow_path:
-            result_entry["codeFlows"] = [{
-                "threadFlows": [{
-                    "locations": [{"location": location}],
-                }],
-            }]
+            result_entry["codeFlows"] = [
+                {
+                    "threadFlows": [
+                        {
+                            "locations": [{"location": location}],
+                        }
+                    ],
+                }
+            ]
         results.append(result_entry)
 
     sarif = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": tool_name,
-                    "version": tool_version,
-                    "informationUri": "https://github.com/fusion-security",
-                    "rules": list(rules_map.values()),
-                }
-            },
-            "results": results,
-        }],
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": tool_name,
+                        "version": tool_version,
+                        "informationUri": "https://github.com/fusion-security",
+                        "rules": list(rules_map.values()),
+                    }
+                },
+                "results": results,
+            }
+        ],
     }
     logger.info(f"[SARIF] 生成 {len(results)} 个结果")
     return sarif
 
 
-def save_sarif(vulnerabilities: List[Vulnerability], output_path: str, tool_name: str = "fusion-security", tool_version: str = "0.5.0") -> str:
+def save_sarif(
+    vulnerabilities: list[Vulnerability],
+    output_path: str,
+    tool_name: str = "fusion-security",
+    tool_version: str = "0.5.0",
+) -> str:
     sarif = vulnerabilities_to_sarif(vulnerabilities, tool_name, tool_version)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -80,6 +96,3 @@ def save_sarif(vulnerabilities: List[Vulnerability], output_path: str, tool_name
 
 def _severity_to_level(severity: str) -> str:
     return {"critical": "error", "high": "error", "medium": "warning", "low": "note"}.get(severity, "warning")
-
-
-from pathlib import Path

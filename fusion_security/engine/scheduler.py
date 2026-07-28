@@ -6,14 +6,15 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class ScheduleFrequency(str, Enum):
+class ScheduleFrequency(StrEnum):
     HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
@@ -36,7 +37,7 @@ class ScheduledScan:
     enabled: bool = True
     last_run: float = 0.0
     next_run: float = 0.0
-    config: Dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
 
     def compute_next_run(self) -> float:
         interval = FREQUENCY_SECONDS.get(self.frequency, 86400)
@@ -46,9 +47,9 @@ class ScheduledScan:
 
 class ScanScheduler:
     def __init__(self):
-        self.schedules: Dict[str, ScheduledScan] = {}
+        self.schedules: dict[str, ScheduledScan] = {}
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     def add_schedule(self, schedule: ScheduledScan) -> None:
         schedule.next_run = schedule.compute_next_run()
@@ -62,17 +63,20 @@ class ScanScheduler:
             return True
         return False
 
-    def list_schedules(self) -> List[Dict[str, Any]]:
+    def list_schedules(self) -> list[dict[str, Any]]:
         return [
             {
-                "id": s.id, "project_path": s.project_path,
-                "frequency": s.frequency.value, "enabled": s.enabled,
-                "last_run": s.last_run, "next_run": s.next_run,
+                "id": s.id,
+                "project_path": s.project_path,
+                "frequency": s.frequency.value,
+                "enabled": s.enabled,
+                "last_run": s.last_run,
+                "next_run": s.next_run,
             }
             for s in self.schedules.values()
         ]
 
-    async def start(self, scan_callback: Optional[Callable] = None) -> None:
+    async def start(self, scan_callback: Callable | None = None) -> None:
         if self._running:
             return
         self._running = True
@@ -86,7 +90,7 @@ class ScanScheduler:
             self._task = None
         logger.info("[Scheduler] 停止计划扫描服务")
 
-    async def _run_loop(self, scan_callback: Optional[Callable] = None) -> None:
+    async def _run_loop(self, scan_callback: Callable | None = None) -> None:
         while self._running:
             now = time.time()
             for sid, schedule in list(self.schedules.items()):

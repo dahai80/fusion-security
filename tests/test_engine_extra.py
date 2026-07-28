@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
@@ -13,46 +12,64 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_security.engine.sca.scanner import (
-    Dependency, KnownVuln, KNOWN_VULNS, OSVClient, OSV_BATCH_URL,
-    SCAScanner, ECOSYSTEM_MAP, SEVERITY_ORDER,
-)
 from fusion_security.engine.ai.adversarial import AdversarialVerifier
 from fusion_security.engine.ai.analyzer import AIAnalyzer
-from fusion_security.engine.rules.taint_tracker import (
-    TaintTracker, TaintSource, TaintSink, TaintPath, TaintResult,
-    SOURCES, SINKS, SANITIZERS,
-)
-from fusion_security.engine.rules.ast_parser import ASTParser, ASTResult, FunctionDef, ImportStmt
+from fusion_security.engine.ci.webhook import WebhookConfig, WebhookNotifier
 from fusion_security.engine.pipeline import (
-    ScanPipeline, PipelineConfig, PipelineContext, PipelineStage, STAGE_ORDER,
+    PipelineConfig,
+    PipelineContext,
+    ScanPipeline,
 )
-from fusion_security.engine.scheduler import (
-    ScanScheduler, ScheduledScan, ScheduleFrequency, FREQUENCY_SECONDS,
-)
-from fusion_security.engine.ci.webhook import WebhookNotifier, WebhookConfig
-from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult, ScanCache
-from fusion_security.engine.vcs.git import GitHelper, DiffResult
 from fusion_security.engine.resume.checkpoint import (
-    CheckpointManager, CircuitBreaker, CircuitState, RetryPolicy, StageCheckpoint,
+    CheckpointManager,
+    CircuitBreaker,
+    CircuitState,
+    RetryPolicy,
+    StageCheckpoint,
 )
+from fusion_security.engine.rules.ast_parser import ASTResult, FunctionDef
+from fusion_security.engine.rules.taint_tracker import (
+    TaintResult,
+    TaintSink,
+    TaintSource,
+    TaintTracker,
+)
+from fusion_security.engine.sca.scanner import (
+    Dependency,
+    KnownVuln,
+    OSVClient,
+    SCAScanner,
+)
+from fusion_security.engine.scanner import ScanCache, Scanner, ScanResult, ScanTarget
+from fusion_security.engine.scheduler import (
+    FREQUENCY_SECONDS,
+    ScanScheduler,
+    ScheduledScan,
+    ScheduleFrequency,
+)
+from fusion_security.engine.vcs.git import DiffResult, GitHelper
 from fusion_security.models.vulnerability import Vulnerability
-from fusion_security.models.finding import Finding
-from fusion_security.models.patch import Patch
 
 
 def _make_vuln(**kwargs) -> Vulnerability:
-    defaults = dict(
-        id="V-TEST", title="Test Vuln", description="test vuln",
-        severity="high", confidence=90, file_path="test.py",
-        line_number=1, code_snippet="cursor.execute(user_input)",
-        rule_id="SQL001", cwe_id="CWE-89",
-    )
+    defaults = {
+        "id": "V-TEST",
+        "title": "Test Vuln",
+        "description": "test vuln",
+        "severity": "high",
+        "confidence": 90,
+        "file_path": "test.py",
+        "line_number": 1,
+        "code_snippet": "cursor.execute(user_input)",
+        "rule_id": "SQL001",
+        "cwe_id": "CWE-89",
+    }
     defaults.update(kwargs)
     return Vulnerability(**defaults)
 
 
 # ===== OSVClient =====
+
 
 class TestOSVClient:
     def test_query_batch_empty(self):
@@ -74,18 +91,24 @@ class TestOSVClient:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "results": [{
-                "vulns": [{
-                    "id": "OSV-2023-001",
-                    "summary": "test vuln",
-                    "severity": [{"score": "HIGH"}],
-                    "aliases": ["CVE-2023-1234"],
-                    "affected": [{
-                        "package": {"name": "requests"},
-                        "ranges": [{"events": [{"fixed": "2.31.0"}]}],
-                    }],
-                }]
-            }]
+            "results": [
+                {
+                    "vulns": [
+                        {
+                            "id": "OSV-2023-001",
+                            "summary": "test vuln",
+                            "severity": [{"score": "HIGH"}],
+                            "aliases": ["CVE-2023-1234"],
+                            "affected": [
+                                {
+                                    "package": {"name": "requests"},
+                                    "ranges": [{"events": [{"fixed": "2.31.0"}]}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
         }
         with patch.object(client, "_get_client") as mock_get:
             mock_http = MagicMock()
@@ -111,6 +134,7 @@ class TestOSVClient:
 
     def test_query_batch_exception(self):
         import httpx
+
         client = OSVClient()
         dep = Dependency(name="requests", version="2.28.0", ecosystem="pypi")
         with patch.object(client, "_get_client") as mock_get:
@@ -135,6 +159,7 @@ class TestOSVClient:
 
 # ===== SCAScanner =====
 
+
 class TestSCAScanner:
     def test_scan_no_osv(self):
         scanner = SCAScanner(use_osv=False)
@@ -157,7 +182,7 @@ class TestSCAScanner:
 
     def test_parse_pipfile(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[packages]\nflask = \"2.2.3\"\nrequests = \"2.28.0\"\n\n[dev-packages]\npytest = \"7.4.0\"\n"
+        content = '[packages]\nflask = "2.2.3"\nrequests = "2.28.0"\n\n[dev-packages]\npytest = "7.4.0"\n'
         deps = scanner._parse_pipfile("Pipfile", content)
         assert len(deps) >= 2
         flask_dep = [d for d in deps if d.name == "flask"]
@@ -166,20 +191,20 @@ class TestSCAScanner:
 
     def test_parse_pipfile_other_section(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[packages]\nflask = \"2.2.3\"\n[some_other]\nfoo = \"1.0\"\n"
+        content = '[packages]\nflask = "2.2.3"\n[some_other]\nfoo = "1.0"\n'
         deps = scanner._parse_pipfile("Pipfile", content)
         assert len(deps) == 1
 
     def test_parse_pyproject(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[project]\nname = \"myproject\"\ndependencies = [\n    \"requests>=2.28.0\",\n    \"flask==2.2.3\",\n]\n"
+        content = '[project]\nname = "myproject"\ndependencies = [\n    "requests>=2.28.0",\n    "flask==2.2.3",\n]\n'
         deps = scanner._parse_pyproject("pyproject.toml", content)
         assert len(deps) == 2
         assert deps[0].ecosystem == "pypi"
 
     def test_parse_pyproject_no_deps(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[project]\nname = \"myproject\"\n[build-system]\nrequires = [\"setuptools\"]\n"
+        content = '[project]\nname = "myproject"\n[build-system]\nrequires = ["setuptools"]\n'
         deps = scanner._parse_pyproject("pyproject.toml", content)
         assert deps == []
 
@@ -222,14 +247,16 @@ class TestSCAScanner:
 
     def test_parse_cargo(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[dependencies]\nserde = { version = \"1.0.188\" }\ntokio = { version = \"1.32.0\" }\n\n[dev-dependencies]\n"
+        content = (
+            '[dependencies]\nserde = { version = "1.0.188" }\ntokio = { version = "1.32.0" }\n\n[dev-dependencies]\n'
+        )
         deps = scanner._parse_cargo("Cargo.toml", content)
         assert len(deps) == 2
         assert deps[0].ecosystem == "cargo"
 
     def test_parse_cargo_empty(self):
         scanner = SCAScanner(use_osv=False)
-        content = "[package]\nname = \"mycrate\"\n"
+        content = '[package]\nname = "mycrate"\n'
         deps = scanner._parse_cargo("Cargo.toml", content)
         assert deps == []
 
@@ -288,16 +315,20 @@ class TestSCAScanner:
         scanner = SCAScanner(use_osv=True)
         dep = Dependency(name="requests", version="2.28.0", ecosystem="pypi", source_file="req.txt")
         osv_data = {
-            "requests@2.28.0": [{
-                "id": "OSV-2023-100",
-                "summary": "requests vuln",
-                "severity": [{"score": "HIGH"}],
-                "aliases": ["CVE-2023-9999"],
-                "affected": [{
-                    "package": {"name": "requests"},
-                    "ranges": [{"events": [{"fixed": "2.31.0"}]}],
-                }],
-            }]
+            "requests@2.28.0": [
+                {
+                    "id": "OSV-2023-100",
+                    "summary": "requests vuln",
+                    "severity": [{"score": "HIGH"}],
+                    "aliases": ["CVE-2023-9999"],
+                    "affected": [
+                        {
+                            "package": {"name": "requests"},
+                            "ranges": [{"events": [{"fixed": "2.31.0"}]}],
+                        }
+                    ],
+                }
+            ]
         }
         with patch.object(scanner.osv_client, "query_batch", return_value=osv_data):
             vulns = scanner.check_vulnerabilities([dep])
@@ -314,10 +345,12 @@ class TestSCAScanner:
             "details": "test details",
             "database_specific": {"severity": "CRITICAL"},
             "aliases": ["CVE-2023-5555"],
-            "affected": [{
-                "package": {"name": "requests"},
-                "ranges": [{"events": [{"introduced": "0"}, {"fixed": "2.31.0"}]}],
-            }],
+            "affected": [
+                {
+                    "package": {"name": "requests"},
+                    "ranges": [{"events": [{"introduced": "0"}, {"fixed": "2.31.0"}]}],
+                }
+            ],
         }
         v = scanner._osv_to_vulnerability(dep, osv_vuln)
         assert v is not None
@@ -419,6 +452,7 @@ class TestSCAScanner:
 
 # ===== AdversarialVerifier =====
 
+
 class TestAdversarialVerifier:
     @pytest.fixture
     def mock_ai(self):
@@ -430,7 +464,13 @@ class TestAdversarialVerifier:
     async def test_verify_exploitable(self, mock_ai):
         mock_ai._chat.return_value = "irrelevant"
         mock_ai._parse_json.side_effect = [
-            {"is_exploitable": True, "exploit": "SQL injection via user_input", "difficulty": 0.3, "impact": 0.8, "reason": "no sanitization"},
+            {
+                "is_exploitable": True,
+                "exploit": "SQL injection via user_input",
+                "difficulty": 0.3,
+                "impact": 0.8,
+                "reason": "no sanitization",
+            },
             {"refuted": False, "reason": "no defense found", "defense": ""},
         ]
         verifier = AdversarialVerifier(mock_ai, rounds=2)
@@ -500,6 +540,7 @@ class TestAdversarialVerifier:
 
 # ===== TaintTracker =====
 
+
 class TestTaintTracker:
     def test_analyze_python_source_to_sink(self):
         tracker = TaintTracker()
@@ -546,7 +587,9 @@ def execute_query(param):
 """)
             fb.flush()
             path_b = fb.name
-        results = tracker.analyze_project([(Path(path_a), Path(path_a).read_text()), (Path(path_b), Path(path_b).read_text())])
+        results = tracker.analyze_project(
+            [(Path(path_a), Path(path_a).read_text()), (Path(path_b), Path(path_b).read_text())]
+        )
         os.unlink(path_a)
         os.unlink(path_b)
         assert isinstance(results, list)
@@ -631,9 +674,11 @@ def execute_query(param):
 
     def test_cross_file_analysis(self):
         tracker = TaintTracker()
+
         class FakeImport:
             names = ["run_query"]
             module = "db.run_query"
+
         ast_a = ASTResult(
             file_path="a.py",
             language="python",
@@ -644,10 +689,16 @@ def execute_query(param):
         ast_b = ASTResult(
             file_path="b.py",
             language="python",
-            functions=[FunctionDef(
-                name="run_query", params=["q"], start_line=1, end_line=5,
-                body="cursor.execute(q)", calls=["cursor.execute"],
-            )],
+            functions=[
+                FunctionDef(
+                    name="run_query",
+                    params=["q"],
+                    start_line=1,
+                    end_line=5,
+                    body="cursor.execute(q)",
+                    calls=["cursor.execute"],
+                )
+            ],
             imports=[],
             calls=[],
         )
@@ -662,10 +713,16 @@ def execute_query(param):
         ast_result = ASTResult(
             file_path="test.py",
             language="python",
-            functions=[FunctionDef(
-                name="handler", params=[], start_line=3, end_line=20,
-                body="x = request.args\nexecute(x)", calls=["execute"],
-            )],
+            functions=[
+                FunctionDef(
+                    name="handler",
+                    params=[],
+                    start_line=3,
+                    end_line=20,
+                    body="x = request.args\nexecute(x)",
+                    calls=["execute"],
+                )
+            ],
         )
         path = tracker._trace_propagation(source, sink, ast_result)
         assert len(path) >= 2
@@ -674,6 +731,7 @@ def execute_query(param):
 
 
 # ===== Pipeline =====
+
 
 class TestScanPipeline:
     @pytest.fixture
@@ -684,7 +742,9 @@ class TestScanPipeline:
             yield tmpdir
 
     async def test_pipeline_run_full(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = await pipeline.run(temp_project)
         assert ctx.scan_id.startswith("scan_")
@@ -693,7 +753,9 @@ class TestScanPipeline:
         assert "discover" in ctx.stage_results
 
     async def test_pipeline_incremental(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = await pipeline.run(temp_project, changed_files=["app.py"])
         assert ctx.files is not None
@@ -703,13 +765,17 @@ class TestScanPipeline:
         assert ctx.scan_id.startswith("scan_")
 
     async def test_pipeline_with_scan_id(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = await pipeline.run(temp_project, scan_id="test_scan_123")
         assert ctx.scan_id == "test_scan_123"
 
     async def test_pipeline_resume_from_checkpoint(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         cp = StageCheckpoint(
             scan_id="resume_test",
@@ -723,7 +789,9 @@ class TestScanPipeline:
         pipeline.checkpoint_mgr.remove("resume_test")
 
     async def test_pipeline_triage_dedup(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = await pipeline.run(temp_project)
         seen = set()
@@ -762,7 +830,9 @@ class TestScanPipeline:
         assert "未发现安全漏洞" in result.summary or len(result.vulnerabilities) == 0
 
     async def test_pipeline_verify_no_vulns(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = PipelineContext(project_path=temp_project)
         ctx.files = [Path(temp_project) / "clean.py"]
@@ -772,7 +842,9 @@ class TestScanPipeline:
         assert ctx.stage_results["verify"]["verified"] == 0
 
     async def test_pipeline_patch_disabled(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = PipelineContext(project_path=temp_project)
         ctx.vulnerabilities = [_make_vuln()]
@@ -780,7 +852,9 @@ class TestScanPipeline:
         assert ctx.stage_results["patch"]["patches"] == 0
 
     async def test_pipeline_retest_no_patches(self, temp_project):
-        config = PipelineConfig(use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False)
+        config = PipelineConfig(
+            use_ai=False, enable_sca=False, enable_adversarial=False, enable_patch=False, enable_taint=False
+        )
         pipeline = ScanPipeline(config)
         ctx = PipelineContext(project_path=temp_project)
         ctx.patches = []
@@ -789,6 +863,7 @@ class TestScanPipeline:
 
 
 # ===== CheckpointManager / CircuitBreaker / RetryPolicy =====
+
 
 class TestCheckpointManager:
     def test_save_and_load(self):
@@ -893,10 +968,12 @@ class TestRetryPolicy:
 
 # ===== Scheduler =====
 
+
 class TestScanSchedulerExtra:
     def test_compute_next_run_with_last_run(self):
         s = ScheduledScan(
-            id="s1", project_path="/tmp",
+            id="s1",
+            project_path="/tmp",
             frequency=ScheduleFrequency.DAILY,
             last_run=time.time() - 1000,
         )
@@ -937,7 +1014,8 @@ class TestScanSchedulerExtra:
             called.append(schedule.id)
 
         s = ScheduledScan(
-            id="s1", project_path="/tmp",
+            id="s1",
+            project_path="/tmp",
             frequency=ScheduleFrequency.HOURLY,
             next_run=time.time() - 1,
             enabled=True,
@@ -945,8 +1023,10 @@ class TestScanSchedulerExtra:
         sched.schedules["s1"] = s
         sched._running = True
         with patch("fusion_security.engine.scheduler.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
             async def stop_after_first_sleep(*args, **kwargs):
                 sched._running = False
+
             mock_sleep.side_effect = stop_after_first_sleep
             await sched._run_loop(callback)
         assert "s1" in called
@@ -959,7 +1039,8 @@ class TestScanSchedulerExtra:
             called.append(schedule.id)
 
         s = ScheduledScan(
-            id="s1", project_path="/tmp",
+            id="s1",
+            project_path="/tmp",
             frequency=ScheduleFrequency.HOURLY,
             next_run=time.time() - 1,
             enabled=False,
@@ -967,8 +1048,10 @@ class TestScanSchedulerExtra:
         sched.schedules["s1"] = s
         sched._running = True
         with patch("fusion_security.engine.scheduler.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
             async def stop_after_first(*args, **kwargs):
                 sched._running = False
+
             mock_sleep.side_effect = stop_after_first
             await sched._run_loop(callback)
         assert "s1" not in called
@@ -980,7 +1063,8 @@ class TestScanSchedulerExtra:
             raise RuntimeError("scan failed")
 
         s = ScheduledScan(
-            id="s1", project_path="/tmp",
+            id="s1",
+            project_path="/tmp",
             frequency=ScheduleFrequency.HOURLY,
             next_run=time.time() - 1,
             enabled=True,
@@ -988,20 +1072,23 @@ class TestScanSchedulerExtra:
         sched.schedules["s1"] = s
         sched._running = True
         with patch("fusion_security.engine.scheduler.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+
             async def stop_after_first(*args, **kwargs):
                 sched._running = False
+
             mock_sleep.side_effect = stop_after_first
             await sched._run_loop(bad_callback)
 
 
 # ===== Webhook =====
 
+
 class TestWebhookExtra:
     def test_send_with_secret(self):
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://localhost:9999/hook", secret="my_secret_key")
         body = json.dumps({"event": "test", "payload": {}}).encode("utf-8")
-        expected_sig = hmac.new(b"my_secret_key", body, hashlib.sha256).hexdigest()
+        hmac.new(b"my_secret_key", body, hashlib.sha256).hexdigest()
         with patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen:
             mock_resp = MagicMock()
             mock_resp.status = 200
@@ -1025,6 +1112,7 @@ class TestWebhookExtra:
 
     def test_send_url_error(self):
         from urllib.error import URLError
+
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://localhost:9999/hook")
         with patch("fusion_security.engine.ci.webhook.urlopen", side_effect=URLError("fail")):
@@ -1074,6 +1162,7 @@ class TestWebhookExtra:
 
 # ===== Scanner extra =====
 
+
 class TestScannerExtra:
     @pytest.fixture
     def temp_project(self):
@@ -1102,8 +1191,8 @@ class TestScannerExtra:
     async def test_scan_with_cache(self, temp_project):
         scanner = Scanner(use_ai=False, enable_cache=True)
         target = ScanTarget(temp_project)
-        result1 = await scanner.scan(target)
-        result2 = await scanner.scan(target)
+        await scanner.scan(target)
+        await scanner.scan(target)
         assert scanner.cache.stats["hits"] > 0
 
     async def test_scan_severity_threshold(self, temp_project):
@@ -1241,11 +1330,11 @@ class TestScannerExtra:
 
 # ===== GitHelper =====
 
+
 class TestGitHelper:
     def test_init_not_git_repo(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with pytest.raises(ValueError, match="不是git仓库"):
-                GitHelper(tmpdir)
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="不是git仓库"):
+            GitHelper(tmpdir)
 
     def test_get_current_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1282,7 +1371,9 @@ class TestGitHelper:
             subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@test.com"], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "config", "user.name", "test"], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "init"], capture_output=True)
-            head = subprocess.run(["git", "-C", tmpdir, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            head = subprocess.run(
+                ["git", "-C", tmpdir, "rev-parse", "HEAD"], capture_output=True, text=True
+            ).stdout.strip()
             helper = GitHelper(tmpdir)
             result = helper.get_changed_files(base=head, head=head)
             assert isinstance(result, DiffResult)
@@ -1331,7 +1422,9 @@ class TestGitHelper:
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "first"], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "second"], capture_output=True)
             helper = GitHelper(tmpdir)
-            head = subprocess.run(["git", "-C", tmpdir, "rev-parse", "HEAD~1"], capture_output=True, text=True).stdout.strip()
+            head = subprocess.run(
+                ["git", "-C", tmpdir, "rev-parse", "HEAD~1"], capture_output=True, text=True
+            ).stdout.strip()
             commits = helper.list_commits(base=head, head="HEAD")
             assert len(commits) >= 1
 
@@ -1340,7 +1433,10 @@ class TestGitHelper:
             subprocess.run(["git", "init", tmpdir], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "init"], capture_output=True)
             helper = GitHelper(tmpdir)
-            with patch("fusion_security.engine.vcs.git.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=1)):
+            with patch(
+                "fusion_security.engine.vcs.git.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="git", timeout=1),
+            ):
                 result = helper._run_git("status")
                 assert result == ""
 
@@ -1377,7 +1473,8 @@ class TestGitHelper:
             helper = GitHelper(tmpdir)
             head = subprocess.run(
                 ["git", "-C", tmpdir, "rev-parse", "HEAD~1"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             ).stdout.strip()
             if head:
                 result = helper.get_changed_files(base=head, extensions=[".py"])

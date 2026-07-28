@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import projects, scans, vulnerabilities, system
-from .routes import integrations, patches, reports
 from .auth import auth_manager
+from .routes import integrations, patches, projects, reports, scans, system, vulnerabilities
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +16,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from ..db import init_db
+
     init_db()
     auth_manager.create_api_key("master", ["admin"])
     logger.info("Fusion-Security API 已启动, master key 已生成")

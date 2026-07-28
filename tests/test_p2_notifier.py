@@ -1,7 +1,5 @@
 import json
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from fusion_security.engine.ci.notifier import (
     DingTalkConfig,
@@ -70,7 +68,9 @@ class TestDingTalkNotifier:
 
     @patch("fusion_security.engine.ci.notifier._urllib_post", return_value=True)
     def test_send_markdown_format(self, mock_post):
-        cfg = DingTalkConfig(webhook_url="https://oapi.dingtalk.com/robot/send?access_token=x", events=["scan.completed"])
+        cfg = DingTalkConfig(
+            webhook_url="https://oapi.dingtalk.com/robot/send?access_token=x", events=["scan.completed"]
+        )
         n = DingTalkNotifier(cfg)
         result = n.send("scan.completed", "s1", 4, 1, 1, 1, 1, gate_passed=True)
         assert result is True
@@ -113,7 +113,7 @@ class TestUrllibPost:
         mock_resp.__enter__ = lambda s: mock_resp
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
-        assert _urllib_post("https://example.com", b'{}', {"Content-Type": "application/json"}) is True
+        assert _urllib_post("https://example.com", b"{}", {"Content-Type": "application/json"}) is True
 
     @patch("fusion_security.engine.ci.notifier.urlopen")
     def test_error_response_code(self, mock_urlopen):
@@ -123,4 +123,4 @@ class TestUrllibPost:
         mock_resp.__enter__ = lambda s: mock_resp
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
-        assert _urllib_post("https://example.com", b'{}', {"Content-Type": "application/json"}) is False
+        assert _urllib_post("https://example.com", b"{}", {"Content-Type": "application/json"}) is False

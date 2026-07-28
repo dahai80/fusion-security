@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...db import get_session
-from ...db.models import ProjectORM
-from ...db.convert import orm_to_project, project_to_orm
+from ...db.convert import project_to_orm
+from ...db.models import ProjectORM, ScanCacheORM, ScanORM
 from ...models.project import Project
 
 logger = logging.getLogger(__name__)
@@ -37,20 +36,23 @@ class ProjectResponse(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: Optional[str] = None
-    repo_url: Optional[str] = None
-    tech_stack: Optional[str] = None
-    default_branch: Optional[str] = None
-    ruleset_id: Optional[str] = None
-    local_path: Optional[str] = None
-    status: Optional[str] = None
+    name: str | None = None
+    repo_url: str | None = None
+    tech_stack: str | None = None
+    default_branch: str | None = None
+    ruleset_id: str | None = None
+    local_path: str | None = None
+    status: str | None = None
 
 
 @router.post("", response_model=ProjectResponse)
 def create_project(body: ProjectCreate, db: Session = Depends(get_session)):
     p = Project(
-        name=body.name, repo_url=body.repo_url, tech_stack=body.tech_stack,
-        default_branch=body.default_branch, ruleset_id=body.ruleset_id,
+        name=body.name,
+        repo_url=body.repo_url,
+        tech_stack=body.tech_stack,
+        default_branch=body.default_branch,
+        ruleset_id=body.ruleset_id,
         local_path=body.local_path,
     )
     orm = project_to_orm(p)
@@ -59,14 +61,19 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_session)):
     db.refresh(orm)
     logger.info(f"创建项目: {orm.name} ({orm.id})")
     return ProjectResponse(
-        id=orm.id, name=orm.name, repo_url=orm.repo_url,
-        tech_stack=orm.tech_stack, default_branch=orm.default_branch,
-        ruleset_id=orm.ruleset_id, local_path=orm.local_path, status=orm.status,
+        id=orm.id,
+        name=orm.name,
+        repo_url=orm.repo_url,
+        tech_stack=orm.tech_stack,
+        default_branch=orm.default_branch,
+        ruleset_id=orm.ruleset_id,
+        local_path=orm.local_path,
+        status=orm.status,
     )
 
 
-@router.get("", response_model=List[ProjectResponse])
-def list_projects(status: Optional[str] = None, limit: int = 100, offset: int = 0, db: Session = Depends(get_session)):
+@router.get("", response_model=list[ProjectResponse])
+def list_projects(status: str | None = None, limit: int = 100, offset: int = 0, db: Session = Depends(get_session)):
     limit = min(limit, 500)
     offset = max(offset, 0)
     q = db.query(ProjectORM)
@@ -75,12 +82,96 @@ def list_projects(status: Optional[str] = None, limit: int = 100, offset: int = 
     results = q.offset(offset).limit(limit).all()
     return [
         ProjectResponse(
-            id=o.id, name=o.name, repo_url=o.repo_url,
-            tech_stack=o.tech_stack, default_branch=o.default_branch,
-            ruleset_id=o.ruleset_id, local_path=o.local_path, status=o.status,
+            id=o.id,
+            name=o.name,
+            repo_url=o.repo_url,
+            tech_stack=o.tech_stack,
+            default_branch=o.default_branch,
+            ruleset_id=o.ruleset_id,
+            local_path=o.local_path,
+            status=o.status,
         )
         for o in results
     ]
+
+
+@router.get("/{project_id}/scan-summary")
+def project_scan_summary(project_id: str, db: Session = Depends(get_session)):
+    from sqlalchemy import func
+
+    proj = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    total_scans = (
+        db.query(func.count(ScanORM.id))
+        .filter(
+            ScanORM.project_id == project_id,
+        )
+        .scalar()
+    )
+
+    latest = (
+        db.query(ScanORM)
+        .filter(
+            ScanORM.project_id == project_id,
+        )
+        .order_by(ScanORM.created_at.desc())
+        .first()
+    )
+
+    latest_scan = None
+    if latest:
+        latest_scan = {
+            "id": latest.id,
+            "status": latest.status,
+            "scan_type": latest.scan_type,
+            "files_scanned": latest.files_scanned,
+            "total_vulnerabilities": latest.total_vulnerabilities,
+            "critical": latest.critical,
+            "high": latest.high,
+            "medium": latest.medium,
+            "low": latest.low,
+            "summary": latest.summary,
+            "created_at": latest.created_at.isoformat() if latest.created_at else "",
+        }
+
+    sev_rows = (
+        db.query(
+            ScanORM.severity_threshold,
+            func.sum(ScanORM.critical),
+            func.sum(ScanORM.high),
+            func.sum(ScanORM.medium),
+            func.sum(ScanORM.low),
+        )
+        .filter(ScanORM.project_id == project_id)
+        .first()
+    )
+
+    vuln_summary = {
+        "total_critical": int(sev_rows[1] or 0),
+        "total_high": int(sev_rows[2] or 0),
+        "total_medium": int(sev_rows[3] or 0),
+        "total_low": int(sev_rows[4] or 0),
+    }
+    vuln_summary["total"] = sum(vuln_summary.values())
+
+    cache_count = (
+        db.query(func.count(ScanCacheORM.id))
+        .filter(
+            ScanCacheORM.project_id == project_id,
+        )
+        .scalar()
+    )
+
+    logger.info(f"项目扫描摘要: project={project_id} scans={total_scans}")
+    return {
+        "project_id": project_id,
+        "total_scans": total_scans,
+        "latest_scan": latest_scan,
+        "vulnerability_summary": vuln_summary,
+        "cache_stats": {"cached_files": cache_count},
+    }
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -89,9 +180,14 @@ def get_project(project_id: str, db: Session = Depends(get_session)):
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectResponse(
-        id=o.id, name=o.name, repo_url=o.repo_url,
-        tech_stack=o.tech_stack, default_branch=o.default_branch,
-        ruleset_id=o.ruleset_id, local_path=o.local_path, status=o.status,
+        id=o.id,
+        name=o.name,
+        repo_url=o.repo_url,
+        tech_stack=o.tech_stack,
+        default_branch=o.default_branch,
+        ruleset_id=o.ruleset_id,
+        local_path=o.local_path,
+        status=o.status,
     )
 
 
@@ -118,9 +214,14 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     db.refresh(o)
     logger.info(f"更新项目: {project_id}")
     return ProjectResponse(
-        id=o.id, name=o.name, repo_url=o.repo_url,
-        tech_stack=o.tech_stack, default_branch=o.default_branch,
-        ruleset_id=o.ruleset_id, local_path=o.local_path, status=o.status,
+        id=o.id,
+        name=o.name,
+        repo_url=o.repo_url,
+        tech_stack=o.tech_stack,
+        default_branch=o.default_branch,
+        ruleset_id=o.ruleset_id,
+        local_path=o.local_path,
+        status=o.status,
     )
 
 

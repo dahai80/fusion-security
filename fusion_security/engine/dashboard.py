@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +18,21 @@ class DashboardStats:
     high_count: int = 0
     medium_count: int = 0
     low_count: int = 0
-    top_rules: List[Dict[str, Any]] = field(default_factory=list)
-    top_files: List[Dict[str, Any]] = field(default_factory=list)
-    severity_trend: List[Dict[str, Any]] = field(default_factory=list)
+    top_rules: list[dict[str, Any]] = field(default_factory=list)
+    top_files: list[dict[str, Any]] = field(default_factory=list)
+    severity_trend: list[dict[str, Any]] = field(default_factory=list)
     projects_count: int = 0
     avg_scan_duration_ms: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "total_scans": self.total_scans,
             "total_vulnerabilities": self.total_vulnerabilities,
             "severity_counts": {
-                "critical": self.critical_count, "high": self.high_count,
-                "medium": self.medium_count, "low": self.low_count,
+                "critical": self.critical_count,
+                "high": self.high_count,
+                "medium": self.medium_count,
+                "low": self.low_count,
             },
             "top_rules": self.top_rules[:10],
             "top_files": self.top_files[:10],
@@ -42,9 +44,9 @@ class DashboardStats:
 
 class DashboardAggregator:
     def __init__(self):
-        self._scan_history: List[Dict[str, Any]] = []
+        self._scan_history: list[dict[str, Any]] = []
 
-    def record_scan(self, scan_result: Dict[str, Any]) -> None:
+    def record_scan(self, scan_result: dict[str, Any]) -> None:
         self._scan_history.append(scan_result)
         logger.info(f"[Dashboard] 记录扫描: {scan_result.get('scan_id', 'unknown')}")
 
@@ -77,11 +79,11 @@ class DashboardAggregator:
         stats.avg_scan_duration_ms = total_duration / max(stats.total_scans, 1)
         stats.top_rules = [{"rule_id": r, "count": c} for r, c in rule_counter.most_common(10)]
         stats.top_files = [{"file_path": f, "count": c} for f, c in file_counter.most_common(10)]
-        stats.projects_count = len(set(s.get("project_path", "") for s in self._scan_history))
+        stats.projects_count = len({s.get("project_path", "") for s in self._scan_history})
 
         return stats
 
-    def get_trend(self, days: int = 7) -> List[Dict[str, Any]]:
+    def get_trend(self, days: int = 7) -> list[dict[str, Any]]:
         return [
             {
                 "date": s.get("completed_at", ""),

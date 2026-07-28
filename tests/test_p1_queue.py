@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
-from fusion_security.engine.queue import TaskQueue, ScanTask, TaskPriority, TaskStatus, WorkerPool
+from fusion_security.engine.queue import ScanTask, TaskPriority, TaskQueue, TaskStatus, WorkerPool
 
 
 @pytest.fixture
@@ -12,7 +13,6 @@ def queue():
 
 
 class TestScanTask:
-
     def test_default_values(self):
         task = ScanTask()
         assert task.task_id
@@ -36,7 +36,6 @@ class TestScanTask:
 
 
 class TestTaskQueue:
-
     @pytest.mark.asyncio
     async def test_enqueue_dequeue(self, queue):
         task = ScanTask(project_path="/tmp/a")
@@ -126,7 +125,6 @@ class TestTaskQueue:
 
 
 class TestWorkerPool:
-
     @pytest.mark.asyncio
     async def test_pool_start_stop(self, queue):
         pool = WorkerPool(queue, workers=2)

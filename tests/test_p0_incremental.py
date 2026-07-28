@@ -1,7 +1,8 @@
+from unittest.mock import patch
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from fusion_security.engine.vcs.git import GitHelper, DiffResult
+
+from fusion_security.engine.vcs.git import DiffResult, GitHelper
 
 
 class TestDiffResult:
@@ -11,9 +12,13 @@ class TestDiffResult:
         assert d.base_commit == ""
 
     def test_with_values(self):
-        d = DiffResult(base_commit="abc", head_commit="def",
-                       changed_files=["a.py", "b.js"],
-                       added_files=["a.py"], modified_files=["b.js"])
+        d = DiffResult(
+            base_commit="abc",
+            head_commit="def",
+            changed_files=["a.py", "b.js"],
+            added_files=["a.py"],
+            modified_files=["b.js"],
+        )
         assert len(d.changed_files) == 2
         assert len(d.added_files) == 1
 
@@ -106,12 +111,12 @@ class TestGitHelper:
 class TestIncrementalScan:
     def test_scan_incremental_via_scanner(self, tmp_path):
         from fusion_security.engine.scanner import Scanner, ScanTarget
+
         test_file = tmp_path / "vuln.py"
-        test_file.write_text('eval(user_input)')
+        test_file.write_text("eval(user_input)")
         target = ScanTarget(str(tmp_path))
         scanner = Scanner(use_ai=False)
         import asyncio
-        result = asyncio.run(scanner.scan_incremental(
-            target, ["vuln.py"], severity_threshold="low"
-        ))
+
+        result = asyncio.run(scanner.scan_incremental(target, ["vuln.py"], severity_threshold="low"))
         assert result.files_scanned >= 0

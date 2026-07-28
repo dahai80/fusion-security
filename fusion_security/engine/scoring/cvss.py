@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +37,19 @@ METRIC_VALUES = {
 
 
 class CVSS31Scorer:
-    def calculate(self, av: str = "N", ac: str = "L", pr: str = "N", ui: str = "N", s: str = "U", c: str = "N", i: str = "N", a: str = "N") -> CVSSResult:
+    def calculate(
+        self,
+        av: str = "N",
+        ac: str = "L",
+        pr: str = "N",
+        ui: str = "N",
+        s: str = "U",
+        c: str = "N",
+        i: str = "N",
+        a: str = "N",
+    ) -> CVSSResult:
         iss = self._impact_subscore(c, i, a)
-        if s == "U":
-            impact = 6.42 * iss
-        else:
-            impact = 7.52 * (iss - 0.029) - 3.25 * ((iss - 0.02) ** 15)
+        impact = 6.42 * iss if s == "U" else 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
 
         exploitability = self._exploitability_subscore(av, ac, pr, ui, s)
 
@@ -61,9 +66,17 @@ class CVSS31Scorer:
         vector = f"CVSS:3.1/AV:{av}/AC:{ac}/PR:{pr}/UI:{ui}/S:{s}/C:{c}/I:{i}/A:{a}"
 
         return CVSSResult(
-            vector=vector, base_score=base_score, severity=severity,
-            attack_vector=av, attack_complexity=ac, privileges_required=pr,
-            user_interaction=ui, scope=s, confidentiality=c, integrity=i, availability=a,
+            vector=vector,
+            base_score=base_score,
+            severity=severity,
+            attack_vector=av,
+            attack_complexity=ac,
+            privileges_required=pr,
+            user_interaction=ui,
+            scope=s,
+            confidentiality=c,
+            integrity=i,
+            availability=a,
         )
 
     def from_severity(self, severity: str) -> CVSSResult:

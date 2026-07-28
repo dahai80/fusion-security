@@ -7,13 +7,12 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 
-from . import __version__, __app_name__
+from . import __app_name__, __version__
+from .engine.pipeline import PipelineConfig, ScanPipeline
 from .engine.scanner import Scanner, ScanTarget
-from .engine.pipeline import ScanPipeline, PipelineConfig
 from .report.report import ReportGenerator
 from .utils.logger import setup_logger
 
@@ -35,25 +34,45 @@ def cli(verbose: bool):
 
 @cli.command()
 @click.argument("path", default=".")
-@click.option("--severity", "-s", default="low",
-              type=click.Choice(["critical", "high", "medium", "low"]),
-              help="最低报告级别")
+@click.option(
+    "--severity", "-s", default="low", type=click.Choice(["critical", "high", "medium", "low"]), help="最低报告级别"
+)
 @click.option("--output", "-o", default="", help="报告输出目录")
-@click.option("--format", "-f", "fmt", default="md",
-              type=click.Choice(["md", "json", "html", "all"]),
-              help="报告格式")
+@click.option("--format", "-f", "fmt", default="md", type=click.Choice(["md", "json", "html", "all"]), help="报告格式")
 @click.option("--no-ai", is_flag=True, help="禁用 AI 分析")
 @click.option("--model", "-m", default="", help="fusion-mlx 模型名称")
 @click.option("--pipeline", is_flag=True, help="使用5阶段流水线扫描")
 @click.option("--sca", is_flag=True, help="启用 SCA 依赖漏洞扫描")
 @click.option("--incremental", "-i", is_flag=True, help="增量扫描(仅扫描git diff变更文件)")
 @click.option("--base", "-b", default="", help="增量扫描基准commit(默认HEAD~1)")
-def scan(path: str, severity: str, output: str, fmt: str, no_ai: bool, model: str, pipeline: bool, sca: bool, incremental: bool, base: str):
+def scan(
+    path: str,
+    severity: str,
+    output: str,
+    fmt: str,
+    no_ai: bool,
+    model: str,
+    pipeline: bool,
+    sca: bool,
+    incremental: bool,
+    base: str,
+):
     """扫描代码安全漏洞。"""
     asyncio.run(_async_scan(path, severity, output, fmt, no_ai, model, pipeline, sca, incremental, base))
 
 
-async def _async_scan(path: str, severity: str, output: str, fmt: str, no_ai: bool, model: str, pipeline: bool, sca: bool, incremental: bool, base: str):
+async def _async_scan(
+    path: str,
+    severity: str,
+    output: str,
+    fmt: str,
+    no_ai: bool,
+    model: str,
+    pipeline: bool,
+    sca: bool,
+    incremental: bool,
+    base: str,
+):
     click.echo()
     click.echo("🔒 Fusion-Security 代码安全审计")
     click.echo("=" * 50)
@@ -62,6 +81,7 @@ async def _async_scan(path: str, severity: str, output: str, fmt: str, no_ai: bo
     if incremental:
         try:
             from .engine.vcs.git import GitHelper
+
             git = GitHelper(path)
             base_ref = base or "HEAD~1"
             diff = git.get_changed_files(base=base_ref, head="HEAD")
@@ -71,9 +91,7 @@ async def _async_scan(path: str, severity: str, output: str, fmt: str, no_ai: bo
             click.echo(f"  扫描模式: 🔄 增量扫描 ({base_ref}...HEAD)")
             click.echo(f"  变更文件: {len(diff.changed_files)} 个")
             click.echo()
-            incremental_files = [
-                str(Path(path) / f) for f in diff.changed_files
-            ]
+            incremental_files = [str(Path(path) / f) for f in diff.changed_files]
             target = ScanTarget(path, incremental_files=incremental_files)
             scanner = Scanner(use_ai=not no_ai, model=model)
             with click.progressbar(length=100, label="增量扫描中...") as bar:
@@ -89,13 +107,14 @@ async def _async_scan(path: str, severity: str, output: str, fmt: str, no_ai: bo
     if not incremental:
         if pipeline or sca:
             config = PipelineConfig(
-                use_ai=not no_ai, model=model,
+                use_ai=not no_ai,
+                model=model,
                 severity_threshold=severity,
                 enable_sca=sca or pipeline,
             )
             pl = ScanPipeline(config)
             click.echo(f"  扫描目标: {path}")
-            click.echo(f"  扫描模式: 🔄 5阶段流水线")
+            click.echo("  扫描模式: 🔄 5阶段流水线")
             click.echo(f"  AI 分析:  {'✅ 已启用' if not no_ai else '❌ 已禁用'}")
             click.echo(f"  SCA 扫描: {'✅ 已启用' if config.enable_sca else '❌ 已禁用'}")
             click.echo()
@@ -107,7 +126,7 @@ async def _async_scan(path: str, severity: str, output: str, fmt: str, no_ai: bo
             result = pl.to_scan_result(ctx)
 
             click.echo()
-            click.echo(f"  📊 阶段结果:")
+            click.echo("  📊 阶段结果:")
             for stage, info in ctx.stage_results.items():
                 dur = info.get("duration_ms", 0)
                 click.echo(f"    {stage}: {dur:.0f}ms")
@@ -170,20 +189,25 @@ async def _async_check(path: str):
     result = await scanner.scan(target)
 
     data = result.to_dict()
-    click.echo(json.dumps({
-        "vulnerabilities": data["total_vulnerabilities"],
-        "critical": data["critical"],
-        "high": data["high"],
-        "medium": data["medium"],
-        "low": data["low"],
-        "summary": data["summary"],
-    }))
+    click.echo(
+        json.dumps(
+            {
+                "vulnerabilities": data["total_vulnerabilities"],
+                "critical": data["critical"],
+                "high": data["high"],
+                "medium": data["medium"],
+                "low": data["low"],
+                "summary": data["summary"],
+            }
+        )
+    )
 
 
 @cli.command()
 def rules():
     """列出支持的检测规则。"""
     from .engine.rules.engine import RuleEngine
+
     engine = RuleEngine()
 
     click.echo()
@@ -203,7 +227,9 @@ def rules():
 def serve(host: str, port: int):
     """启动 Web API 服务。"""
     import uvicorn
+
     from .api.app import app
+
     click.echo(f"🔒 Fusion-Security API 启动: http://{host}:{port}")
     click.echo(f"   API 文档: http://{host}:{port}/docs")
     uvicorn.run(app, host=host, port=port, log_level="info")
@@ -211,17 +237,17 @@ def serve(host: str, port: int):
 
 @cli.command()
 @click.argument("path", default=".")
-@click.option("--policy", "-p", default="standard",
-              type=click.Choice(["strict", "standard", "permissive"]),
-              help="Gate 策略")
+@click.option(
+    "--policy", "-p", default="standard", type=click.Choice(["strict", "standard", "permissive"]), help="Gate 策略"
+)
 def gate(path: str, policy: str):
     """安全质量门禁检查（适合 CI/CD）。"""
-    from .engine.ci.gate import SecurityGate, GatePolicy
     asyncio.run(_async_gate(path, policy))
 
 
 async def _async_gate(path: str, policy: str):
-    from .engine.ci.gate import SecurityGate, GatePolicy
+    from .engine.ci.gate import GatePolicy, SecurityGate
+
     target = ScanTarget(path)
     scanner = Scanner(use_ai=False)
     result = await scanner.scan(target)
@@ -243,6 +269,7 @@ def sarif(path: str, output: str):
 
 async def _async_sarif(path: str, output: str):
     from .report.sarif import save_sarif
+
     target = ScanTarget(path)
     scanner = Scanner(use_ai=False)
     result = await scanner.scan(target)

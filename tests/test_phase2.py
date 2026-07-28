@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,7 +17,6 @@ from fusion_security.engine.pipeline import (
 from fusion_security.engine.sca.scanner import (
     Dependency,
     KnownVuln,
-    KNOWN_VULNS,
     SCAScanner,
 )
 
@@ -37,10 +33,12 @@ class TestSCAScanner:
 
     def test_parse_package_json(self):
         scanner = SCAScanner()
-        content = json.dumps({
-            "dependencies": {"express": "^4.18.2", "lodash": "~4.17.21"},
-            "devDependencies": {"jest": "^29.0.0"},
-        })
+        content = json.dumps(
+            {
+                "dependencies": {"express": "^4.18.2", "lodash": "~4.17.21"},
+                "devDependencies": {"jest": "^29.0.0"},
+            }
+        )
         deps = scanner._parse_package_json("/tmp/pkg.json", content)
         assert len(deps) == 3
         npm_deps = [d for d in deps if d.ecosystem == "npm"]
@@ -51,7 +49,9 @@ class TestSCAScanner:
 
     def test_parse_gomod(self):
         scanner = SCAScanner()
-        content = "module example\n\ngo 1.21\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.9.0\n\tgolang.org/x/text v0.3.7\n)\n"
+        content = (
+            "module example\n\ngo 1.21\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.9.0\n\tgolang.org/x/text v0.3.7\n)\n"
+        )
         deps = scanner._parse_gomod("/tmp/go.mod", content)
         assert len(deps) == 2
         assert deps[0].ecosystem == "gomod"
@@ -142,8 +142,11 @@ class TestPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_run_no_ai(self):
         config = PipelineConfig(
-            use_ai=False, enable_adversarial=False,
-            enable_sca=False, enable_taint=False, enable_patch=False,
+            use_ai=False,
+            enable_adversarial=False,
+            enable_sca=False,
+            enable_taint=False,
+            enable_patch=False,
         )
         pipeline = ScanPipeline(config)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -157,8 +160,11 @@ class TestPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_to_scan_result(self):
         config = PipelineConfig(
-            use_ai=False, enable_adversarial=False,
-            enable_sca=False, enable_taint=False, enable_patch=False,
+            use_ai=False,
+            enable_adversarial=False,
+            enable_sca=False,
+            enable_taint=False,
+            enable_patch=False,
         )
         pipeline = ScanPipeline(config)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,8 +185,11 @@ class TestPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_sca_integration(self):
         config = PipelineConfig(
-            use_ai=False, enable_adversarial=False,
-            enable_sca=True, enable_taint=False, enable_patch=False,
+            use_ai=False,
+            enable_adversarial=False,
+            enable_sca=True,
+            enable_taint=False,
+            enable_patch=False,
         )
         pipeline = ScanPipeline(config)
         assert pipeline.sca_scanner is not None

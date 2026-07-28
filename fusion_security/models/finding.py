@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, Dict
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -25,9 +25,10 @@ class Finding:
             self.id = f"find_{uuid.uuid4().hex[:12]}"
         if not self.created_at:
             from datetime import datetime
+
             self.created_at = datetime.now().isoformat()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "vuln_id": self.vuln_id,

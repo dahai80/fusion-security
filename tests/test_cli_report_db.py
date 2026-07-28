@@ -4,25 +4,31 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from fusion_security.cli import cli
-from fusion_security.db.session import init_db, get_session, Base, init_async_db, get_async_session
+from fusion_security.db.session import get_session, init_async_db, init_db
+from fusion_security.engine.scanner import ScanResult, ScanTarget
 from fusion_security.models.vulnerability import Vulnerability
 from fusion_security.report.report import ReportGenerator
-from fusion_security.engine.scanner import ScanResult, ScanTarget
 
 
 class TestVulnerabilityModel:
     def test_to_dict(self):
         v = Vulnerability(
-            id="V001", title="test", description="desc",
-            severity="high", confidence=90, file_path="a.py",
-            line_number=5, code_snippet="code here",
-            rule_id="R001", cwe_id="CWE-79", fix_suggestion="fix it",
+            id="V001",
+            title="test",
+            description="desc",
+            severity="high",
+            confidence=90,
+            file_path="a.py",
+            line_number=5,
+            code_snippet="code here",
+            rule_id="R001",
+            cwe_id="CWE-79",
+            fix_suggestion="fix it",
         )
         d = v.to_dict()
         assert d["id"] == "V001"
@@ -33,18 +39,28 @@ class TestVulnerabilityModel:
 
     def test_to_dict_truncates_snippet(self):
         v = Vulnerability(
-            id="V002", title="t", description="d",
-            severity="low", confidence=50, file_path="b.py",
-            line_number=1, code_snippet="x" * 500,
+            id="V002",
+            title="t",
+            description="d",
+            severity="low",
+            confidence=50,
+            file_path="b.py",
+            line_number=1,
+            code_snippet="x" * 500,
         )
         d = v.to_dict()
         assert len(d["code_snippet"]) <= 200
 
     def test_defaults(self):
         v = Vulnerability(
-            id="V003", title="t", description="d",
-            severity="medium", confidence=60, file_path="c.py",
-            line_number=1, code_snippet="s",
+            id="V003",
+            title="t",
+            description="d",
+            severity="medium",
+            confidence=60,
+            file_path="c.py",
+            line_number=1,
+            code_snippet="s",
         )
         assert v.rule_id == ""
         assert v.cwe_id == ""
@@ -74,6 +90,7 @@ class TestDBSession:
             db_path = os.path.join(tmpdir, "auto.db")
             with patch("fusion_security.db.session.DEFAULT_DB_PATH", db_path):
                 from fusion_security.db import session as sess
+
                 sess._SessionLocal = None
                 sess._engine = None
                 s = sess.get_session()
@@ -90,6 +107,7 @@ class TestDBSession:
             db_path = os.path.join(tmpdir, "async_auto.db")
             with patch("fusion_security.db.session.DEFAULT_DB_PATH", db_path):
                 from fusion_security.db import session as sess
+
                 sess._AsyncSessionLocal = None
                 sess._async_engine = None
                 s = sess.get_async_session()
@@ -117,10 +135,17 @@ class TestReportGenerator:
     def test_generate_markdown_with_vulns(self):
         rg = ReportGenerator()
         v = Vulnerability(
-            id="V001", title="SQL注入", description="desc",
-            severity="high", confidence=85, file_path="app.py",
-            line_number=10, code_snippet="cursor.execute(sql)",
-            rule_id="SQL001", cwe_id="CWE-89", fix_suggestion="参数化查询",
+            id="V001",
+            title="SQL注入",
+            description="desc",
+            severity="high",
+            confidence=85,
+            file_path="app.py",
+            line_number=10,
+            code_snippet="cursor.execute(sql)",
+            rule_id="SQL001",
+            cwe_id="CWE-89",
+            fix_suggestion="参数化查询",
         )
         result = self._make_result([v])
         md = rg.generate_markdown(result)
@@ -145,10 +170,17 @@ class TestReportGenerator:
     def test_generate_html_with_vulns(self):
         rg = ReportGenerator()
         v = Vulnerability(
-            id="V001", title="XSS", description="xss desc",
-            severity="critical", confidence=90, file_path="view.py",
-            line_number=5, code_snippet="innerHTML = user_input",
-            rule_id="XSS001", cwe_id="CWE-79", fix_suggestion="转义输出",
+            id="V001",
+            title="XSS",
+            description="xss desc",
+            severity="critical",
+            confidence=90,
+            file_path="view.py",
+            line_number=5,
+            code_snippet="innerHTML = user_input",
+            rule_id="XSS001",
+            cwe_id="CWE-79",
+            fix_suggestion="转义输出",
         )
         result = self._make_result([v])
         html = rg.generate_html(result)
@@ -159,9 +191,14 @@ class TestReportGenerator:
     def test_generate_html_vuln_without_fix(self):
         rg = ReportGenerator()
         v = Vulnerability(
-            id="V002", title="test", description="d",
-            severity="low", confidence=50, file_path="a.py",
-            line_number=1, code_snippet="code",
+            id="V002",
+            title="test",
+            description="d",
+            severity="low",
+            confidence=50,
+            file_path="a.py",
+            line_number=1,
+            code_snippet="code",
         )
         result = self._make_result([v])
         html = rg.generate_html(result)
@@ -243,7 +280,7 @@ class TestCLI:
             test_file.write_text("x = 1\n")
             result = runner.invoke(cli, ["check", tmpdir])
             assert result.exit_code == 0
-            json_line = [l for l in result.output.splitlines() if l.startswith("{")]
+            json_line = [line for line in result.output.splitlines() if line.startswith("{")]
             assert len(json_line) >= 1
             data = json.loads(json_line[0])
             assert "vulnerabilities" in data

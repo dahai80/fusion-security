@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Rule:
     source: str = "builtin"  # builtin | custom | imported
     prdid: str = ""  # PRD规则编号，如 FUS-INJ-001
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "group": self.group,
@@ -45,7 +45,7 @@ class RuleSet:
     id: str = ""
     name: str = ""
     description: str = ""
-    rules: List[Rule] = field(default_factory=list)
+    rules: list[Rule] = field(default_factory=list)
     scope: str = "global"  # global | project | team
     created_at: str = ""
 
@@ -54,9 +54,10 @@ class RuleSet:
             self.id = f"ruleset_{uuid.uuid4().hex[:8]}"
         if not self.created_at:
             from datetime import datetime
+
             self.created_at = datetime.now().isoformat()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,

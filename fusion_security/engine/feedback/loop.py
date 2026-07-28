@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,8 @@ class FeedbackStore:
     def __init__(self, store_path: str = "", max_entries: int = 10000):
         self.store_path = store_path
         self.max_entries = max_entries
-        self.entries: List[FeedbackEntry] = []
-        self._fp_signatures: Set[str] = set()
+        self.entries: list[FeedbackEntry] = []
+        self._fp_signatures: set[str] = set()
         if store_path:
             self._load()
 
@@ -58,22 +58,31 @@ class FeedbackStore:
 
     def filter_vulnerabilities(self, vulns: list) -> list:
         before = len(vulns)
-        filtered = [v for v in vulns if not self.is_false_positive(
-            getattr(v, "rule_id", ""), getattr(v, "file_path", ""), getattr(v, "line_number", 0)
-        )]
+        filtered = [
+            v
+            for v in vulns
+            if not self.is_false_positive(
+                getattr(v, "rule_id", ""), getattr(v, "file_path", ""), getattr(v, "line_number", 0)
+            )
+        ]
         removed = before - len(filtered)
         if removed:
             logger.info(f"[Feedback] 过滤 {removed} 个误报")
         return filtered
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         fp = sum(1 for e in self.entries if e.is_false_positive)
         tp = sum(1 for e in self.entries if not e.is_false_positive)
-        rule_fp: Dict[str, int] = {}
+        rule_fp: dict[str, int] = {}
         for e in self.entries:
             if e.is_false_positive:
                 rule_fp[e.rule_id] = rule_fp.get(e.rule_id, 0) + 1
-        return {"total_feedback": len(self.entries), "false_positives": fp, "true_positives": tp, "rules_with_fp": rule_fp}
+        return {
+            "total_feedback": len(self.entries),
+            "false_positives": fp,
+            "true_positives": tp,
+            "rules_with_fp": rule_fp,
+        }
 
     def _signature(self, entry: FeedbackEntry) -> str:
         return f"{entry.rule_id}:{entry.file_path}:{entry.line_number}"
@@ -85,13 +94,18 @@ class FeedbackStore:
             Path(self.store_path).parent.mkdir(parents=True, exist_ok=True)
             data = []
             for e in self.entries:
-                data.append({
-                    "vuln_id": e.vuln_id, "rule_id": e.rule_id,
-                    "file_path": e.file_path, "line_number": e.line_number,
-                    "is_false_positive": e.is_false_positive,
-                    "reason": e.reason, "timestamp": e.timestamp,
-                    "user": e.user,
-                })
+                data.append(
+                    {
+                        "vuln_id": e.vuln_id,
+                        "rule_id": e.rule_id,
+                        "file_path": e.file_path,
+                        "line_number": e.line_number,
+                        "is_false_positive": e.is_false_positive,
+                        "reason": e.reason,
+                        "timestamp": e.timestamp,
+                        "user": e.user,
+                    }
+                )
             with open(self.store_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -104,7 +118,7 @@ class FeedbackStore:
             p = Path(self.store_path)
             if not p.exists():
                 return
-            with open(p, "r", encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 data = json.load(f)
             for item in data:
                 entry = FeedbackEntry(

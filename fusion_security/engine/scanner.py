@@ -6,12 +6,12 @@ import logging
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from .rules.engine import RuleEngine
-from ..models.vulnerability import Vulnerability
 from ..models.project import Scan
+from ..models.vulnerability import Vulnerability
 from .ai.analyzer import AIAnalyzer
+from .rules.engine import RuleEngine
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class ScanCache:
     def __init__(self, max_entries: int = 5000, ttl_seconds: int = 3600):
         self.max_entries = max_entries
         self.ttl_seconds = ttl_seconds
-        self._cache: OrderedDict[str, Tuple[float, List[Vulnerability]]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[float, list[Vulnerability]]] = OrderedDict()
         self._hits = 0
         self._misses = 0
 
@@ -32,7 +32,7 @@ class ScanCache:
         h = hashlib.sha256(f"{file_path}:{content}".encode()).hexdigest()[:16]
         return h
 
-    def get(self, file_path: Path, content: str) -> Optional[List[Vulnerability]]:
+    def get(self, file_path: Path, content: str) -> list[Vulnerability] | None:
         key = self._make_key(file_path, content)
         if key in self._cache:
             ts, vulns = self._cache[key]
@@ -44,7 +44,7 @@ class ScanCache:
         self._misses += 1
         return None
 
-    def put(self, file_path: Path, content: str, vulns: List[Vulnerability]) -> None:
+    def put(self, file_path: Path, content: str, vulns: list[Vulnerability]) -> None:
         key = self._make_key(file_path, content)
         self._cache[key] = (time.time(), vulns)
         self._cache.move_to_end(key)
@@ -62,7 +62,7 @@ class ScanCache:
         self._misses = 0
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         total = self._hits + self._misses
         return {
             "entries": len(self._cache),
@@ -79,26 +79,56 @@ class ScanTarget:
         recursive: bool = True,
         max_file_size: int = DEFAULT_MAX_FILE_SIZE,
         max_files: int = DEFAULT_MAX_FILES,
-        incremental_files: Optional[List[str]] = None,
+        incremental_files: list[str] | None = None,
     ):
         self.path = Path(path).expanduser().resolve()
         self.recursive = recursive
         self.max_file_size = max_file_size
         self.max_files = max_files
-        self.files: List[Path] = []
-        self._incremental_files: List[str] = incremental_files or []
+        self.files: list[Path] = []
+        self._incremental_files: list[str] = incremental_files or []
 
-    def discover(self, extensions: Optional[Set[str]] = None) -> List[Path]:
+    def discover(self, extensions: set[str] | None = None) -> list[Path]:
         if not extensions:
             extensions = {
-                '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs',
-                '.php', '.rb', '.swift', '.kt', '.scala', '.cs', '.c', '.cpp',
-                '.h', '.hpp', '.yaml', '.yml', '.json', '.xml', '.sql', '.sh',
+                ".py",
+                ".js",
+                ".ts",
+                ".jsx",
+                ".tsx",
+                ".java",
+                ".go",
+                ".rs",
+                ".php",
+                ".rb",
+                ".swift",
+                ".kt",
+                ".scala",
+                ".cs",
+                ".c",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".yaml",
+                ".yml",
+                ".json",
+                ".xml",
+                ".sql",
+                ".sh",
             }
 
         exclude_dirs = {
-            '.git', '__pycache__', 'node_modules', 'venv', '.venv',
-            '.egg-info', 'dist', 'build', '.build', '.svn', '.gitlab',
+            ".git",
+            "__pycache__",
+            "node_modules",
+            "venv",
+            ".venv",
+            ".egg-info",
+            "dist",
+            "build",
+            ".build",
+            ".svn",
+            ".gitlab",
         }
 
         if self.path.is_file():
@@ -123,14 +153,33 @@ class ScanTarget:
         logger.info(f"发现 {len(self.files)} 个文件待扫描")
         return self.files
 
-    def discover_incremental(
-        self, changed_files: List[str], extensions: Optional[Set[str]] = None
-    ) -> List[Path]:
+    def discover_incremental(self, changed_files: list[str], extensions: set[str] | None = None) -> list[Path]:
         if not extensions:
             extensions = {
-                '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs',
-                '.php', '.rb', '.swift', '.kt', '.scala', '.cs', '.c', '.cpp',
-                '.h', '.hpp', '.yaml', '.yml', '.json', '.xml', '.sql', '.sh',
+                ".py",
+                ".js",
+                ".ts",
+                ".jsx",
+                ".tsx",
+                ".java",
+                ".go",
+                ".rs",
+                ".php",
+                ".rb",
+                ".swift",
+                ".kt",
+                ".scala",
+                ".cs",
+                ".c",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".yaml",
+                ".yml",
+                ".json",
+                ".xml",
+                ".sql",
+                ".sh",
             }
 
         self.files = []
@@ -149,21 +198,21 @@ class ScanTarget:
     def _check_file_size(self, path: Path) -> bool:
         try:
             return path.stat().st_size <= self.max_file_size
-        except (OSError, IOError):
+        except OSError:
             return False
 
 
 class ScanResult:
     def __init__(self, target: ScanTarget):
         self.target = target
-        self.scan: Optional[Scan] = None
-        self.vulnerabilities: List[Vulnerability] = []
+        self.scan: Scan | None = None
+        self.vulnerabilities: list[Vulnerability] = []
         self.files_scanned: int = 0
         self.files_skipped: int = 0
         self.duration_ms: float = 0.0
         self.summary: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "target": str(self.target.path),
             "files_scanned": self.files_scanned,
@@ -194,12 +243,18 @@ class ScanResult:
 
 
 class Scanner:
-    def __init__(self, use_ai: bool = True, model: str = "", enable_cache: bool = True):
+    def __init__(self, use_ai: bool = True, model: str = "", enable_cache: bool = True, project_id: str = "", db=None):
         self.use_ai = use_ai
         self.model = model
         self.rule_engine = RuleEngine()
         self.ai_analyzer = AIAnalyzer(model=model) if use_ai else None
         self.cache = ScanCache() if enable_cache else None
+        self.project_id = project_id
+        self._project_cache = None
+        if project_id and db:
+            from .cache import ProjectScanCache
+
+            self._project_cache = ProjectScanCache(db)
 
     async def scan(
         self,
@@ -213,14 +268,30 @@ class Scanner:
 
         logger.info(f"开始扫描: {target.path} ({len(files)} 个文件)")
 
-        async def scan_file(file_path: Path) -> List[Vulnerability]:
+        async def scan_file(file_path: Path) -> list[Vulnerability]:
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
+                if self._project_cache:
+                    rel = (
+                        str(file_path.relative_to(target.path))
+                        if file_path.is_relative_to(target.path)
+                        else str(file_path)
+                    )
+                    cached = self._project_cache.get(self.project_id, rel, content)
+                    if cached is not None:
+                        return cached
                 if self.cache:
                     cached = self.cache.get(file_path, content)
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file_full(file_path, content)
+                if self._project_cache:
+                    rel = (
+                        str(file_path.relative_to(target.path))
+                        if file_path.is_relative_to(target.path)
+                        else str(file_path)
+                    )
+                    self._project_cache.put(self.project_id, rel, content, vulns)
                 if self.cache:
                     self.cache.put(file_path, content, vulns)
                 return vulns
@@ -231,18 +302,14 @@ class Scanner:
 
         batch_size = 50
         for i in range(0, len(files), batch_size):
-            batch = files[i:i + batch_size]
-            batch_results = await asyncio.gather(
-                *[scan_file(f) for f in batch], return_exceptions=True
-            )
+            batch = files[i : i + batch_size]
+            batch_results = await asyncio.gather(*[scan_file(f) for f in batch], return_exceptions=True)
             for findings in batch_results:
                 if isinstance(findings, list):
                     result.vulnerabilities.extend(findings)
 
         if self.ai_analyzer and result.vulnerabilities:
-            verified = await self.ai_analyzer.verify_findings(
-                result.vulnerabilities, files
-            )
+            verified = await self.ai_analyzer.verify_findings(result.vulnerabilities, files)
             result.vulnerabilities = verified
 
         if self.ai_analyzer and result.vulnerabilities:
@@ -251,10 +318,7 @@ class Scanner:
 
         levels = {"critical": 0, "high": 1, "medium": 2, "low": 3}
         threshold = levels.get(severity_threshold, 3)
-        result.vulnerabilities = [
-            v for v in result.vulnerabilities
-            if levels.get(v.severity, 3) <= threshold
-        ]
+        result.vulnerabilities = [v for v in result.vulnerabilities if levels.get(v.severity, 3) <= threshold]
 
         result.duration_ms = (time.time() - start) * 1000
         self._generate_summary(result)
@@ -266,7 +330,7 @@ class Scanner:
     async def scan_incremental(
         self,
         target: ScanTarget,
-        changed_files: List[str],
+        changed_files: list[str],
         severity_threshold: str = "low",
     ) -> ScanResult:
         start = time.time()
@@ -276,14 +340,30 @@ class Scanner:
 
         logger.info(f"增量扫描: {target.path} ({len(files)} 个变更文件)")
 
-        async def scan_file(file_path: Path) -> List[Vulnerability]:
+        async def scan_file(file_path: Path) -> list[Vulnerability]:
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
+                if self._project_cache:
+                    rel = (
+                        str(file_path.relative_to(target.path))
+                        if file_path.is_relative_to(target.path)
+                        else str(file_path)
+                    )
+                    cached = self._project_cache.get(self.project_id, rel, content)
+                    if cached is not None:
+                        return cached
                 if self.cache:
                     cached = self.cache.get(file_path, content)
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file_full(file_path, content)
+                if self._project_cache:
+                    rel = (
+                        str(file_path.relative_to(target.path))
+                        if file_path.is_relative_to(target.path)
+                        else str(file_path)
+                    )
+                    self._project_cache.put(self.project_id, rel, content, vulns)
                 if self.cache:
                     self.cache.put(file_path, content, vulns)
                 return vulns
@@ -293,25 +373,18 @@ class Scanner:
                 return []
 
         if files:
-            batch_results = await asyncio.gather(
-                *[scan_file(f) for f in files], return_exceptions=True
-            )
+            batch_results = await asyncio.gather(*[scan_file(f) for f in files], return_exceptions=True)
             for findings in batch_results:
                 if isinstance(findings, list):
                     result.vulnerabilities.extend(findings)
 
         if self.ai_analyzer and result.vulnerabilities:
-            verified = await self.ai_analyzer.verify_findings(
-                result.vulnerabilities, files
-            )
+            verified = await self.ai_analyzer.verify_findings(result.vulnerabilities, files)
             result.vulnerabilities = verified
 
         levels = {"critical": 0, "high": 1, "medium": 2, "low": 3}
         threshold = levels.get(severity_threshold, 3)
-        result.vulnerabilities = [
-            v for v in result.vulnerabilities
-            if levels.get(v.severity, 3) <= threshold
-        ]
+        result.vulnerabilities = [v for v in result.vulnerabilities if levels.get(v.severity, 3) <= threshold]
 
         result.duration_ms = (time.time() - start) * 1000
         self._generate_summary(result)
@@ -321,7 +394,7 @@ class Scanner:
         self,
         path: str,
         severity_threshold: str = "low",
-        extensions: Optional[Set[str]] = None,
+        extensions: set[str] | None = None,
     ) -> ScanResult:
         target = ScanTarget(path)
         if extensions:

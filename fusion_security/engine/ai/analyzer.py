@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ...models.vulnerability import Vulnerability
 
@@ -33,10 +33,11 @@ class AIAnalyzer:
     def client(self):
         if self._client is None:
             import httpx
+
             self._client = httpx.AsyncClient(base_url=self.mlx_url, timeout=120.0)
         return self._client
 
-    async def _chat(self, messages: List[Dict]) -> str:
+    async def _chat(self, messages: list[dict]) -> str:
         if not self.model:
             try:
                 models = await self.client.get("/models")
@@ -60,9 +61,9 @@ class AIAnalyzer:
 
     async def verify_findings(
         self,
-        findings: List[Vulnerability],
-        files: List[Path],
-    ) -> List[Vulnerability]:
+        findings: list[Vulnerability],
+        files: list[Path],
+    ) -> list[Vulnerability]:
         if not findings:
             return findings
 
@@ -86,10 +87,12 @@ CWE编号: {vuln.cwe_id}
 
 只返回JSON格式：{{"is_real": true/false, "reason": "...", "confidence": 0-100, "exploit": "..."}}"""
             try:
-                response = await self._chat([
-                    {"role": "system", "content": "你是一个代码安全专家。严格验证漏洞是否真实存在。"},
-                    {"role": "user", "content": prompt},
-                ])
+                response = await self._chat(
+                    [
+                        {"role": "system", "content": "你是一个代码安全专家。严格验证漏洞是否真实存在。"},
+                        {"role": "user", "content": prompt},
+                    ]
+                )
                 result = self._parse_json(response)
                 if result and result.get("is_real", False):
                     vuln.verified = True
@@ -106,7 +109,7 @@ CWE编号: {vuln.cwe_id}
 
         return verified
 
-    async def semantic_scan(self, files: List[Path]) -> List[Vulnerability]:
+    async def semantic_scan(self, files: list[Path]) -> list[Vulnerability]:
         if not files:
             return []
 
@@ -123,9 +126,7 @@ CWE编号: {vuln.cwe_id}
         if not code_summary:
             return []
 
-        rule_hints = "\n".join(
-            f"- {r.prdid} {r.name}: {r.prompt_hint}" for r in AI_SEMANTIC_RULES
-        )
+        rule_hints = "\n".join(f"- {r.prdid} {r.name}: {r.prompt_hint}" for r in AI_SEMANTIC_RULES)
 
         prompt = f"""你是一个安全专家。分析以下代码，找出潜在的逻辑安全漏洞。
 
@@ -144,10 +145,12 @@ CWE编号: {vuln.cwe_id}
 若无漏洞返回空数组 []"""
 
         try:
-            response = await self._chat([
-                {"role": "system", "content": "你是一个代码安全专家。分析代码中的逻辑漏洞。"},
-                {"role": "user", "content": prompt},
-            ])
+            response = await self._chat(
+                [
+                    {"role": "system", "content": "你是一个代码安全专家。分析代码中的逻辑漏洞。"},
+                    {"role": "user", "content": prompt},
+                ]
+            )
             results = self._parse_json(response, as_array=True)
             findings = []
             for r in results:
@@ -193,10 +196,12 @@ CWE编号: {vuln.cwe_id}
 
 请生成修复后的代码，只返回代码本身，不要解释。"""
         try:
-            return await self._chat([
-                {"role": "system", "content": "你是一个安全修复专家。生成修复代码，只返回代码。"},
-                {"role": "user", "content": prompt},
-            ])
+            return await self._chat(
+                [
+                    {"role": "system", "content": "你是一个安全修复专家。生成修复代码，只返回代码。"},
+                    {"role": "user", "content": prompt},
+                ]
+            )
         except Exception as e:
             return f"// 修复生成失败: {e}"
 

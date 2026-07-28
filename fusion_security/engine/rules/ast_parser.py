@@ -5,19 +5,18 @@ import multiprocessing as mp
 import signal
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from tree_sitter import Language, Parser, Node
-
-import tree_sitter_python as tspython
-import tree_sitter_javascript as tsjavascript
-import tree_sitter_java as tsjava
-import tree_sitter_go as tsgo
 import tree_sitter_c as tsc
 import tree_sitter_cpp as tscpp
-import tree_sitter_rust as tsrust
-import tree_sitter_ruby as tsruby
+import tree_sitter_go as tsgo
+import tree_sitter_java as tsjava
+import tree_sitter_javascript as tsjavascript
 import tree_sitter_php as tsphp
+import tree_sitter_python as tspython
+import tree_sitter_ruby as tsruby
+import tree_sitter_rust as tsrust
+from tree_sitter import Language, Node, Parser
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +47,10 @@ class ASTNode:
     end_line: int
     start_col: int
     end_col: int
-    children: List[ASTNode] = field(default_factory=list)
+    children: list[ASTNode] = field(default_factory=list)
     parent_type: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.node_type,
             "text": self.text[:200],
@@ -64,17 +63,17 @@ class ASTNode:
 @dataclass
 class FunctionDef:
     name: str
-    params: List[str]
+    params: list[str]
     start_line: int
     end_line: int
     body: str
-    calls: List[str] = field(default_factory=list)
+    calls: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ImportStmt:
     module: str
-    names: List[str]
+    names: list[str]
     line: int
 
 
@@ -82,18 +81,28 @@ class ImportStmt:
 class ASTResult:
     file_path: str
     language: str
-    functions: List[FunctionDef] = field(default_factory=list)
-    imports: List[ImportStmt] = field(default_factory=list)
-    assignments: List[Dict[str, Any]] = field(default_factory=list)
-    calls: List[Dict[str, Any]] = field(default_factory=list)
-    strings: List[Dict[str, Any]] = field(default_factory=list)
-    decorators: List[Dict[str, Any]] = field(default_factory=list)
+    functions: list[FunctionDef] = field(default_factory=list)
+    imports: list[ImportStmt] = field(default_factory=list)
+    assignments: list[dict[str, Any]] = field(default_factory=list)
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    strings: list[dict[str, Any]] = field(default_factory=list)
+    decorators: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
             "language": self.language,
-            "functions": [{"name": f.name, "params": f.params, "start_line": f.start_line, "end_line": f.end_line, "body": f.body, "calls": f.calls} for f in self.functions],
+            "functions": [
+                {
+                    "name": f.name,
+                    "params": f.params,
+                    "start_line": f.start_line,
+                    "end_line": f.end_line,
+                    "body": f.body,
+                    "calls": f.calls,
+                }
+                for f in self.functions
+            ],
             "imports": [{"module": i.module, "names": i.names, "line": i.line} for i in self.imports],
             "assignments": self.assignments,
             "calls": self.calls,
@@ -102,7 +111,7 @@ class ASTResult:
         }
 
 
-def _dict_to_ast_result(data: Dict[str, Any]) -> ASTResult:
+def _dict_to_ast_result(data: dict[str, Any]) -> ASTResult:
     result = ASTResult(
         file_path=data.get("file_path", ""),
         language=data.get("language", ""),
@@ -112,16 +121,24 @@ def _dict_to_ast_result(data: Dict[str, Any]) -> ASTResult:
         decorators=data.get("decorators", []),
     )
     for f in data.get("functions", []):
-        result.functions.append(FunctionDef(
-            name=f.get("name", ""), params=f.get("params", []),
-            start_line=f.get("start_line", 0), end_line=f.get("end_line", 0),
-            body=f.get("body", ""), calls=f.get("calls", []),
-        ))
+        result.functions.append(
+            FunctionDef(
+                name=f.get("name", ""),
+                params=f.get("params", []),
+                start_line=f.get("start_line", 0),
+                end_line=f.get("end_line", 0),
+                body=f.get("body", ""),
+                calls=f.get("calls", []),
+            )
+        )
     for i in data.get("imports", []):
-        result.imports.append(ImportStmt(
-            module=i.get("module", ""), names=i.get("names", []),
-            line=i.get("line", 0),
-        ))
+        result.imports.append(
+            ImportStmt(
+                module=i.get("module", ""),
+                names=i.get("names", []),
+                line=i.get("line", 0),
+            )
+        )
     return result
 
 
@@ -129,9 +146,9 @@ class ASTParser:
     SUBPROCESS_SIZE_THRESHOLD = 100 * 1024  # 100KB 以上走子进程
 
     def __init__(self):
-        self._parsers: Dict[str, Parser] = {}
+        self._parsers: dict[str, Parser] = {}
 
-    def _get_parser(self, ext: str) -> Optional[Parser]:
+    def _get_parser(self, ext: str) -> Parser | None:
         if ext in self._parsers:
             return self._parsers[ext]
         lang = LANGUAGE_MAP.get(ext)
@@ -141,7 +158,7 @@ class ASTParser:
         self._parsers[ext] = p
         return p
 
-    def parse(self, file_path: Path, content: str) -> Optional[ASTResult]:
+    def parse(self, file_path: Path, content: str) -> ASTResult | None:
         ext = file_path.suffix
         parser = self._get_parser(ext)
         if not parser:
@@ -153,7 +170,7 @@ class ASTParser:
 
         return self._parse_inner(parser, file_path, content, ext)
 
-    def _parse_inner(self, parser: Parser, file_path: Path, content: str, ext: str) -> Optional[ASTResult]:
+    def _parse_inner(self, parser: Parser, file_path: Path, content: str, ext: str) -> ASTResult | None:
         try:
             tree = parser.parse(content.encode("utf-8"))
             root = tree.root_node
@@ -165,7 +182,7 @@ class ASTParser:
             logger.warning(f"AST 解析失败 {file_path}: {e}")
             return None
 
-    def _parse_in_subprocess(self, file_path: Path, content: str, ext: str) -> Optional[ASTResult]:
+    def _parse_in_subprocess(self, file_path: Path, content: str, ext: str) -> ASTResult | None:
         def _worker(conn):
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
@@ -180,7 +197,7 @@ class ASTParser:
                 result = ASTResult(file_path=str(file_path), language=lang_name)
                 _fill_result(root, content, result, ext)
                 conn.send(result.to_dict())
-            except Exception as e:
+            except Exception:
                 conn.send(None)
             finally:
                 conn.close()
@@ -242,15 +259,15 @@ class ASTParser:
                 for member in child.children:
                     if member.type == "function_definition":
                         result.functions.append(self._extract_function(member, content))
-            elif child.type == "import_statement":
-                result.imports.append(self._extract_import(child, content))
-            elif child.type == "import_from_statement":
+            elif child.type == "import_statement" or child.type == "import_from_statement":
                 result.imports.append(self._extract_import(child, content))
             elif child.type == "decorator":
-                result.decorators.append({
-                    "name": child.text.decode("utf-8", errors="ignore"),
-                    "line": child.start_point[0] + 1,
-                })
+                result.decorators.append(
+                    {
+                        "name": child.text.decode("utf-8", errors="ignore"),
+                        "line": child.start_point[0] + 1,
+                    }
+                )
 
             self._collect_calls_and_strings(child, content, result)
             self._walk_python(child, content, result)
@@ -351,10 +368,12 @@ class ASTParser:
             calls = self._find_calls_in_node(body_node)
 
         return FunctionDef(
-            name=name, params=params,
+            name=name,
+            params=params,
             start_line=node.start_point[0] + 1,
             end_line=node.end_point[0] + 1,
-            body=body, calls=calls,
+            body=body,
+            calls=calls,
         )
 
     def _extract_import(self, node: Node, content: str) -> ImportStmt:
@@ -365,7 +384,8 @@ class ASTParser:
             if c.type == "identifier" or c.type == "dotted_name"
         ]
         return ImportStmt(
-            module=text, names=names,
+            module=text,
+            names=names,
             line=node.start_point[0] + 1,
         )
 
@@ -373,29 +393,37 @@ class ASTParser:
         if node.type == "call":
             func_name = node.child_by_field_name("function")
             if func_name:
-                result.calls.append({
-                    "name": func_name.text.decode("utf-8", errors="ignore"),
-                    "line": node.start_point[0] + 1,
-                    "args_count": len([c for c in node.children if c.type not in ("identifier", "call_expression")]),
-                })
+                result.calls.append(
+                    {
+                        "name": func_name.text.decode("utf-8", errors="ignore"),
+                        "line": node.start_point[0] + 1,
+                        "args_count": len(
+                            [c for c in node.children if c.type not in ("identifier", "call_expression")]
+                        ),
+                    }
+                )
         elif node.type == "string":
             text = node.text.decode("utf-8", errors="ignore")
             if len(text) > 5 and len(text) < 500:
-                result.strings.append({
-                    "value": text,
-                    "line": node.start_point[0] + 1,
-                })
+                result.strings.append(
+                    {
+                        "value": text,
+                        "line": node.start_point[0] + 1,
+                    }
+                )
         elif node.type == "assignment":
             left = node.child_by_field_name("left")
             right = node.child_by_field_name("right")
             if left and right:
-                result.assignments.append({
-                    "name": left.text.decode("utf-8", errors="ignore"),
-                    "value": right.text.decode("utf-8", errors="ignore")[:200],
-                    "line": node.start_point[0] + 1,
-                })
+                result.assignments.append(
+                    {
+                        "name": left.text.decode("utf-8", errors="ignore"),
+                        "value": right.text.decode("utf-8", errors="ignore")[:200],
+                        "line": node.start_point[0] + 1,
+                    }
+                )
 
-    def _find_calls_in_node(self, node: Node) -> List[str]:
+    def _find_calls_in_node(self, node: Node) -> list[str]:
         calls = []
         if node.type == "call":
             func = node.child_by_field_name("function")
@@ -405,5 +433,5 @@ class ASTParser:
             calls.extend(self._find_calls_in_node(child))
         return calls
 
-    def get_supported_extensions(self) -> Set[str]:
+    def get_supported_extensions(self) -> set[str]:
         return set(LANGUAGE_MAP.keys())

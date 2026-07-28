@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from fusion_security.engine.rules.engine import RuleEngine, ScanRule
-from fusion_security.models import Vulnerability
-from fusion_security.engine.scanner import Scanner, ScanTarget, ScanResult
-from fusion_security.report.report import ReportGenerator
 from fusion_security.engine.fix.fix_generator import FixGenerator
+from fusion_security.engine.rules.engine import RuleEngine, ScanRule
+from fusion_security.engine.scanner import Scanner, ScanResult, ScanTarget
+from fusion_security.models import Vulnerability
 from fusion_security.models.patch import Patch as FixPatch
+from fusion_security.report.report import ReportGenerator
 
 
 class TestRuleEngine:
@@ -64,7 +64,7 @@ class TestRuleEngine:
             path.unlink()
 
     def test_scan_xss(self):
-        content = 'element.innerHTML = user_input'
+        content = "element.innerHTML = user_input"
         with tempfile.NamedTemporaryFile(suffix=".js", delete=False, mode="w") as f:
             f.write(content)
             f.flush()
@@ -93,8 +93,12 @@ class TestRuleEngine:
 
     def test_add_custom_rule(self):
         rule = ScanRule(
-            id="CUSTOM001", name="自定义规则", description="测试",
-            severity="high", cwe_id="CWE-000", pattern=r"dangerous_func"
+            id="CUSTOM001",
+            name="自定义规则",
+            description="测试",
+            severity="high",
+            cwe_id="CWE-000",
+            pattern=r"dangerous_func",
         )
         self.engine.add_rule(rule)
         assert self.engine.get_rule_count() >= 11
@@ -110,9 +114,7 @@ class TestScanner:
         with tempfile.TemporaryDirectory() as tmpdir:
             # 创建测试文件
             Path(tmpdir, "safe.py").write_text("def hello():\n    print('ok')\n")
-            Path(tmpdir, "vuln.py").write_text(
-                'import os\nos.system("rm -rf " + user_input)\n'
-            )
+            Path(tmpdir, "vuln.py").write_text('import os\nos.system("rm -rf " + user_input)\n')
 
             scanner = Scanner(use_ai=False)
             result = await scanner.scan_directory(tmpdir)
@@ -167,9 +169,13 @@ class TestReportGenerator:
 class TestFixGenerator:
     def test_generate_fix(self):
         vuln = Vulnerability(
-            id="TEST001", title="SQL注入", description="测试",
-            severity="high", confidence=90,
-            file_path="/tmp/test.py", line_number=1,
+            id="TEST001",
+            title="SQL注入",
+            description="测试",
+            severity="high",
+            confidence=90,
+            file_path="/tmp/test.py",
+            line_number=1,
             code_snippet="cursor.execute(sql)",
             rule_id="SQL001",
         )
@@ -179,9 +185,14 @@ class TestFixGenerator:
         assert patch.vuln_id == "TEST001"
 
     def test_fix_patch_to_diff(self):
-        vuln = Vulnerability(
-            id="T1", title="Test", description="", severity="low",
-            confidence=50, file_path="/tmp/t.py", line_number=1,
+        Vulnerability(
+            id="T1",
+            title="Test",
+            description="",
+            severity="low",
+            confidence=50,
+            file_path="/tmp/t.py",
+            line_number=1,
             code_snippet="old code",
         )
         patch = FixPatch(vuln_id="T1", original_code="old code", patched_code="new code")
@@ -193,9 +204,13 @@ class TestFixGenerator:
 class TestVulnerability:
     def test_to_dict(self):
         vuln = Vulnerability(
-            id="V1", title="Test", description="Desc",
-            severity="high", confidence=95,
-            file_path="/tmp/test.py", line_number=10,
+            id="V1",
+            title="Test",
+            description="Desc",
+            severity="high",
+            confidence=95,
+            file_path="/tmp/test.py",
+            line_number=10,
             code_snippet="code here",
         )
         d = vuln.to_dict()

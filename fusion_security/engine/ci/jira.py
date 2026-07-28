@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -19,8 +18,8 @@ class JiraConfig:
     api_token: str
     project_key: str
     issue_type: str = "Bug"
-    labels: List[str] = field(default_factory=lambda: ["security"])
-    custom_fields: Dict[str, str] = field(default_factory=dict)
+    labels: list[str] = field(default_factory=lambda: ["security"])
+    custom_fields: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -42,7 +41,7 @@ SEVERITY_JIRA_PRIORITY = {
 class JiraClient:
     def __init__(self, config: JiraConfig):
         self.config = config
-        self._client: Optional[httpx.Client] = None
+        self._client: httpx.Client | None = None
 
     @property
     def client(self) -> httpx.Client:
@@ -54,11 +53,11 @@ class JiraClient:
             )
         return self._client
 
-    def create_issue(self, vuln: Vulnerability) -> Optional[JiraIssue]:
+    def create_issue(self, vuln: Vulnerability) -> JiraIssue | None:
         priority = SEVERITY_JIRA_PRIORITY.get(vuln.severity, "Medium")
         summary = f"[Security] {vuln.severity.upper()}: {vuln.title}"
         description = self._build_description(vuln)
-        fields: Dict[str, Any] = {
+        fields: dict[str, Any] = {
             "project": {"key": self.config.project_key},
             "summary": summary,
             "description": description,
@@ -82,7 +81,7 @@ class JiraClient:
             logger.warning(f"[Jira] 创建工单异常: {e}")
             return None
 
-    def create_issues_batch(self, vulns: List[Vulnerability]) -> List[JiraIssue]:
+    def create_issues_batch(self, vulns: list[Vulnerability]) -> list[JiraIssue]:
         issues = []
         for vuln in vulns:
             issue = self.create_issue(vuln)
@@ -91,7 +90,7 @@ class JiraClient:
         logger.info(f"[Jira] 批量创建 {len(issues)}/{len(vulns)} 个工单")
         return issues
 
-    def get_issue(self, issue_key: str) -> Optional[JiraIssue]:
+    def get_issue(self, issue_key: str) -> JiraIssue | None:
         try:
             resp = self.client.get(f"/issue/{issue_key}", params={"fields": "summary,status"})
             if resp.status_code == 200:
@@ -119,15 +118,15 @@ class JiraClient:
             f"*Rule ID:* {vuln.rule_id}",
             f"*File:* {vuln.file_path}:{vuln.line_number}",
             "",
-            f"h3. Description",
+            "h3. Description",
             vuln.description,
             "",
-            f"h3. Code Snippet",
+            "h3. Code Snippet",
             "{code}",
             vuln.code_snippet[:500],
             "{code}",
             "",
-            f"h3. Fix Suggestion",
+            "h3. Fix Suggestion",
             vuln.fix_suggestion or "N/A",
         ]
         if vuln.confidence:

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...db import get_session
+from ...db.convert import patch_to_orm
 from ...db.models import PatchORM, VulnerabilityORM
-from ...db.convert import orm_to_patch, patch_to_orm
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,23 +28,32 @@ class PatchResponse(BaseModel):
 
 
 class PatchUpdate(BaseModel):
-    status: Optional[str] = None
-    verified: Optional[bool] = None
+    status: str | None = None
+    verified: bool | None = None
 
 
 def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
     return PatchResponse(
-        id=o.id, vuln_id=o.vuln_id, scan_id=o.scan_id,
-        diff_content=o.diff_content, original_code=o.original_code,
-        patched_code=o.patched_code, description=o.description,
-        status=o.status, strategy=o.strategy, verified=o.verified,
+        id=o.id,
+        vuln_id=o.vuln_id,
+        scan_id=o.scan_id,
+        diff_content=o.diff_content,
+        original_code=o.original_code,
+        patched_code=o.patched_code,
+        description=o.description,
+        status=o.status,
+        strategy=o.strategy,
+        verified=o.verified,
     )
 
 
-@router.get("", response_model=List[PatchResponse])
-def list_patches(vuln_id: Optional[str] = None, scan_id: Optional[str] = None,
-                 status: Optional[str] = None,
-                 db: Session = Depends(get_session)):
+@router.get("", response_model=list[PatchResponse])
+def list_patches(
+    vuln_id: str | None = None,
+    scan_id: str | None = None,
+    status: str | None = None,
+    db: Session = Depends(get_session),
+):
     q = db.query(PatchORM)
     if vuln_id:
         q = q.filter(PatchORM.vuln_id == vuln_id)
@@ -65,8 +73,7 @@ def get_patch(patch_id: str, db: Session = Depends(get_session)):
 
 
 @router.patch("/{patch_id}", response_model=PatchResponse)
-def update_patch(patch_id: str, body: PatchUpdate,
-                 db: Session = Depends(get_session)):
+def update_patch(patch_id: str, body: PatchUpdate, db: Session = Depends(get_session)):
     o = db.query(PatchORM).filter(PatchORM.id == patch_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Patch not found")
@@ -111,15 +118,12 @@ def verify_patch(patch_id: str, body: PatchVerifyRequest, db: Session = Depends(
 
 @router.post("/generate/{vuln_id}")
 def generate_patch(vuln_id: str, db: Session = Depends(get_session)):
-    vuln_orm = db.query(VulnerabilityORM).filter(
-        VulnerabilityORM.id == vuln_id
-    ).first()
+    vuln_orm = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not vuln_orm:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
 
-    from ...engine.fix.fix_generator import FixGenerator
     from ...db.convert import orm_to_vuln
-    from ...models.vulnerability import Vulnerability
+    from ...engine.fix.fix_generator import FixGenerator
 
     vuln = orm_to_vuln(vuln_orm)
     generator = FixGenerator()
