@@ -30,6 +30,9 @@ frontend/node_modules/
 .claude/
 
 # Coverage data
-coverage.jsonCLAUDE.md
+coverage.json
+
+# Local only
+CLAUDE.md
 ar.md
 audit_security_report.md
