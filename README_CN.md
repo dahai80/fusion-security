@@ -270,7 +270,7 @@ curl -X POST http://localhost:8000/api/v1/integrations/notify/send \
 ```bash
 fusion-security serve
 # 或指定参数
-fusion-security serve --host 0.0.0.0 --port 8080
+fusion-security serve --host 127.0.0.1 --port 8080
 ```
 
 ### API 端点

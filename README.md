@@ -72,7 +72,7 @@ fusion-security check /path/to/project
 fusion-security rules
 
 # Start Web API server
-fusion-security serve --host 0.0.0.0 --port 8080
+fusion-security serve --host 127.0.0.1 --port 8080
 
 # Start frontend dashboard
 cd frontend && npm install && npm run dev
@@ -97,8 +97,8 @@ cd frontend && npm install && npm run dev
 | `sarif <path>` | Export SARIF format results |
 | `rules` | List all detection rules |
 | `serve` | Start Web API server (FastAPI) |
-| `serve --host 0.0.0.0` | Bind to all interfaces |
-| `serve --port 8080` | Custom port (default 8000) |
+| `serve --host 127.0.0.1` | Bind to all interfaces |
+| `serve --port 8080` | Custom port (default 11442) |
 
 ---
 
@@ -304,7 +304,7 @@ Start the API server:
 ```bash
 fusion-security serve
 # or with options
-fusion-security serve --host 0.0.0.0 --port 8080
+fusion-security serve --host 127.0.0.1 --port 8080
 ```
 
 ### API Endpoints
