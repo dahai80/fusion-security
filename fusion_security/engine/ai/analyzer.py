@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,10 +12,13 @@ from ...models.vulnerability import Vulnerability
 logger = logging.getLogger(__name__)
 
 
+_MLX_DEFAULT_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
+
+
 class AIAnalyzer:
-    def __init__(self, model: str = "", mlx_url: str = "http://localhost:8000/v1"):
+    def __init__(self, model: str = "", mlx_url: str = ""):
         self.model = model
-        self.mlx_url = mlx_url.rstrip("/")
+        self.mlx_url = (mlx_url or _MLX_DEFAULT_URL).rstrip("/")
         self._client = None
 
     async def __aenter__(self):

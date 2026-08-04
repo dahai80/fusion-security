@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import platform
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ... import __version__
+
+_MLX_BASE_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,7 +47,7 @@ def health_detailed():
         logger.warning(f"DB健康检查失败: {e}")
     ai_ok = False
     try:
-        r = httpx.get("http://localhost:8000/v1/models", timeout=3)
+        r = httpx.get(f"{_MLX_BASE_URL}/models", timeout=3)
         ai_ok = r.status_code == 200
     except Exception:
         pass
@@ -73,7 +76,7 @@ def model_config():
     import httpx
 
     try:
-        r = httpx.get("http://localhost:8000/v1/models", timeout=5)
+        r = httpx.get(f"{_MLX_BASE_URL}/models", timeout=5)
         if r.status_code == 200:
             data = r.json()
             models = data.get("data", [])
@@ -130,7 +133,7 @@ def update_model_config(body: ModelConfigUpdate):
     import httpx
 
     try:
-        r = httpx.get("http://localhost:8000/v1/models", timeout=5)
+        r = httpx.get(f"{_MLX_BASE_URL}/models", timeout=5)
         if r.status_code == 200:
             models = r.json().get("data", [])
             model_ids = [m.get("id", m.get("model", "")) for m in models]
