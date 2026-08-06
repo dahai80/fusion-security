@@ -1339,6 +1339,8 @@ class TestGitHelper:
     def test_get_current_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             subprocess.run(["git", "init", tmpdir], capture_output=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@test.com"], capture_output=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "test"], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "init"], capture_output=True)
             helper = GitHelper(tmpdir)
             branch = helper.get_current_branch()
@@ -1347,6 +1349,8 @@ class TestGitHelper:
     def test_get_head_commit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             subprocess.run(["git", "init", tmpdir], capture_output=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@test.com"], capture_output=True)
+            subprocess.run(["git", "-C", tmpdir, "config", "user.name", "test"], capture_output=True)
             subprocess.run(["git", "-C", tmpdir, "commit", "--allow-empty", "-m", "init"], capture_output=True)
             helper = GitHelper(tmpdir)
             commit = helper.get_head_commit()
