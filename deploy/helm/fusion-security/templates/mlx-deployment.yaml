@@ -20,18 +20,18 @@ spec:
           image: "{{ .Values.fusionMLX.image.repository }}:{{ .Values.fusionMLX.image.tag }}"
           imagePullPolicy: {{ .Values.fusionMLX.image.pullPolicy }}
           ports:
-            - containerPort: 8000
+            - containerPort: 11432
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /v1/models
-              port: 8000
+              port: 11432
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /v1/models
-              port: 8000
+              port: 11432
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:

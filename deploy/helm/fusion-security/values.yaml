@@ -11,7 +11,7 @@ fullnameOverride: ""
 
 service:
   type: ClusterIP
-  port: 8000
+  port: 11454
 
 ingress:
   enabled: false
@@ -56,7 +56,7 @@ fusionMLX:
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
-    port: 8000
+    port: 11432
   persistence:
     enabled: true
     storageClass: ""

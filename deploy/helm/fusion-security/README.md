@@ -16,7 +16,7 @@ helm install fusion-security ./deploy/helm/fusion-security
 | `image.repository` | `fusion-security` | 镜像名 |
 | `image.tag` | `0.1.0` | 镜像标签 |
 | `service.type` | `ClusterIP` | Service 类型 |
-| `service.port` | `8000` | Service 端口 |
+| `service.port` | `11454` | Service 端口 |
 | `ingress.enabled` | `false` | 启用 Ingress |
 | `persistence.enabled` | `true` | 启用持久化 |
 | `persistence.size` | `5Gi` | 存储大小 |

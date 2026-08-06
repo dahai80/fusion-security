@@ -9,7 +9,7 @@ spec:
   type: {{ .Values.fusionMLX.service.type }}
   ports:
     - port: {{ .Values.fusionMLX.service.port }}
-      targetPort: 8000
+      targetPort: 11432
       protocol: TCP
       name: http
   selector:

@@ -191,7 +191,7 @@ npm run preview    # 预览生产构建
 | **漏洞管理** | 漏洞表格（筛选）、详情弹窗、标记误报、生成补丁 |
 | **项目管理** | 项目增删改查 |
 
-仪表盘连接后端 FastAPI 服务 `http://localhost:8000/api/v1`。
+仪表盘连接后端 FastAPI 服务 `http://localhost:11454/api/v1`。
 
 ---
 
@@ -225,7 +225,7 @@ CLOSED (正常) → OPEN (熔断，超过失败阈值)
 
 ```bash
 # 恢复扫描
-curl -X POST http://localhost:8000/api/v1/scans/resume \
+curl -X POST http://localhost:11454/api/v1/scans/resume \
   -H "Content-Type: application/json" \
   -d '{"scan_id": "abc-123", "path": "/path/to/project"}'
 ```
@@ -246,17 +246,17 @@ curl -X POST http://localhost:8000/api/v1/scans/resume \
 
 ```bash
 # 配置飞书
-curl -X POST http://localhost:8000/api/v1/integrations/notify/feishu \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/feishu \
   -H "Content-Type: application/json" \
   -d '{"webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx", "secret": "xxx"}'
 
 # 配置钉钉
-curl -X POST http://localhost:8000/api/v1/integrations/notify/dingtalk \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/dingtalk \
   -H "Content-Type: application/json" \
   -d '{"webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=xxx", "secret": "xxx"}'
 
 # 发送通知
-curl -X POST http://localhost:8000/api/v1/integrations/notify/send \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/send \
   -H "Content-Type: application/json" \
   -d '{"event": "scan_completed", "data": {"project": "my-app", "vulns": 5, "high": 2}}'
 ```
@@ -379,7 +379,7 @@ helm install fusion-security deploy/helm/fusion-security \
 |------|--------|------|
 | `image.repository` | `fusion-security` | 镜像仓库 |
 | `image.tag` | `latest` | 镜像标签 |
-| `service.port` | `8000` | 服务端口 |
+| `service.port` | `11454` | 服务端口 |
 | `ingress.enabled` | `false` | 启用 Ingress |
 | `persistence.enabled` | `true` | 启用 PVC |
 | `persistence.size` | `5Gi` | PVC 大小 |
