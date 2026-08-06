@@ -98,7 +98,7 @@ cd frontend && npm install && npm run dev
 | `rules` | List all detection rules |
 | `serve` | Start Web API server (FastAPI) |
 | `serve --host 127.0.0.1` | Bind to all interfaces |
-| `serve --port 8080` | Custom port (default 11442) |
+| `serve --port 8080` | Custom port (default 11454) |
 
 ---
 
@@ -225,7 +225,7 @@ npm run preview    # Preview production build
 | **Vulnerabilities** | Vuln table with filters, detail modal, mark false positive, generate patch |
 | **Projects** | Project CRUD management |
 
-The dashboard connects to the FastAPI backend at `http://localhost:8000/api/v1`.
+The dashboard connects to the FastAPI backend at `http://localhost:11454/api/v1`.
 
 ---
 
@@ -259,7 +259,7 @@ CLOSED (normal) → OPEN (tripped, failure_threshold exceeded)
 
 ```bash
 # Resume a scan
-curl -X POST http://localhost:8000/api/v1/scans/resume \
+curl -X POST http://localhost:11454/api/v1/scans/resume \
   -H "Content-Type: application/json" \
   -d '{"scan_id": "abc-123", "path": "/path/to/project"}'
 ```
@@ -280,17 +280,17 @@ Send scan results to Feishu (Lark) or DingTalk with HMAC-SHA256 webhook signing.
 
 ```bash
 # Configure Feishu
-curl -X POST http://localhost:8000/api/v1/integrations/notify/feishu \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/feishu \
   -H "Content-Type: application/json" \
   -d '{"webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx", "secret": "xxx"}'
 
 # Configure DingTalk
-curl -X POST http://localhost:8000/api/v1/integrations/notify/dingtalk \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/dingtalk \
   -H "Content-Type: application/json" \
   -d '{"webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=xxx", "secret": "xxx"}'
 
 # Send notification
-curl -X POST http://localhost:8000/api/v1/integrations/notify/send \
+curl -X POST http://localhost:11454/api/v1/integrations/notify/send \
   -H "Content-Type: application/json" \
   -d '{"event": "scan_completed", "data": {"project": "my-app", "vulns": 5, "high": 2}}'
 ```
@@ -367,20 +367,20 @@ fusion-security serve --host 127.0.0.1 --port 8080
 
 ```bash
 # Create project
-curl -X POST http://localhost:8000/api/v1/projects \
+curl -X POST http://localhost:11454/api/v1/projects \
   -H "Content-Type: application/json" \
   -d '{"name": "my-project", "local_path": "/path/to/project"}'
 
 # Start scan
-curl -X POST http://localhost:8000/api/v1/scans \
+curl -X POST http://localhost:11454/api/v1/scans \
   -H "Content-Type: application/json" \
   -d '{"project_id": "<id>", "scan_type": "full", "use_ai": true}'
 
 # List vulnerabilities
-curl http://localhost:8000/api/v1/vulnerabilities?severity=critical
+curl http://localhost:11454/api/v1/vulnerabilities?severity=critical
 
 # Get stats
-curl http://localhost:8000/api/v1/vulnerabilities/stats/summary
+curl http://localhost:11454/api/v1/vulnerabilities/stats/summary
 ```
 
 ---
@@ -400,7 +400,7 @@ jobs:
           path: '.'
           severity: 'high'
           fail-on-severity: 'critical'
-          server-url: 'http://fusion-security:8000'
+          server-url: 'http://fusion-security:11454'
 ```
 
 Inputs: `path`, `severity`, `no-ai`, `format`, `output`, `fail-on-severity`, `server-url`, `incremental`
@@ -442,7 +442,7 @@ helm install fusion-security deploy/helm/fusion-security \
 |-----------|---------|-------------|
 | `image.repository` | `fusion-security` | Image repository |
 | `image.tag` | `latest` | Image tag |
-| `service.port` | `8000` | Service port |
+| `service.port` | `11454` | Service port |
 | `ingress.enabled` | `false` | Enable ingress |
 | `persistence.enabled` | `true` | Enable PVC |
 | `persistence.size` | `5Gi` | PVC size |

@@ -19,7 +19,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 8000
+            - containerPort: 11454
               protocol: TCP
           env:
             - name: FUSION_LOG_LEVEL
@@ -37,13 +37,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /api/v1/system/health/detailed
-              port: 8000
+              port: 11454
             initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /api/v1/system/health/detailed
-              port: 8000
+              port: 11454
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

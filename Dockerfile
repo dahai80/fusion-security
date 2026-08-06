@@ -10,9 +10,9 @@ COPY fusion_security/ fusion_security/
 
 RUN pip install --no-cache-dir -e .
 
-EXPOSE 8000
+EXPOSE 11454
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/system/health || exit 1
+    CMD curl -f http://localhost:11454/api/v1/system/health || exit 1
 
-CMD ["fusion-security", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["fusion-security", "serve", "--host", "0.0.0.0", "--port", "11454"]

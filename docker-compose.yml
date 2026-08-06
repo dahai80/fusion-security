@@ -5,20 +5,20 @@ services:
     build: .
     container_name: fusion-security
     ports:
-      - "8000:8000"
+      - "11454:11454"
     volumes:
       - scan-data:/app/data
       - ${SCAN_PATH:-/tmp}:/scan:ro
     environment:
       - FUSION_DB_PATH=/app/data/fusion.db
-      - FUSION_AI_URL=http://fusion-mlx:8000/v1
+      - FUSION_AI_URL=http://fusion-mlx:11432/v1
       - FUSION_AI_MODEL=qwen3.5-9b
     depends_on:
       fusion-mlx:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/system/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:11454/api/v1/system/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -27,13 +27,13 @@ services:
     image: fusion-mlx:latest
     container_name: fusion-mlx
     ports:
-      - "8001:8000"
+      - "11432:11432"
     volumes:
       - mlx-models:/root/.cache/huggingface
     environment:
       - MODEL_NAME=qwen3.5-9b
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      test: ["CMD", "curl", "-f", "http://localhost:11432/v1/models"]
       interval: 30s
       timeout: 10s
       retries: 5

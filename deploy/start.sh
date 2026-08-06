@@ -27,8 +27,8 @@ case "${1:-}" in
         docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d --build
         echo "Waiting for services to be healthy..."
         sleep 5
-        echo "Fusion-Security API: http://localhost:8000"
-        echo "Fusion-MLX API: http://localhost:8001"
+        echo "Fusion-Security API: http://localhost:11454"
+        echo "Fusion-MLX API: http://localhost:11432"
         ;;
     stop)
         check_docker

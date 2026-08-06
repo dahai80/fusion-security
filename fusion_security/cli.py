@@ -223,7 +223,7 @@ def rules():
 
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="监听地址")
-@click.option("--port", default=11442, help="监听端口")
+@click.option("--port", default=11454, help="监听端口")
 def serve(host: str, port: int):
     """启动 Web API 服务。"""
     import uvicorn
