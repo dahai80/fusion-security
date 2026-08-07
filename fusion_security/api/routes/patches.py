@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ...db import get_session
 from ...db.convert import patch_to_orm
-from ...db.models import PatchORM, VulnerabilityORM
+from ...db.models import PatchORM, ScanORM, VulnerabilityORM
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -129,12 +129,16 @@ def generate_patch(vuln_id: str, db: Session = Depends(get_session)):
     generator = FixGenerator()
     patches = generator.generate_alternatives(vuln)
 
+    if patches and not patches[0].scan_id:
+        scan_orm = db.query(ScanORM).order_by(ScanORM.created_at.desc()).first()
+        if scan_orm:
+            for p in patches:
+                p.scan_id = scan_orm.id
+
     results = []
     for p in patches:
         orm = patch_to_orm(p)
         orm.vuln_id = vuln_id
-        if not orm.scan_id:
-            orm.scan_id = None
         db.add(orm)
         results.append({"id": orm.id, "strategy": orm.strategy})
 
