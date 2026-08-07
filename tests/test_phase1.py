@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fusion_security.api.app import app
 from fusion_security.db import get_session, init_db
-from fusion_security.db.convert import orm_to_project, orm_to_vuln, project_to_orm, vuln_to_orm
+from fusion_security.db.convert import _to_datetime, orm_to_project, orm_to_vuln, project_to_orm, vuln_to_orm
 from fusion_security.db.models import ProjectORM, VulnerabilityORM
 from fusion_security.engine.rules.ast_parser import ASTParser
 from fusion_security.engine.rules.taint_tracker import TaintTracker
@@ -169,6 +169,27 @@ class TestConverters:
         assert orm.name == "test"
         back = orm_to_project(orm)
         assert back.name == "test"
+
+
+class TestConvertDatetime:
+    def test_empty_returns_none(self):
+        assert _to_datetime("") is None
+        assert _to_datetime(None) is None
+
+    def test_datetime_passthrough(self):
+        from datetime import datetime
+
+        dt = datetime(2026, 8, 7, 12, 0, 0)
+        assert _to_datetime(dt) is dt
+
+    def test_iso_string_parsed(self):
+        from datetime import datetime
+
+        result = _to_datetime("2026-08-07T12:00:00")
+        assert result == datetime(2026, 8, 7, 12, 0, 0)
+
+    def test_invalid_string_returns_none(self):
+        assert _to_datetime("not-a-date") is None
 
 
 class TestModels:

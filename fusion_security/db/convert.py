@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+
 from ..models.patch import Patch
 from ..models.project import Project, Scan
 from ..models.rule import Rule
@@ -11,6 +14,22 @@ from .models import (
     ScanORM,
     VulnerabilityORM,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _to_datetime(value):
+    # 领域模型 created_at/updated_at 是 ISO 字符串(__post_init__ 里 isoformat)，
+    # ORM DateTime 列只接受 datetime 对象；空串回退 None 让列默认值生效。
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError) as e:
+        logger.warning("convert: 无法解析时间字段 %r: %s", value, e)
+        return None
 
 
 def vuln_to_orm(v: Vulnerability) -> VulnerabilityORM:
@@ -61,8 +80,8 @@ def project_to_orm(p: Project) -> ProjectORM:
         ruleset_id=p.ruleset_id,
         local_path=p.local_path,
         status=p.status,
-        created_at=p.created_at,
-        updated_at=p.updated_at,
+        created_at=_to_datetime(p.created_at),
+        updated_at=_to_datetime(p.updated_at),
     )
 
 
@@ -103,8 +122,8 @@ def scan_to_orm(s: Scan) -> ScanORM:
         medium=s.medium,
         low=s.low,
         summary=s.summary,
-        created_at=s.created_at,
-        completed_at=s.completed_at,
+        created_at=_to_datetime(s.created_at),
+        completed_at=_to_datetime(s.completed_at),
     )
 
 
