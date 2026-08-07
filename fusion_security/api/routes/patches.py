@@ -127,12 +127,14 @@ def generate_patch(vuln_id: str, db: Session = Depends(get_session)):
 
     vuln = orm_to_vuln(vuln_orm)
     generator = FixGenerator()
-    patches = generator.generate(vuln)
+    patches = generator.generate_alternatives(vuln)
 
     results = []
     for p in patches:
         orm = patch_to_orm(p)
         orm.vuln_id = vuln_id
+        if not orm.scan_id:
+            orm.scan_id = None
         db.add(orm)
         results.append({"id": orm.id, "strategy": orm.strategy})
 
