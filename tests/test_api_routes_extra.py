@@ -1205,9 +1205,9 @@ class TestAuthDependencies:
         mgr = AuthManager()
         raw = mgr.create_api_key("viewer-only", ["viewer"])
         key = mgr.validate_key(raw)
-        checker = asyncio.get_event_loop().run_until_complete(require_permission("scan:run"))
+        checker = asyncio.run(require_permission("scan:run"))
         with pytest.raises(Exception) as exc_info:
-            asyncio.get_event_loop().run_until_complete(checker(key))
+            asyncio.run(checker(key))
         assert exc_info.value.status_code == 403
 
     def test_require_permission_sufficient(self):
@@ -1218,8 +1218,8 @@ class TestAuthDependencies:
         mgr = AuthManager()
         raw = mgr.create_api_key("admin-user", ["admin"])
         key = mgr.validate_key(raw)
-        checker = asyncio.get_event_loop().run_until_complete(require_permission("scan:run"))
-        result = asyncio.get_event_loop().run_until_complete(checker(key))
+        checker = asyncio.run(require_permission("scan:run"))
+        result = asyncio.run(checker(key))
         assert result.name == "admin-user"
 
     def test_get_current_key_missing_header_returns_401(self):
@@ -1228,7 +1228,7 @@ class TestAuthDependencies:
         from fusion_security.api.auth import get_current_key
 
         with pytest.raises(Exception) as exc_info:
-            asyncio.get_event_loop().run_until_complete(get_current_key(None, api_key=None))
+            asyncio.run(get_current_key(None, api_key=None))
         assert exc_info.value.status_code == 401
 
     def test_get_current_key_invalid_returns_401(self):
@@ -1237,5 +1237,5 @@ class TestAuthDependencies:
         from fusion_security.api.auth import get_current_key
 
         with pytest.raises(Exception) as exc_info:
-            asyncio.get_event_loop().run_until_complete(get_current_key(None, api_key="fs_bad_key"))
+            asyncio.run(get_current_key(None, api_key="fs_bad_key"))
         assert exc_info.value.status_code == 401
