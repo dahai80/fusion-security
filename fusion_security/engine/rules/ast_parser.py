@@ -183,32 +183,12 @@ class ASTParser:
             return None
 
     def _parse_in_subprocess(self, file_path: Path, content: str, ext: str) -> ASTResult | None:
-        def _worker(conn):
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            try:
-                lang = LANGUAGE_MAP.get(ext)
-                if not lang:
-                    conn.send(None)
-                    return
-                p = Parser(lang)
-                tree = p.parse(content.encode("utf-8"))
-                root = tree.root_node
-                lang_name = ext.lstrip(".")
-                result = ASTResult(file_path=str(file_path), language=lang_name)
-                _fill_result(root, content, result, ext)
-                conn.send(result.to_dict())
-            except Exception:
-                conn.send(None)
-            finally:
-                conn.close()
-
-        def _fill_result(root, content, result, ext):
-            tmp = ASTParser.__new__(ASTParser)
-            tmp._parsers = {}
-            tmp._walk(root, content, result, ext)
-
         parent_conn, child_conn = mp.Pipe(duplex=False)
-        proc = mp.Process(target=_worker, args=(child_conn,), daemon=True)
+        proc = mp.Process(
+            target=_ast_subprocess_worker,
+            args=(child_conn, str(file_path), content, ext),
+            daemon=True,
+        )
         proc.start()
         try:
             proc.join(timeout=30)
@@ -435,3 +415,26 @@ class ASTParser:
 
     def get_supported_extensions(self) -> set[str]:
         return set(LANGUAGE_MAP.keys())
+
+
+def _ast_subprocess_worker(conn, file_path: str, content: str, ext: str) -> None:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        lang = LANGUAGE_MAP.get(ext)
+        if not lang:
+            conn.send(None)
+            return
+        p = Parser(lang)
+        tree = p.parse(content.encode("utf-8"))
+        root = tree.root_node
+        lang_name = ext.lstrip(".")
+        result = ASTResult(file_path=file_path, language=lang_name)
+        tmp = ASTParser.__new__(ASTParser)
+        tmp._parsers = {}
+        tmp._walk(root, content, result, ext)
+        conn.send(result.to_dict())
+    except Exception:
+        logger.warning(f"AST 子进程解析异常: {file_path}", exc_info=True)
+        conn.send(None)
+    finally:
+        conn.close()
