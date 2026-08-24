@@ -7,6 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fusion_core.http_client import get_async_client, with_retry
+
 from ...models.vulnerability import Vulnerability
 
 logger = logging.getLogger(__name__)
@@ -29,22 +31,20 @@ class AIAnalyzer:
 
     async def aclose(self):
         if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-            logger.info("[AIAnalyzer] httpx client closed")
+            logger.debug("[AIAnalyzer] releasing reference to pooled client (pool-managed, not closed)")
+        self._client = None
 
     @property
     def client(self):
         if self._client is None:
-            import httpx
-
-            self._client = httpx.AsyncClient(base_url=self.mlx_url, timeout=120.0)
+            self._client = get_async_client(self.mlx_url, timeout=120.0)
+            logger.debug("[AIAnalyzer] pooled httpx.AsyncClient via fusion_core, base=%s", self.mlx_url)
         return self._client
 
     async def _chat(self, messages: list[dict]) -> str:
         if not self.model:
             try:
-                models = await self.client.get("/models")
+                models = await with_retry(lambda: self.client.get("/models"))
                 data = models.json()
                 available = data.get("data", [])
                 if available:
@@ -58,7 +58,7 @@ class AIAnalyzer:
             "temperature": 0.1,
             "max_tokens": 2048,
         }
-        resp = await self.client.post("/chat/completions", json=payload)
+        resp = await with_retry(lambda: self.client.post("/chat/completions", json=payload))
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
