@@ -14,6 +14,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install fusion-core (in-tree dependency, not on PyPI)
+        run: pip install git+https://github.com/dahai80/fusion-core.git
+        # fusion-core is an in-tree editable install in the monorepo venv
+        # but has no PyPI release, so CI resolves it from git. See
+        # dahai80/fusion-core#9 for the permanent publish-track fix.
       - run: pip install -e ".[lint]"
       - run: ruff check fusion_security/ tests/
       - run: ruff format --check fusion_security/ tests/
@@ -28,6 +33,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install fusion-core (in-tree dependency, not on PyPI)
+        run: pip install git+https://github.com/dahai80/fusion-core.git
+        # See dahai80/fusion-core#9 for the permanent publish-track fix.
       - run: pip install -e ".[test]"
       - run: pytest tests/ -v --tb=short -q
       - run: pytest tests/ --cov=fusion_security --cov-fail-under=90
@@ -40,6 +48,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install fusion-core (in-tree dependency, not on PyPI)
+        run: pip install git+https://github.com/dahai80/fusion-core.git
+        # See dahai80/fusion-core#9 for the permanent publish-track fix.
       - run: pip install build
       - run: python -m build
       - uses: actions/upload-artifact@v4
