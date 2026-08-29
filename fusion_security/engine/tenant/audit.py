@@ -1,4 +1,10 @@
-"""Audit logging — track all security-relevant operations."""
+"""Audit logging — track all security-relevant operations.
+
+LEGACY (guard-overlap) — 租户审计记录。本模块与 fusion-guard 的 fg-store (Rust) 能力重叠，
+按 issue #23 决策 A，重叠能力以 fusion-guard 为单一事实源；AuditEntry 字段已对齐
+fusion-guard AuditRecord 形状（含多租户维度 tenant_id），便于机械迁移。此处保留直至
+fusion-guard 达到对等、消费者迁移完成后再移除。详见仓库根 DEPRECATED.md。
+"""
 
 from __future__ import annotations
 
