@@ -11,6 +11,10 @@ from .ast_parser import ASTParser
 
 logger = logging.getLogger(__name__)
 
+# LEGACY (guard-overlap) — 规则匹配引擎。本模块与 fusion-guard 的 fg-rules (Rust) 能力重叠，
+# 按 issue #23 决策 A，重叠能力以 fusion-guard 为单一事实源；此处保留直至 fusion-guard
+# 达到对等、消费者迁移完成后再移除。详见仓库根 DEPRECATED.md。
+
 
 @dataclass
 class ScanRule:

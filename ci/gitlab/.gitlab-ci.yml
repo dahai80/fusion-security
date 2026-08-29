@@ -19,7 +19,7 @@ variables:
 
 .fusion-security-base:
   stage: test
-  image: python:3.11-slim
+  image: python:3.12-slim
   before_script:
     - pip install fusion-security 2>/dev/null || true
     - which fusion-security || { echo "fusion-security not found"; exit 1; }
