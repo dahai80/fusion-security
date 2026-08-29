@@ -13,12 +13,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install fusion-core (in-tree dependency, not on PyPI)
         run: pip install git+https://github.com/dahai80/fusion-core.git
         # fusion-core is an in-tree editable install in the monorepo venv
         # but has no PyPI release, so CI resolves it from git. See
         # dahai80/fusion-core#9 for the permanent publish-track fix.
+        # fusion-core pins requires-python>=3.12 (monorepo unified version),
+        # so CI must run on 3.12, not 3.11.
       - run: pip install -e ".[lint]"
       - run: ruff check fusion_security/ tests/
       - run: ruff format --check fusion_security/ tests/
@@ -27,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install fusion-core (in-tree dependency, not on PyPI)
         run: pip install git+https://github.com/dahai80/fusion-core.git
         # See dahai80/fusion-core#9 for the permanent publish-track fix.
