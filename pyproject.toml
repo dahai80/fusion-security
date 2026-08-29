@@ -1,6 +1,6 @@
 [project]
 name = "fusion-security"
-version = "0.1.6"
+version = "0.1.7"
 description = "Fusion-Security — Local AI-powered code security audit tool. macOS Apple Silicon native, 100% offline, powered by fusion-mlx."
 requires-python = ">=3.12"
 dependencies = [
