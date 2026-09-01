@@ -19,8 +19,17 @@ class TestStageCheckpoint:
         assert cp2.completed_stage == "discover"
 
     def test_from_dict_ignores_extra_keys(self):
-        cp = StageCheckpoint.from_dict({"scan_id": "s2", "bogus": True})
+        cp = StageCheckpoint.from_dict({"scan_id": "s2", "version": 1, "bogus": True})
         assert cp.scan_id == "s2"
+
+    def test_from_dict_rejects_version_mismatch(self):
+        # 旧 schema(无 version 或主版本不符)必须拒绝,避免静默用错误数据续扫。
+        import pytest
+
+        with pytest.raises(ValueError):
+            StageCheckpoint.from_dict({"scan_id": "old", "completed_stage": "recon"})
+        with pytest.raises(ValueError):
+            StageCheckpoint.from_dict({"scan_id": "v2", "version": 99})
 
 
 class TestCheckpointManager:

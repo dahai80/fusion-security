@@ -15,7 +15,17 @@ from ...models.vulnerability import Vulnerability
 logger = logging.getLogger(__name__)
 
 
-_MLX_DEFAULT_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
+def _resolve_mlx_url() -> str:
+    # 环境变量统一:MLX_BASE_URL 为准,回退 FUSION_AI_URL(docker-compose)/ FUSION_MLX_URL(helm)。
+    # 此前 compose 设 FUSION_AI_URL、helm 设 FUSION_MLX_URL,代码只读 MLX_BASE_URL → 容器内 AI 静默失效。
+    for var in ("MLX_BASE_URL", "FUSION_AI_URL", "FUSION_MLX_URL"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return val.rstrip("/")
+    return "http://localhost:11432/v1"
+
+
+_MLX_DEFAULT_URL = _resolve_mlx_url()
 
 
 class AIAnalyzer:
@@ -46,16 +56,27 @@ class AIAnalyzer:
         return self._client
 
     async def _chat(self, messages: list[dict]) -> str:
-        async with self._semaphore:
+        # S-P1: semaphore 获取此前无超时,MLX 拥塞时永久阻塞 pipeline。加 60s 获取上限。
+        try:
+            async with asyncio.timeout(60):
+                await self._semaphore.acquire()
+        except TimeoutError:
+            logger.warning("[AIAnalyzer] semaphore 获取超时(60s),跳过本次 AI 调用")
+            raise RuntimeError("AI 调用排队超时") from None
+        try:
             if not self.model:
-                try:
-                    models = await with_retry(lambda: self.client.get("/models"))
-                    data = models.json()
-                    available = data.get("data", [])
-                    if available:
-                        self.model = available[0].get("id", available[0].get("model", ""))
-                except Exception:
-                    self.model = "qwen3.5-9b"
+                env_model = os.environ.get("FUSION_MODEL", "").strip()
+                if env_model:
+                    self.model = env_model
+                else:
+                    try:
+                        models = await with_retry(lambda: self.client.get("/models"))
+                        data = models.json()
+                        available = data.get("data", [])
+                        if available:
+                            self.model = available[0].get("id", available[0].get("model", ""))
+                    except Exception:
+                        self.model = "qwen3.5-9b"
 
             payload = {
                 "model": self.model or "qwen3.5-9b",
@@ -67,17 +88,19 @@ class AIAnalyzer:
             resp.raise_for_status()
             data = resp.json()
             return data["choices"][0]["message"]["content"]
+        finally:
+            self._semaphore.release()
 
     async def verify_findings(
         self,
         findings: list[Vulnerability],
-        files: list[Path],
+        files: list[Path] | None = None,
     ) -> list[Vulnerability]:
         if not findings:
             return findings
 
-        verified = []
-        for vuln in findings:
+        # S-P1: 此前串行 for 循环逐一调 _chat,semaphore 形同虚设。改为 gather 并发,受 semaphore 限流。
+        async def _verify_one(vuln: Vulnerability) -> Vulnerability:
             snippet = vuln.code_snippet[:1000]
             prompt = f"""你是一个安全专家。请验证以下代码是否存在真实的安全漏洞。
 
@@ -106,21 +129,23 @@ CWE编号: {vuln.cwe_id}
                 result = self._parse_json(response)
                 if result is None:
                     logger.warning(f"AI 响应解析失败, fail-closed 保留漏洞: {vuln.id}")
-                    verified.append(vuln)
-                    continue
+                    return vuln
                 if result.get("is_real", False):
                     vuln.verified = True
                     ai_conf = result.get("confidence", vuln.confidence)
                     if isinstance(ai_conf, float) and ai_conf <= 1.0:
                         ai_conf = int(round(ai_conf * 100))
                     vuln.confidence = ai_conf
-                    verified.append(vuln)
-                else:
-                    logger.debug(f"AI 过滤误报: {vuln.id}")
+                    return vuln
+                logger.debug(f"AI 过滤误报: {vuln.id}")
+                return None
             except Exception as e:
                 logger.warning(f"AI 验证失败, fail-closed 保留漏洞 {vuln.id}: {e}")
-                verified.append(vuln)
+                return vuln
 
+        results = await asyncio.gather(*[_verify_one(v) for v in findings], return_exceptions=False)
+        # 过滤掉 AI 判定误报返回的 None;异常分支已 fail-closed 保留原漏洞。
+        verified = [r for r in results if r is not None]
         return verified
 
     async def semantic_scan(self, files: list[Path]) -> list[Vulnerability]:
@@ -132,10 +157,11 @@ CWE编号: {vuln.cwe_id}
         code_summary = []
         if len(files) > 5:
             logger.warning(f"[AI] semantic_scan 仅采样前 5 个文件(共 {len(files)}),语义覆盖率受限")
+        # S-P2: 此前 [:2000] 再 [:500] 双截断,意图模糊。统一单次截断到 500 字符/文件。
         for f in files[:5]:
             try:
-                content = f.read_text(encoding="utf-8", errors="ignore")[:2000]
-                code_summary.append(f"--- {f.name} ---\n{content[:500]}")
+                content = f.read_text(encoding="utf-8", errors="ignore")[:500]
+                code_summary.append(f"--- {f.name} ---\n{content}")
             except Exception:
                 pass
 

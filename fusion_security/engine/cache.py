@@ -22,10 +22,28 @@ def _vulns_to_json(vulns: list[Vulnerability]) -> str:
 
 
 def _json_to_vulns(data: str) -> list[Vulnerability]:
+    # schema 漂移/损坏 JSON 会让 Vulnerability(**item) 抛 TypeError,整条缓存不可用。
+    # 逐项 try/except + 字段过滤,坏项跳过并记录,不再整批崩溃。
     if not data:
         return []
-    items = json.loads(data)
-    return [Vulnerability(**item) for item in items]
+    try:
+        items = json.loads(data)
+    except json.JSONDecodeError as e:
+        logger.warning(f"[Cache] results_json 解析失败,返回空: {e}")
+        return []
+    if not isinstance(items, list):
+        logger.warning("[Cache] results_json 非数组,返回空")
+        return []
+    valid_fields = set(Vulnerability.__dataclass_fields__)
+    vulns = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            vulns.append(Vulnerability(**{k: v for k, v in item.items() if k in valid_fields}))
+        except Exception as e:
+            logger.warning(f"[Cache] 跳过损坏缓存项: {e}")
+    return vulns
 
 
 class ProjectScanCache:
@@ -52,6 +70,10 @@ class ProjectScanCache:
     def put(
         self, project_id: str, file_path: str, content: str, vulns: list[Vulnerability], commit: bool = True
     ) -> None:
+        # A-P1-4: (project_id, file_path) 唯一约束下,并发扫描同文件先 query-后-insert 存在竞态:
+        # 两线程都 query 未命中 -> 都 insert -> 第二个 IntegrityError。捕获后回退为 UPDATE。
+        from sqlalchemy.exc import IntegrityError
+
         ch = _content_hash(content)
         row = (
             self._db.query(ScanCacheORM)
@@ -75,7 +97,24 @@ class ProjectScanCache:
             self._db.add(row)
             logger.debug(f"缓存写入: project={project_id} file={file_path}")
         if commit:
-            self._db.commit()
+            try:
+                self._db.commit()
+            except IntegrityError:
+                # 唯一约束冲突:另一并发写已插入同 (project_id, file_path)。回退为更新该行。
+                self._db.rollback()
+                existing = (
+                    self._db.query(ScanCacheORM)
+                    .filter(
+                        ScanCacheORM.project_id == project_id,
+                        ScanCacheORM.file_path == file_path,
+                    )
+                    .first()
+                )
+                if existing:
+                    existing.content_hash = ch
+                    existing.results_json = _vulns_to_json(vulns)
+                    self._db.commit()
+                    logger.debug(f"缓存竞态回退更新: project={project_id} file={file_path}")
 
     def flush(self) -> None:
         # 批量写后统一提交,避免 put 逐文件 commit 导致 N 次 fsync。空事务提交无副作用。

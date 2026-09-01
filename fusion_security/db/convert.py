@@ -3,16 +3,20 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from ..models.finding import Finding
 from ..models.patch import Patch
 from ..models.project import Project, Scan
 from ..models.rule import Rule
 from ..models.vulnerability import Vulnerability
 from .models import (
+    ApiKeyORM,
+    FindingORM,
     PatchORM,
     ProjectORM,
     RuleORM,
     ScanORM,
     VulnerabilityORM,
+    WebhookORM,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +36,7 @@ def _to_datetime(value):
         return None
 
 
-def vuln_to_orm(v: Vulnerability) -> VulnerabilityORM:
+def vuln_to_orm(v: Vulnerability, scan_id: str = "", tenant_id: str = "") -> VulnerabilityORM:
     return VulnerabilityORM(
         id=v.id,
         title=v.title,
@@ -48,6 +52,8 @@ def vuln_to_orm(v: Vulnerability) -> VulnerabilityORM:
         verified=v.verified,
         status=v.status,
         data_flow_path=v.data_flow_path,
+        scan_id=scan_id,
+        tenant_id=tenant_id,
     )
 
 
@@ -67,6 +73,73 @@ def orm_to_vuln(o: VulnerabilityORM) -> Vulnerability:
         verified=o.verified,
         status=o.status,
         data_flow_path=o.data_flow_path,
+    )
+
+
+def finding_to_orm(f: Finding, scan_id: str = "") -> FindingORM:
+    # 此前缺失 — 阻塞管道持久化 Finding。Finding 域模型与 FindingORM 字段 1:1。
+    return FindingORM(
+        id=f.id,
+        vuln_id=f.vuln_id,
+        scan_id=scan_id or f.scan_id,
+        file_path=f.file_path,
+        line_number=f.line_number,
+        line_end=f.line_end,
+        code_snippet=f.code_snippet[:500],
+        context_before=f.context_before[:200],
+        context_after=f.context_after[:200],
+        data_flow_path=f.data_flow_path,
+        confidence=f.confidence,
+    )
+
+
+def orm_to_finding(o: FindingORM) -> Finding:
+    return Finding(
+        id=o.id,
+        vuln_id=o.vuln_id,
+        scan_id=o.scan_id,
+        file_path=o.file_path,
+        line_number=o.line_number,
+        line_end=o.line_end,
+        code_snippet=o.code_snippet,
+        context_before=o.context_before,
+        context_after=o.context_after,
+        data_flow_path=o.data_flow_path,
+        confidence=o.confidence,
+    )
+
+
+def webhook_to_orm(url: str, events: list[str], secret_hash: str, enabled: bool = True) -> WebhookORM:
+    import json
+
+    return WebhookORM(
+        url=url,
+        events_json=json.dumps(events or [], ensure_ascii=False),
+        secret_hash=secret_hash,
+        enabled=enabled,
+    )
+
+
+def orm_to_webhook(o: WebhookORM) -> dict:
+    # 响应里绝不返回 secret_hash(S-P0)。
+    import json
+
+    return {
+        "id": o.id,
+        "url": o.url,
+        "events": json.loads(o.events_json or "[]"),
+        "enabled": o.enabled,
+        "created_at": o.created_at,
+    }
+
+
+def api_key_to_orm(name: str, role: str, key_hash: str, tenant_id: str = "") -> ApiKeyORM:
+    return ApiKeyORM(
+        name=name,
+        role=role,
+        key_hash=key_hash,
+        tenant_id=tenant_id,
+        enabled=True,
     )
 
 
@@ -113,6 +186,8 @@ def scan_to_orm(s: Scan) -> ScanORM:
         branch=s.branch,
         base_commit=s.base_commit,
         head_commit=s.head_commit,
+        path=s.path,
+        tenant_id=s.tenant_id,
         files_scanned=s.files_scanned,
         files_skipped=s.files_skipped,
         duration_ms=s.duration_ms,
@@ -140,6 +215,8 @@ def orm_to_scan(o: ScanORM) -> Scan:
         branch=o.branch,
         base_commit=o.base_commit,
         head_commit=o.head_commit,
+        path=o.path,
+        tenant_id=o.tenant_id,
         files_scanned=o.files_scanned,
         files_skipped=o.files_skipped,
         duration_ms=o.duration_ms,

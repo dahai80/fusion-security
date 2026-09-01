@@ -84,9 +84,18 @@ STAGE_ORDER = [
 
 
 class ScanPipeline:
-    def __init__(self, config: PipelineConfig | None = None, db=None, project_id: str = ""):
+    def __init__(
+        self,
+        config: PipelineConfig | None = None,
+        db=None,
+        project_id: str = "",
+        tenant_id: str = "",
+    ):
         self.config = config or PipelineConfig()
-        self.rule_engine = RuleEngine()
+        self.tenant_id = tenant_id
+        # Feature 1: 加载租户自定义规则注入 RuleEngine(加载失败不阻断扫描,降级内置规则)。
+        custom_rules = self._load_custom_rules(tenant_id)
+        self.rule_engine = RuleEngine(custom_rules=custom_rules)
         self.ast_parser = ASTParser()
         self.taint_tracker = TaintTracker()
         self.ai_analyzer = AIAnalyzer(model=self.config.model) if self.config.use_ai else None
@@ -105,6 +114,21 @@ class ScanPipeline:
             from .cache import ProjectScanCache
 
             self._project_cache = ProjectScanCache(db)
+
+    def _load_custom_rules(self, tenant_id: str = ""):
+        # Feature 1: 从 CustomRuleStore 加载租户启用的自定义规则。加载失败降级内置规则,不阻断扫描。
+        if not tenant_id:
+            return []
+        try:
+            from .rules.custom import CustomRuleStore
+
+            store = CustomRuleStore()
+            active = store.get_active_rules(tenant_id)
+            logger.info(f"[Pipeline] 租户 {tenant_id} 加载 {len(active)} 条自定义规则")
+            return active
+        except Exception as e:
+            logger.warning(f"[Pipeline] 加载自定义规则失败,降级内置规则: {e}")
+            return []
 
     async def run(
         self, path: str, changed_files: list[str] | None = None, scan_id: str | None = None
@@ -195,8 +219,11 @@ class ScanPipeline:
                         await asyncio.sleep(delay)
 
             if not success:
-                logger.error(f"[Pipeline] stage={stage.value} 最终失败: {last_error}")
+                # F-P0: stage 耗尽重试后必须停链路,此前仅记 error 后继续跑后续 stage,失败被静默吞掉。
+                logger.error(f"[Pipeline] stage={stage.value} 最终失败,终止流水线: {last_error}")
                 ctx.errors.append(f"{stage.value}: {last_error}")
+                ctx.stage_results.setdefault("pipeline", {})["failed_stage"] = stage.value
+                break
 
         if self.ai_analyzer:
             await self.ai_analyzer.aclose()
@@ -269,6 +296,9 @@ class ScanPipeline:
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file(f, content)
+                # A-P0-1: pipeline 此前只跑 regex(scan_file),丢掉 Scanner 的 AST 覆盖。
+                # 统一走 scan_file_full(regex+AST),与已退役 Scanner 等价,避免漏报。
+                vulns.extend(self.rule_engine.scan_file_ast(f, content))
                 if self.config.enable_taint:
                     taint_result = self.taint_tracker.analyze(f, content)
                     for tp in taint_result.taint_paths:
@@ -280,12 +310,12 @@ class ScanPipeline:
                                 severity="high",
                                 confidence=70,
                                 file_path=str(f),
-                                line_number=tp.line or 0,
-                                code_snippet=tp.sink,
+                                line_number=tp.sink.line or 0,
+                                code_snippet=tp.sink.name,
                                 rule_id="TAINT-001",
-                                data_flow_path=" → ".join(tp.propagation)
+                                data_flow_path=" → ".join(str(p.get("name", p.get("type", ""))) for p in tp.propagation)
                                 if tp.propagation
-                                else f"{tp.source} → {tp.sink}",
+                                else f"{tp.source.name} → {tp.sink.name}",
                             )
                             vulns.append(v)
                 if self._project_cache:
@@ -333,9 +363,10 @@ class ScanPipeline:
         ctx.vulnerabilities = all_vulns
         ctx.stage_results["discover"] = {
             "vulnerabilities": len(all_vulns),
+            "files_skipped": scan_failed,
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Discover] 完成 vulns={len(all_vulns)}")
+        logger.info(f"[Discover] 完成 vulns={len(all_vulns)} files_skipped={scan_failed}")
 
     async def _stage_verify(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.VERIFY
@@ -359,7 +390,11 @@ class ScanPipeline:
         if self.adversarial and ctx.vulnerabilities:
             try:
                 file_contents = {}
-                for f in ctx.files[:100]:
+                # P-P1: 静默截断到前 100 文件,跨文件对抗验证覆盖率受限,显式记日志避免误以为全量。
+                sample_files = ctx.files[:100]
+                if len(ctx.files) > len(sample_files):
+                    logger.warning(f"[Verify] 对抗验证仅采样前 {len(sample_files)}/{len(ctx.files)} 文件")
+                for f in sample_files:
                     with contextlib.suppress(Exception):
                         file_contents[str(f)] = f.read_text(encoding="utf-8", errors="ignore")
                 ctx.vulnerabilities = await self.adversarial.verify_batch(ctx.vulnerabilities, file_contents)
@@ -386,6 +421,17 @@ class ScanPipeline:
         ctx.current_stage = PipelineStage.TRIAGE
         start = time.time()
         logger.info("[Triage] 分诊分级阶段开始")
+
+        # Feature 2: 先用反馈库过滤误报(此前漏接,误报漏洞重复进 triage)。
+        # filter_vulnerabilities 内部无 DB 依赖,失败降级为不过滤。
+        before_fp = len(ctx.vulnerabilities)
+        try:
+            from .feedback.loop import FeedbackStore
+
+            ctx.vulnerabilities = FeedbackStore().filter_vulnerabilities(ctx.vulnerabilities)
+        except Exception as e:
+            logger.warning(f"[Triage] 反馈过滤失败,降级为不过滤: {e}")
+        filtered_fp = before_fp - len(ctx.vulnerabilities)
 
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
         ctx.vulnerabilities.sort(key=lambda v: (severity_order.get(v.severity, 3), -v.confidence))
@@ -416,6 +462,7 @@ class ScanPipeline:
 
         ctx.stage_results["triage"] = {
             "total": len(ctx.vulnerabilities),
+            "filtered_false_positive": filtered_fp,
             "critical": sum(1 for v in ctx.vulnerabilities if v.severity == "critical"),
             "high": sum(1 for v in ctx.vulnerabilities if v.severity == "high"),
             "medium": sum(1 for v in ctx.vulnerabilities if v.severity == "medium"),
@@ -545,7 +592,12 @@ class ScanPipeline:
         target.files = ctx.files
         result = ScanResult(target)
         result.vulnerabilities = ctx.vulnerabilities
+        # A-P0-1: 此前 findings/patches 被丢弃,API 拿不到。现透传至 ScanResult 供路由持久化。
+        result.findings = ctx.findings
+        result.patches = ctx.patches
         result.files_scanned = len(ctx.files)
+        # Discover 阶段记录的扫描失败计数透传(files_skipped 此前恒为 0,对账失真)。
+        result.files_skipped = ctx.stage_results.get("discover", {}).get("files_skipped", 0)
 
         triage = ctx.stage_results.get("triage", {})
         total_ms = sum(r.get("duration_ms", 0) for r in ctx.stage_results.values())

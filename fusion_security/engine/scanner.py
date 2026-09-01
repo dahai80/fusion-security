@@ -240,6 +240,9 @@ class ScanResult:
         self.target = target
         self.scan: Scan | None = None
         self.vulnerabilities: list[Vulnerability] = []
+        # A-P0-1: pipeline 产出的 findings/patches 此前被 to_scan_result 丢弃,API 拿不到。
+        self.findings: list[Any] = []
+        self.patches: list[Any] = []
         self.files_scanned: int = 0
         self.files_skipped: int = 0
         self.duration_ms: float = 0.0
@@ -257,6 +260,8 @@ class ScanResult:
             "medium": sum(1 for v in self.vulnerabilities if v.severity == "medium"),
             "low": sum(1 for v in self.vulnerabilities if v.severity == "low"),
             "vulnerabilities": [v.to_dict() for v in self.vulnerabilities],
+            "findings": [f.to_dict() for f in self.findings if hasattr(f, "to_dict")],
+            "patches": [p.to_dict() for p in self.patches if hasattr(p, "to_dict")],
             "summary": self.summary,
         }
 

@@ -168,9 +168,30 @@ class TestFeedback:
 
 
 # --- Auth ---
+def _isolated_auth():
+    # DB-backed AuthManager 全局共享单库,跨用例污染。每用例独立临时库隔离。
+    import os
+    import tempfile
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from fusion_security.db.session import Base
+
+    d = tempfile.mkdtemp()
+    engine = create_engine(
+        f"sqlite:///{os.path.join(d, 'auth.db')}",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return AuthManager(session_factory=sessionmaker(bind=engine, expire_on_commit=False))
+
+
 class TestAuth:
     def test_create_api_key(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         raw = mgr.create_api_key("test", ["admin"])
         assert raw.startswith("fs_")
         key = mgr.validate_key(raw)
@@ -178,31 +199,31 @@ class TestAuth:
         assert key.name == "test"
 
     def test_invalid_key(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         assert mgr.validate_key("invalid") is None
 
     def test_has_permission(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         raw = mgr.create_api_key("admin_user", ["admin"])
         key = mgr.validate_key(raw)
         assert mgr.has_permission(key, "system:manage")
         assert mgr.has_permission(key, "scan:run")
 
     def test_viewer_no_admin(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         raw = mgr.create_api_key("viewer_user", ["viewer"])
         key = mgr.validate_key(raw)
         assert not mgr.has_permission(key, "system:manage")
         assert mgr.has_permission(key, "scan:read")
 
     def test_revoke_key(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         mgr.create_api_key("to_revoke", ["viewer"])
         assert mgr.revoke_key("to_revoke") is True
         assert mgr.revoke_key("nonexistent") is False
 
     def test_list_keys(self):
-        mgr = AuthManager()
+        mgr = _isolated_auth()
         mgr.create_api_key("key1", ["admin"])
         mgr.create_api_key("key2", ["viewer"])
         keys = mgr.list_keys()

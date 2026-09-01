@@ -21,6 +21,8 @@ class CircuitState(StrEnum):
 
 @dataclass
 class StageCheckpoint:
+    # version 用于拒绝旧 schema 的断点文件:老结构(无 version 字段或主版本不符)直接拒绝,
+    # 避免静默用错误数据续扫。from_dict 在主版本不匹配时抛 ValueError。
     scan_id: str = ""
     project_path: str = ""
     completed_stage: str = ""
@@ -28,12 +30,18 @@ class StageCheckpoint:
     errors: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StageCheckpoint:
+        file_ver = data.get("version", 0)
+        if file_ver != cls.__dataclass_fields__["version"].default:
+            raise ValueError(
+                f"checkpoint version mismatch: file={file_ver} expected={cls.__dataclass_fields__['version'].default}"
+            )
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -63,11 +71,12 @@ class CheckpointManager:
             logger.info(f"[Checkpoint] 加载 scan_id={scan_id} stage={cp.completed_stage}")
             return cp
         except Exception as e:
-            # 损坏 checkpoint 与"无 checkpoint"不可区分会导致续扫静默从 RECON 重跑,丢弃已付 AI 算力。
-            # 显式报错并删除损坏文件,避免下次再试;调用方按 None 处理为全新扫描。
-            logger.error(f"[Checkpoint] 加载失败,删除损坏文件 scan_id={scan_id}: {e}")
+            # 破坏性删除会丢失断点 + 已付 AI 算力证据。改为移到 .corrupt sidecar 保留现场,
+            # 大声报错;调用方按 None 处理为全新扫描。
+            corrupt = path.with_suffix(".json.corrupt")
             with contextlib.suppress(Exception):
-                path.unlink()
+                path.replace(corrupt)
+            logger.error(f"[Checkpoint] 加载失败,已移至 .corrupt scan_id={scan_id}: {e}")
             return None
 
     def remove(self, scan_id: str) -> bool:

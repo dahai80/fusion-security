@@ -190,10 +190,34 @@ def update_vuln_status(vuln_id: str, body: VulnStatusUpdate, db: Session = Depen
 
 @router.post("/{vuln_id}/false-positive", response_model=VulnResponse)
 def mark_false_positive(vuln_id: str, reason: str = "", db: Session = Depends(get_session)):
+    # Feature 2: 同时写 FeedbackStore(供 filter_vulnerabilities 误报过滤)与 FeedbackORM(持久化)。
+    import uuid as _uuid
+
+    from ...db.models import FeedbackORM
+    from ...engine.feedback.loop import FeedbackEntry, FeedbackStore
+
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
     o.status = "false_positive"
+    entry = FeedbackEntry(
+        vuln_id=vuln_id,
+        rule_id=o.rule_id,
+        file_path=o.file_path,
+        line_number=o.line_number,
+        is_false_positive=True,
+        reason=reason,
+    )
+    FeedbackStore().add_feedback(entry)
+    db.add(
+        FeedbackORM(
+            id=_uuid.uuid4().hex[:16],
+            vuln_id=vuln_id,
+            scan_id=o.scan_id or "",
+            flag="false_positive",
+            note=reason,
+        )
+    )
     db.commit()
     db.refresh(o)
     logger.info(f"标记误报: {vuln_id}, 原因: {reason}")

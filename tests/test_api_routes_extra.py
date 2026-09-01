@@ -41,6 +41,8 @@ def _make_scan_orm(**overrides):
         "branch": "",
         "base_commit": "",
         "head_commit": "",
+        "path": "",
+        "created_at": None,
         "files_scanned": 0,
         "files_skipped": 0,
         "duration_ms": 0.0,
@@ -1074,96 +1076,107 @@ class TestAppLifespanAndKeys:
 # ===== Auth module =====
 
 
+def _hash_raw(raw_key):
+    import hashlib
+
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def _isolated_auth_manager():
+    # DB-backed AuthManager 需要测试隔离:每个用例独立临时库,避免 key 跨用例污染。:
+    import os
+    import tempfile
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from fusion_security.db.models import ApiKeyORM  # noqa: F401
+    from fusion_security.db.session import Base
+
+    d = tempfile.mkdtemp()
+    url = f"sqlite:///{os.path.join(d, 'auth_test.db')}"
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    from fusion_security.api.auth import AuthManager
+
+    return AuthManager(session_factory=factory)
+
+
 class TestAuthManager:
     def test_validate_key_valid(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("test", ["admin"])
         result = mgr.validate_key(raw)
         assert result is not None
         assert result.name == "test"
 
     def test_validate_key_empty(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         result = mgr.validate_key("")
         assert result is None
 
     def test_validate_key_invalid(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         result = mgr.validate_key("fs_invalid_key")
         assert result is None
 
     def test_validate_key_expired(self):
-        import hashlib
-        import time
+        from datetime import datetime, timedelta
 
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("expired", ["viewer"], expires_in=1)
-        key_hash = hashlib.sha256(raw.encode()).hexdigest()
-        mgr.api_keys[key_hash].expires_at = time.time() - 100
+        # DB-backed:直接把过期时间改到过去,模拟已过期。
+        from fusion_security.db.models import ApiKeyORM
+
+        db = mgr._get_session()
+        row = db.query(ApiKeyORM).filter(ApiKeyORM.key_hash == _hash_raw(raw)).first()
+        row.expires_at = datetime.utcnow() - timedelta(seconds=100)
+        db.commit()
+        db.close()
         result = mgr.validate_key(raw)
         assert result is None
 
     def test_has_permission_admin(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("admin-key", ["admin"])
         key = mgr.validate_key(raw)
         assert mgr.has_permission(key, "scan:run") is True
         assert mgr.has_permission(key, "api_key:manage") is True
 
     def test_has_permission_viewer(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("viewer-key", ["viewer"])
         key = mgr.validate_key(raw)
         assert mgr.has_permission(key, "scan:read") is True
         assert mgr.has_permission(key, "scan:run") is False
 
     def test_has_permission_operator(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("op-key", ["operator"])
         key = mgr.validate_key(raw)
         assert mgr.has_permission(key, "scan:run") is True
         assert mgr.has_permission(key, "vuln:read") is True
 
     def test_has_permission_unknown_role(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("unknown-role", ["nonexistent"])
         key = mgr.validate_key(raw)
         assert mgr.has_permission(key, "scan:read") is False
 
     def test_revoke_key(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("to-revoke", ["viewer"])
         assert mgr.revoke_key("to-revoke") is True
         assert mgr.validate_key(raw) is None
 
     def test_revoke_key_not_found(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         assert mgr.revoke_key("nonexistent") is False
 
     def test_list_keys(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         mgr.create_api_key("list-test", ["admin"])
         keys = mgr.list_keys()
         assert len(keys) >= 1
@@ -1180,9 +1193,7 @@ class TestAuthManager:
         assert key2.is_expired() is True
 
     def test_create_api_key_with_expiry(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         raw = mgr.create_api_key("temp", ["viewer"], expires_in=3600)
         key = mgr.validate_key(raw)
         assert key is not None
@@ -1190,9 +1201,7 @@ class TestAuthManager:
         assert key.expires_at > 0
 
     def test_revoke_key_multiple_same_name(self):
-        from fusion_security.api.auth import AuthManager
-
-        mgr = AuthManager()
+        mgr = _isolated_auth_manager()
         mgr.create_api_key("dup", ["viewer"])
         mgr.create_api_key("dup", ["admin"])
         assert mgr.revoke_key("dup") is True

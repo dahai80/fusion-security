@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import multiprocessing as mp
 import signal
@@ -212,6 +213,12 @@ class ASTParser:
             if proc.is_alive():
                 proc.kill()
             return None
+        finally:
+            # FD 泄漏:parent_conn 此前在所有 return 路径均未关闭,长扫描累积 FD 直达上限。
+            with contextlib.suppress(Exception):
+                parent_conn.close()
+            with contextlib.suppress(Exception):
+                child_conn.close()
 
     def _walk(self, node: Node, content: str, result: ASTResult, ext: str):
         if ext == ".py":

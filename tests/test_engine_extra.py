@@ -1093,8 +1093,8 @@ class TestWebhookExtra:
 
         with (
             patch(
-                "fusion_security.engine.ci.webhook.validate_outbound_url",
-                return_value=URLGuardResult(ok=True, safe_url=config.url),
+                "fusion_security.engine.ci.webhook.pin_url",
+                return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
             patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
         ):
@@ -1113,8 +1113,8 @@ class TestWebhookExtra:
 
         with (
             patch(
-                "fusion_security.engine.ci.webhook.validate_outbound_url",
-                return_value=URLGuardResult(ok=True, safe_url=config.url),
+                "fusion_security.engine.ci.webhook.pin_url",
+                return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
             patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
         ):
@@ -1135,8 +1135,8 @@ class TestWebhookExtra:
         config = WebhookConfig(url="http://localhost:9999/hook")
         with (
             patch(
-                "fusion_security.engine.ci.webhook.validate_outbound_url",
-                return_value=URLGuardResult(ok=True, safe_url=config.url),
+                "fusion_security.engine.ci.webhook.pin_url",
+                return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
             patch("fusion_security.engine.ci.webhook.urlopen", side_effect=URLError("fail")),
         ):
@@ -1150,8 +1150,8 @@ class TestWebhookExtra:
         config = WebhookConfig(url="http://localhost:9999/hook")
         with (
             patch(
-                "fusion_security.engine.ci.webhook.validate_outbound_url",
-                return_value=URLGuardResult(ok=True, safe_url=config.url),
+                "fusion_security.engine.ci.webhook.pin_url",
+                return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
             patch("fusion_security.engine.ci.webhook.urlopen", side_effect=Exception("boom")),
         ):
@@ -1164,8 +1164,8 @@ class TestWebhookExtra:
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://169.254.169.254/latest/meta-data/")
         with patch(
-            "fusion_security.engine.ci.webhook.validate_outbound_url",
-            return_value=URLGuardResult(ok=False, reason="目标地址禁止外发"),
+            "fusion_security.engine.ci.webhook.pin_url",
+            return_value=(URLGuardResult(ok=False, reason="目标地址禁止外发"), None),
         ):
             result = notifier._send(config, "test", {})
         assert result is False

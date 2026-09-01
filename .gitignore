@@ -36,3 +36,18 @@ coverage.json
 CLAUDE.md
 ar.md
 audit_security_report.md
+
+# Secrets — 绝不入库
+.env
+.env.*
+*.key
+*.pem
+*.secret
+
+# Runtime data
+logs/
+.fusion_checkpoints/
+*.db
+*.sqlite
+*.sqlite3
+.fusion-security.pid

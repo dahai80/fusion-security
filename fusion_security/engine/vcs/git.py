@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class GitNotInstalledError(RuntimeError):
+    pass
 
 
 class GitArgError(ValueError):
@@ -50,6 +55,11 @@ class GitHelper:
             raise ValueError(f"不是git仓库: {self.repo_path}")
 
     def _run_git(self, *args: str) -> str:
+        if shutil.which("git") is None:
+            # git 未安装时 subprocess.run 抛 FileNotFoundError,被下方 Exception 吞掉返回 "",
+            # 调用方误判为"无法解析的 git rev"。显式检测并抛出明确错误。
+            logger.error("git 未安装,无法执行 git 命令")
+            raise GitNotInstalledError("git 未安装,请先安装 git CLI")
         cmd = ["git", "-C", str(self.repo_path)] + list(args)
         try:
             result = subprocess.run(
@@ -65,6 +75,9 @@ class GitHelper:
         except subprocess.TimeoutExpired:
             logger.error(f"git命令超时: {' '.join(cmd)}")
             return ""
+        except FileNotFoundError as e:
+            logger.error(f"git 可执行文件不存在: {e}")
+            raise GitNotInstalledError("git 未安装") from e
         except Exception as e:
             logger.error(f"git命令异常: {e}")
             return ""

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ...api.auth import APIKey, get_current_key
 from ...db import get_session
 from ...db.convert import scan_to_orm
 from ...db.models import ScanORM
-from ...engine.scanner import Scanner, ScanTarget
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,7 +40,7 @@ class IncrementalScanCreate(BaseModel):
 
 class ScanResponse(BaseModel):
     id: str
-    project_id: str
+    project_id: str | None = None
     scan_type: str
     status: str
     severity_threshold: str
@@ -47,6 +48,7 @@ class ScanResponse(BaseModel):
     model: str
     trigger: str
     branch: str
+    path: str
     files_scanned: int
     files_skipped: int
     duration_ms: float
@@ -56,6 +58,7 @@ class ScanResponse(BaseModel):
     medium: int
     low: int
     summary: str
+    created_at: str
 
 
 def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
@@ -69,6 +72,7 @@ def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
         model=o.model,
         trigger=o.trigger,
         branch=o.branch,
+        path=getattr(o, "path", "") or "",
         files_scanned=o.files_scanned,
         files_skipped=o.files_skipped,
         duration_ms=o.duration_ms,
@@ -78,14 +82,26 @@ def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
         medium=o.medium,
         low=o.low,
         summary=o.summary,
+        created_at=o.created_at.isoformat() if o.created_at else "",
     )
 
 
 async def _run_scan(
-    scan_id: str, path: str, scan_type: str, severity_threshold: str, use_ai: bool, model: str, changed_files: list[str]
+    scan_id: str,
+    path: str,
+    scan_type: str,
+    severity_threshold: str,
+    use_ai: bool,
+    model: str,
+    changed_files: list[str],
+    tenant_id: str = "",
 ):
-    from ...db import get_session
-    from ...db.convert import vuln_to_orm
+    # Wave 3/4: pipeline 权威路径。Legacy Scanner 已从 API 退役(仅 CLI check/gate/sarif 保留)。
+    # 持久化 vulnerabilities + findings + patches,完成后触发 webhook(Feature 5)。
+    from datetime import datetime
+
+    from ...db.convert import finding_to_orm, patch_to_orm, vuln_to_orm
+    from ...engine.pipeline import PipelineConfig, ScanPipeline
 
     db = get_session()
     try:
@@ -95,40 +111,57 @@ async def _run_scan(
         scan_orm.status = "running"
         db.commit()
 
-        target = ScanTarget(path)
-        scanner = Scanner(use_ai=use_ai, model=model, project_id=scan_orm.project_id, db=db)
+        config = PipelineConfig(
+            use_ai=use_ai,
+            model=model,
+            severity_threshold=severity_threshold,
+        )
+        pipeline = ScanPipeline(config=config, db=db, project_id=scan_orm.project_id, tenant_id=tenant_id)
+        ctx = await pipeline.run(
+            path,
+            changed_files=changed_files if (scan_type == "incremental" and changed_files) else None,
+            scan_id=scan_id,
+        )
+        result = pipeline.to_scan_result(ctx)
 
-        if scan_type == "incremental" and changed_files:
-            result = await scanner.scan_incremental(target, changed_files, severity_threshold)
+        scan_orm.files_scanned = result.files_scanned
+        scan_orm.files_skipped = result.files_skipped
+        scan_orm.duration_ms = result.duration_ms
+        scan_orm.total_vulnerabilities = len(result.vulnerabilities)
+        scan_orm.critical = sum(1 for v in result.vulnerabilities if v.severity == "critical")
+        scan_orm.high = sum(1 for v in result.vulnerabilities if v.severity == "high")
+        scan_orm.medium = sum(1 for v in result.vulnerabilities if v.severity == "medium")
+        scan_orm.low = sum(1 for v in result.vulnerabilities if v.severity == "low")
+        scan_orm.summary = result.summary
+
+        # pipeline 中断(stage 最终失败)记 failed/partial,不再无条件 completed。
+        failed_stage = ctx.stage_results.get("pipeline", {}).get("failed_stage")
+        if failed_stage:
+            scan_orm.status = "failed" if failed_stage in ("recon", "discover") else "partial"
+            scan_orm.summary = f"流水线在 {failed_stage} 阶段失败: {'; '.join(ctx.errors[-3:])}"
         else:
-            result = await scanner.scan(target, severity_threshold)
-
-        scan_model = result.to_scan_model()
-        scan_model.id = scan_id
-        for attr in [
-            "status",
-            "files_scanned",
-            "files_skipped",
-            "duration_ms",
-            "total_vulnerabilities",
-            "critical",
-            "high",
-            "medium",
-            "low",
-            "summary",
-        ]:
-            setattr(scan_orm, attr, getattr(scan_model, attr))
-
-        scan_orm.status = "completed"
-        from datetime import datetime
-
+            scan_orm.status = "completed"
         scan_orm.completed_at = datetime.utcnow()
 
+        # FK 顺序: vulnerabilities 先落库并 flush,再写 findings/patches(它们 FK 引用 vuln_id)。
+        # 单 commit 内 UoW 通常能按依赖排序,但跨表 FK + 无 relationship 关联时偶发 flush 乱序,
+        # 显式分两阶段提交更稳。
         for v in result.vulnerabilities:
-            db.add(vuln_to_orm(v))
+            db.add(vuln_to_orm(v, scan_id=scan_id, tenant_id=tenant_id))
+        db.flush()
+        for f in result.findings:
+            db.add(finding_to_orm(f, scan_id=scan_id))
+        for p in result.patches:
+            db.add(patch_to_orm(p))
 
         db.commit()
-        logger.info(f"扫描完成: {scan_id}, {len(result.vulnerabilities)} 个漏洞")
+        logger.info(
+            f"扫描完成: {scan_id}, vulns={len(result.vulnerabilities)} findings={len(result.findings)} patches={len(result.patches)}"
+        )
+
+        # Feature 5: 扫描完成后触发已启用 webhook(scan.completed 事件)。
+        with contextlib.suppress(Exception):
+            await _notify_webhooks(scan_orm, ctx)
     except Exception as e:
         logger.error(f"扫描失败 {scan_id}: {e}")
         try:
@@ -143,12 +176,53 @@ async def _run_scan(
         db.close()
 
 
+async def _notify_webhooks(scan_orm, ctx) -> None:
+    # Feature 5: 从 DB 加载启用的 webhook,过滤 scan.completed 事件后通知。secret 不出库(签名回退为空)。
+    import json
+
+    from ...db.models import WebhookORM
+    from ...engine.ci.webhook import WebhookConfig, WebhookNotifier
+
+    db = get_session()
+    try:
+        rows = db.query(WebhookORM).filter(WebhookORM.enabled.is_(True)).all()
+        configs = []
+        for row in rows:
+            events = json.loads(row.events_json or "[]")
+            if "scan.completed" not in events:
+                continue
+            configs.append(WebhookConfig(url=row.url, events=events))
+        if not configs:
+            return
+        notifier = WebhookNotifier(configs)
+        # notify_scan_complete 是同步(urlopen);放线程池避免阻塞事件循环。
+        import asyncio
+
+        await asyncio.to_thread(
+            notifier.notify_scan_complete,
+            scan_orm.id,
+            scan_orm.total_vulnerabilities,
+            scan_orm.critical,
+            scan_orm.high,
+            scan_orm.medium,
+            scan_orm.low,
+            True,
+        )
+    finally:
+        db.close()
+
+
 @router.post("", response_model=ScanResponse)
-def create_scan(body: ScanCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
+def create_scan(
+    body: ScanCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(get_current_key),
+):
     from ...models.project import Scan
 
     s = Scan(
-        project_id=body.project_id,
+        project_id=body.project_id or None,
         scan_type=body.scan_type,
         severity_threshold=body.severity_threshold,
         use_ai=body.use_ai,
@@ -158,6 +232,8 @@ def create_scan(body: ScanCreate, background_tasks: BackgroundTasks, db: Session
     )
     orm = scan_to_orm(s)
     orm.status = "pending"
+    orm.path = body.path
+    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
@@ -172,6 +248,7 @@ def create_scan(body: ScanCreate, background_tasks: BackgroundTasks, db: Session
             body.use_ai,
             body.model,
             body.changed_files,
+            orm.tenant_id,
         )
 
     return _scan_orm_to_response(orm)
@@ -212,8 +289,16 @@ async def _scan_executor(task):
         task.config.get("use_ai", True),
         task.config.get("model", ""),
         task.config.get("changed_files", []),
+        task.config.get("tenant_id", ""),
     )
-    return {"scan_id": task.config.get("scan_id", ""), "status": "completed"}
+    # A-P0-2: 此前无条件返回 completed,与 DB 实际状态脱节。回查真实状态。
+    db = get_session()
+    try:
+        scan_orm = db.query(ScanORM).filter(ScanORM.id == task.config.get("scan_id", "")).first()
+        status = scan_orm.status if scan_orm else "completed"
+    finally:
+        db.close()
+    return {"scan_id": task.config.get("scan_id", ""), "status": status}
 
 
 class QueueScanCreate(BaseModel):
@@ -227,12 +312,16 @@ class QueueScanCreate(BaseModel):
 
 
 @router.post("/queue", summary="提交扫描到队列")
-async def enqueue_scan(body: QueueScanCreate, db: Session = Depends(get_session)):
+async def enqueue_scan(
+    body: QueueScanCreate,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(get_current_key),
+):
     from ...engine.queue import ScanTask, TaskPriority
     from ...models.project import Scan
 
     s = Scan(
-        project_id=body.project_id,
+        project_id=body.project_id or None,
         scan_type=body.scan_type,
         severity_threshold=body.severity_threshold,
         use_ai=body.use_ai,
@@ -241,6 +330,8 @@ async def enqueue_scan(body: QueueScanCreate, db: Session = Depends(get_session)
     )
     orm = scan_to_orm(s)
     orm.status = "queued"
+    orm.path = body.path
+    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
@@ -256,11 +347,12 @@ async def enqueue_scan(body: QueueScanCreate, db: Session = Depends(get_session)
             "use_ai": body.use_ai,
             "model": body.model,
             "changed_files": [],
+            "tenant_id": orm.tenant_id,
         },
     )
     queue = _get_queue()
     task_id = await queue.enqueue(task)
-    logger.info(f"扫描已入队: scan={orm.id} task={task_id}")
+    logger.info(f"扫描已入队: scan={orm.id} task={task_id} tenant={orm.tenant_id}")
     return {"scan_id": orm.id, "task_id": task_id, "status": "queued"}
 
 
@@ -302,11 +394,25 @@ async def list_queue_tasks(status: str | None = None):
 
 
 @router.post("/queue/{task_id}/cancel", summary="取消队列任务")
-async def cancel_queue_task(task_id: str):
+async def cancel_queue_task(task_id: str, db: Session = Depends(get_session)):
+    # A-P0: 此前仅标队列任务 CANCELLED,不更新 ScanORM.status,运行中任务也不中断。
     queue = _get_queue()
-    ok = await queue.cancel_task(task_id)
-    if not ok:
+    pool = _get_pool()
+    task = await queue.get_task(task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    await queue.cancel_task(task_id)
+    with contextlib.suppress(Exception):
+        await pool.cancel_active(task_id)
+    # 同步 ScanORM 状态:cancelled(若存在对应 scan)。
+    scan_id = task.config.get("scan_id", "")
+    if scan_id:
+        scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
+        if scan_orm and scan_orm.status not in ("completed", "failed"):
+            scan_orm.status = "cancelled"
+            scan_orm.summary = "用户取消"
+            db.commit()
+            logger.info(f"取消扫描: scan={scan_id} task={task_id}")
     return {"task_id": task_id, "status": "cancelled"}
 
 
@@ -345,9 +451,10 @@ async def startup_reconcile_scans() -> dict:
         queued = db.query(ScanORM).filter(ScanORM.status == "queued").all()
         queue = _get_queue()
         for s in queued:
+            # A-P0-2: 用 ScanORM.path 重入队,此前 project_path="" 导致执行器空路径扫描。
             task = ScanTask(
                 priority=TaskPriority.NORMAL,
-                project_path="",
+                project_path=getattr(s, "path", "") or "",
                 config={
                     "scan_id": s.id,
                     "scan_type": s.scan_type,
@@ -355,6 +462,7 @@ async def startup_reconcile_scans() -> dict:
                     "use_ai": s.use_ai,
                     "model": s.model,
                     "changed_files": [],
+                    "tenant_id": s.tenant_id or "",
                 },
             )
             await queue.enqueue(task)
@@ -393,7 +501,12 @@ class ResumeRequest(BaseModel):
 
 
 @router.post("/resume", summary="断点续扫")
-def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
+def resume_scan(
+    body: ResumeRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(get_current_key),
+):
     from ...engine.resume import CheckpointManager
 
     mgr = CheckpointManager()
@@ -405,6 +518,9 @@ def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks, db: Sess
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
     scan_orm.status = "running"
+    scan_orm.path = body.path
+    if not scan_orm.tenant_id:
+        scan_orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
     db.commit()
 
     background_tasks.add_task(
@@ -417,27 +533,53 @@ def resume_scan(body: ResumeRequest, background_tasks: BackgroundTasks, db: Sess
 
 
 async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]):
-    from ...db import get_session as get_db
-    from ...db.models import ScanORM
+    from datetime import datetime
+
+    from ...db.convert import finding_to_orm, patch_to_orm, vuln_to_orm
     from ...engine.pipeline import ScanPipeline
 
-    db = get_db()
+    db = get_session()
     try:
         scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
         if not scan_orm:
             return
 
-        pipeline = ScanPipeline(db=db, project_id=scan_orm.project_id)
+        pipeline = ScanPipeline(db=db, project_id=scan_orm.project_id, tenant_id=scan_orm.tenant_id or "")
         ctx = await pipeline.run(path, changed_files=changed_files or None, scan_id=scan_id)
+        result = pipeline.to_scan_result(ctx)
 
-        scan_orm.status = "completed"
-        scan_orm.files_scanned = len(ctx.files)
-        scan_orm.summary = f"续扫完成, {len(ctx.vulnerabilities)} 个漏洞"
-        from datetime import datetime
+        # 续扫同 scan_id:先删旧漏洞/findings/patches,避免新旧结果叠加产生重复计数。
+        from ...db.models import FindingORM, PatchORM, VulnerabilityORM
 
+        db.query(VulnerabilityORM).filter(VulnerabilityORM.scan_id == scan_id).delete()
+        db.query(FindingORM).filter(FindingORM.scan_id == scan_id).delete()
+        db.query(PatchORM).filter(PatchORM.scan_id == scan_id).delete()
+
+        scan_orm.files_scanned = result.files_scanned
+        scan_orm.files_skipped = result.files_skipped
+        scan_orm.duration_ms = result.duration_ms
+        scan_orm.total_vulnerabilities = len(result.vulnerabilities)
+        scan_orm.critical = sum(1 for v in result.vulnerabilities if v.severity == "critical")
+        scan_orm.high = sum(1 for v in result.vulnerabilities if v.severity == "high")
+        scan_orm.medium = sum(1 for v in result.vulnerabilities if v.severity == "medium")
+        scan_orm.low = sum(1 for v in result.vulnerabilities if v.severity == "low")
+        scan_orm.summary = result.summary
+
+        failed_stage = ctx.stage_results.get("pipeline", {}).get("failed_stage")
+        scan_orm.status = "failed" if failed_stage else "completed"
+        if failed_stage:
+            scan_orm.summary = f"续扫在 {failed_stage} 阶段失败"
         scan_orm.completed_at = datetime.utcnow()
+
+        for v in result.vulnerabilities:
+            db.add(vuln_to_orm(v, scan_id=scan_id, tenant_id=scan_orm.tenant_id or ""))
+        for f in result.findings:
+            db.add(finding_to_orm(f, scan_id=scan_id))
+        for p in result.patches:
+            db.add(patch_to_orm(p))
+
         db.commit()
-        logger.info(f"续扫完成: {scan_id}")
+        logger.info(f"续扫完成: {scan_id}, vulns={len(result.vulnerabilities)}")
     except Exception as e:
         logger.error(f"续扫失败 {scan_id}: {e}")
         try:
@@ -483,7 +625,10 @@ def delete_scan(scan_id: str, db: Session = Depends(get_session)):
 
 @router.post("/incremental", response_model=ScanResponse)
 def create_incremental_scan(
-    body: IncrementalScanCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_session)
+    body: IncrementalScanCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(get_current_key),
 ):
     try:
         from ...engine.vcs.git import GitHelper
@@ -506,6 +651,8 @@ def create_incremental_scan(
     )
     orm = scan_to_orm(s)
     orm.status = "pending"
+    orm.path = body.path
+    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
     orm.base_commit = diff.base_commit
     orm.head_commit = diff.head_commit
     db.add(orm)
@@ -522,6 +669,7 @@ def create_incremental_scan(
             body.use_ai,
             body.model,
             diff.changed_files,
+            orm.tenant_id,
         )
     else:
         orm.status = "completed"

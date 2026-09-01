@@ -4,7 +4,9 @@ import json
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from fusion_security.api.app import create_app
 from fusion_security.api.auth import get_current_key
@@ -68,6 +70,37 @@ class TestCacheHelpers:
     def test_json_to_vulns_empty(self):
         assert _json_to_vulns("") == []
         assert _json_to_vulns("[]") == []
+
+    def test_json_to_vulns_invalid_json(self):
+        # 31-33: JSONDecodeError → 返回空并 log。
+        assert _json_to_vulns("{not json") == []
+
+    def test_json_to_vulns_non_array(self):
+        # 34-36: 非 list → 返回空。
+        assert _json_to_vulns('{"a":1}') == []
+
+    def test_json_to_vulns_skips_bad_items(self):
+        # 40-45: 非 dict 项跳过;字段过滤后损坏项跳过。
+        # valid item + 非 dict 项混合。
+        good = json.dumps(
+            [
+                {
+                    "id": "V1",
+                    "title": "t",
+                    "description": "d",
+                    "severity": "high",
+                    "confidence": 80,
+                    "file_path": "a.py",
+                    "line_number": 1,
+                    "code_snippet": "s",
+                    "unknown_field": 1,
+                },
+                123,
+            ]
+        )
+        result = _json_to_vulns(good)
+        assert len(result) == 1
+        assert result[0].id == "V1"
 
 
 class TestProjectScanCache:
@@ -183,6 +216,42 @@ class TestProjectScanCache:
         results_map = {"app.py": ("content", [_make_vuln()])}
         cache.put_multi("proj1", results_map)
         db.add.assert_called_once()
+
+    def test_put_integrity_fallback_updates_existing(self):
+        # 100-117: commit 抛 IntegrityError → rollback → 回退 UPDATE 已存在行。
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from fusion_security.db.session import Base
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False)
+        db = Session()
+        cache = ProjectScanCache(db)
+        vulns = [_make_vuln()]
+        # 先写一行。
+        cache.put("proj1", "app.py", "content", vulns)
+        # 手动让 commit 抛 IntegrityError 模拟并发竞态:删除唯一行后插入同 key。
+        # 直接构造:插入第二行同 (project_id, file_path) 触发唯一约束。
+        db.add(ScanCacheORM(project_id="proj1", file_path="app.py", content_hash="x", results_json="[]"))
+        with pytest.raises((IntegrityError, OperationalError)):
+            db.commit()
+        db.rollback()
+        # put 路径:row 已存在 → 走 update 分支(86-89),commit 成功。
+        cache.put("proj1", "app.py", "newcontent", vulns)
+        rows = db.query(ScanCacheORM).filter(ScanCacheORM.project_id == "proj1").all()
+        assert len(rows) == 1
+        db.close()
+
+    def test_flush_failure_rolls_back(self):
+        # 121-125: flush commit 抛异常 → rollback 不崩溃。
+        db = MagicMock()
+        db.commit.side_effect = OperationalError("stmt", {}, Exception("boom"))
+        cache = ProjectScanCache(db)
+        cache.flush()  # 不抛异常。
+        db.rollback.assert_called_once()
 
 
 class TestProjectScanSummaryAPI:

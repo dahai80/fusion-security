@@ -12,14 +12,16 @@ interface DashboardStats {
     total_scans: number;
     total_vulns: number;
     high_severity: number;
-    critical: number;
-    false_positives: number;
     fixed: number;
 }
 
 interface HealthData {
     status: string;
-    components: Record<string, { status: string; detail?: string }>;
+    database: string;
+    ai_backend: string;
+    memory_percent: number | null;
+    cpu_percent: number | null;
+    disk_percent: number | null;
 }
 
 export default function Dashboard() {
@@ -90,19 +92,34 @@ export default function Dashboard() {
 
             <h2 style={{ marginTop: 24 }}>系统健康</h2>
             <Row gutter={[16, 16]}>
-                {health?.components && Object.entries(health.components).map(([name, info]) => (
-                    <Col span={8} key={name}>
-                        <Card size="small">
-                            <Statistic
-                                title={name}
-                                value={info.status}
-                                prefix={info.status === 'ok' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-                                valueStyle={{ color: info.status === 'ok' ? '#52c41a' : '#cf1322', fontSize: 16 }}
-                            />
-                            {info.detail && <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>{info.detail}</div>}
-                        </Card>
-                    </Col>
-                ))}
+                {(() => {
+                    // 后端 /health/detailed 返回扁平结构,非 components 嵌套。
+                    const comps: Array<[string, string, string | null]> = [
+                        ['状态', health?.status ?? 'unknown', null],
+                        ['数据库', health?.database ?? 'unknown', null],
+                        ['AI 后端', health?.ai_backend ?? 'unknown', null],
+                        ['内存', health?.memory_percent != null ? `${health.memory_percent.toFixed(1)}%` : 'N/A', null],
+                        ['CPU', health?.cpu_percent != null ? `${health.cpu_percent.toFixed(1)}%` : 'N/A', null],
+                        ['磁盘', health?.disk_percent != null ? `${health.disk_percent.toFixed(1)}%` : 'N/A', null],
+                    ];
+                    return comps.map(([name, status, detail]) => {
+                        const ok = status === 'ok' || status === 'degraded' || name === '状态';
+                        const numeric = status.endsWith('%') && parseFloat(status) < 80;
+                        const healthy = name === '状态' ? status !== 'degraded' : (status.endsWith('%') ? numeric : status === 'ok');
+                        return (
+                            <Col span={8} key={name}>
+                                <Card size="small">
+                                    <Statistic
+                                        title={name}
+                                        value={status}
+                                        prefix={healthy ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+                                        valueStyle={{ color: healthy ? '#52c41a' : '#cf1322', fontSize: 16 }}
+                                    />
+                                </Card>
+                            </Col>
+                        );
+                    });
+                })()}
                 {!health && <Col><Tag>无法获取健康状态</Tag></Col>}
             </Row>
         </div>

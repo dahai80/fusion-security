@@ -118,13 +118,28 @@ def init_db(db_path: str | None = None, echo: bool = False, db_url: str | None =
             _migrate_schema(_engine)
         else:
             _migrate_schema_portable(_engine)
-        logger.info(f"数据库已初始化: {url}")
+        # S-P1-6: 日志里绝不暴露密码,用 hide_password 脱敏。
+        safe_url = make_url(url).render_as_string(hide_password=True)
+        logger.info(f"数据库已初始化: {safe_url}")
 
 
 def _migrate_schema(engine) -> None:
     # create_all 只建缺失的表,不会给已存在的表追加新列。
     # 旧库升级时这里幂等补齐新增列,避免线上库缺列导致查询崩溃。SQLite 专用(PRAGMA)。
     _ensure_column(engine, "patches", "needs_review", "BOOLEAN NOT NULL DEFAULT 0")
+    # A-P0-2 / 多租户 / 分布式认领: scans 表新增列。
+    _ensure_column(engine, "scans", "path", "VARCHAR(500) DEFAULT ''")
+    _ensure_column(engine, "scans", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column(engine, "scans", "claimed_by", "VARCHAR(64) DEFAULT ''")
+    _ensure_column(engine, "scans", "heartbeat", "FLOAT DEFAULT 0.0")
+    # 多租户: vulnerabilities 表新增 scan_id / tenant_id(索引在 create_all 建表时生效,旧库靠这里补列)。
+    _ensure_column(engine, "vulnerabilities", "scan_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column(engine, "vulnerabilities", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column(engine, "api_keys", "expires_at", "DATETIME")
+    # Feature 4: scheduled_scans 表对齐 ScanScheduler.ScheduledScan 数据类。
+    _ensure_column(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
+    _ensure_column(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
+    _ensure_column(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
 
 
 def _ensure_column(engine, table: str, column: str, definition: str) -> None:
@@ -141,6 +156,16 @@ def _migrate_schema_portable(engine) -> None:
     # 非 SQLite(PG/MySQL):用 information_schema 检测列是否存在,不存在则 ALTER ADD。
     # 避免对共享库执行 PRAGMA(SQLite 方言,PG 上会语法报错)。
     _ensure_column_portable(engine, "patches", "needs_review", "BOOLEAN NOT NULL DEFAULT FALSE")
+    _ensure_column_portable(engine, "scans", "path", "VARCHAR(500) DEFAULT ''")
+    _ensure_column_portable(engine, "scans", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column_portable(engine, "scans", "claimed_by", "VARCHAR(64) DEFAULT ''")
+    _ensure_column_portable(engine, "scans", "heartbeat", "FLOAT DEFAULT 0.0")
+    _ensure_column_portable(engine, "vulnerabilities", "scan_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column_portable(engine, "vulnerabilities", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column_portable(engine, "api_keys", "expires_at", "TIMESTAMP")
+    _ensure_column_portable(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
+    _ensure_column_portable(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
+    _ensure_column_portable(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
 
 
 def _ensure_column_portable(engine, table: str, column: str, definition: str) -> None:
@@ -172,7 +197,8 @@ def init_async_db(db_path: str | None = None, echo: bool = False, db_url: str | 
 
         from . import models  # noqa: F401
 
-        logger.info(f"异步数据库已初始化: {url}")
+        safe_url = make_url(url).render_as_string(hide_password=True)
+        logger.info(f"异步数据库已初始化: {safe_url}")
 
 
 def get_session() -> Session:

@@ -10,27 +10,35 @@ services:
       - scan-data:/app/data
       - ${SCAN_PATH:-/tmp}:/scan:ro
     environment:
-      # 单机默认 SQLite(零配置离线);多节点共享库取消注释下一行指向 postgres 服务。
-      # 安装 postgres extra: pip install -e ".[postgres]"
-      # - FUSION_SECURITY_DB_URL=postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion
+      # MLX_BASE_URL 为代码权威来源(analyzer/system 优先读取)。
       - FUSION_DB_PATH=/app/data/fusion.db
-      - FUSION_AI_URL=http://fusion-mlx:11432/v1
-      - FUSION_AI_MODEL=qwen3.5-9b
+      - MLX_BASE_URL=http://fusion-mlx:11432/v1
+      - FUSION_MODEL=qwen3.5-9b
+      - FUSION_SECURITY_MASTER_KEY=${FUSION_SECURITY_MASTER_KEY:-}
     depends_on:
       fusion-mlx:
         condition: service_healthy
     restart: unless-stopped
+    # 资源限制 + 最小权限:只读根文件系统不可行(SQLite 需写 /app/data,已挂卷),
+    # 但 drop 所有 Linux capabilities,限制内存/CPU。
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 2.0
+    mem_reservation: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11454/api/v1/system/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
 
   fusion-mlx:
     image: fusion-mlx:latest
     container_name: fusion-mlx
-    ports:
-      - "11432:11432"
+    # 不对宿主机暴露 11432:公网可达的 LLM 无鉴权,仅容器网络内部可达。
+    expose:
+      - "11432"
     volumes:
       - mlx-models:/root/.cache/huggingface
     environment:
@@ -42,6 +50,10 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    mem_limit: 16g
+    cpus: 8.0
 
 volumes:
   scan-data:

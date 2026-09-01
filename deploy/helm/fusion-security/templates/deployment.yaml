@@ -14,6 +14,15 @@ spec:
       labels:
         {{- include "fusion-security.selectorLabels" . | nindent 8 }}
     spec:
+      securityContext:
+        # 非 root + 只读根文件系统(/app/data 由 PVC 可写挂载)。
+        runAsNonRoot: true
+        runAsUser: 1000
+        readOnlyRootFilesystem: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
       containers:
         - name: fusion-security
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -28,21 +37,26 @@ spec:
               value: {{ .Values.config.severityThreshold | quote }}
             - name: FUSION_ENABLE_AI
               value: {{ .Values.config.enableAI | quote }}
-            - name: FUSION_MLX_URL
+            # MLX_BASE_URL 为代码权威来源;FUSION_MLX_URL 保留兼容(回退读取)。
+            - name: MLX_BASE_URL
               value: "http://{{ include "fusion-mlx.fullname" . }}:{{ .Values.fusionMLX.service.port }}/v1"
+            - name: FUSION_DB_PATH
+              value: /app/data/fusion.db
             {{- if .Values.config.model }}
             - name: FUSION_MODEL
               value: {{ .Values.config.model | quote }}
             {{- end }}
+          # liveness 走公开 /health(无鉴权,供探针);readiness 同。
+          # /health/detailed 已鉴权(Wave 4),探针无 API key 不能用。
           livenessProbe:
             httpGet:
-              path: /api/v1/system/health/detailed
+              path: /api/v1/system/health
               port: 11454
             initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /api/v1/system/health/detailed
+              path: /api/v1/system/health
               port: 11454
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -50,7 +64,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: scan-data
-              mountPath: /data/scans
+              mountPath: /app/data
       volumes:
         - name: scan-data
         {{- if .Values.persistence.enabled }}

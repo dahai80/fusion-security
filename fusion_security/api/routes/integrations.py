@@ -132,33 +132,87 @@ async def dashboard_stats():
     return stats.to_dict()
 
 
-# ===== Webhook CRUD =====
+# ===== Webhook CRUD (DB-backed, WebhookORM) =====
 
-_webhooks: dict[str, dict] = {}
+
+def _webhook_orm_to_dict(row) -> dict:
+    # S-P0: secret_hash 永不出库。响应只暴露非敏感字段。
+    import json
+
+    return {
+        "id": row.id,
+        "url": row.url,
+        "events": json.loads(row.events_json or "[]"),
+        "enabled": bool(row.enabled),
+        "created_at": str(row.created_at) if row.created_at else "",
+    }
+
+
+def _validate_outbound(url: str) -> None:
+    from ...engine.ci._url_guard import validate_outbound_url
+
+    result = validate_outbound_url(url)
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=f"URL 校验失败: {result.reason}")
 
 
 @router.post("/webhooks", summary="创建Webhook")
 async def create_webhook(url: str, events: list[str] = None, secret: str = ""):
+    # 持久化到 WebhookORM;secret 只存 sha256,明文不落库也不回显。
+    import hashlib
+    import json
     import uuid
+
+    from ...db import get_session
+    from ...db.models import WebhookORM
 
     if events is None:
         events = ["scan.completed"]
-    wid = uuid.uuid4().hex[:16]
-    _webhooks[wid] = {"id": wid, "url": url, "events": events, "secret": secret, "enabled": True}
-    logger.info(f"创建Webhook: {wid} -> {url}")
-    return _webhooks[wid]
+    _validate_outbound(url)
+    db = get_session()
+    try:
+        row = WebhookORM(
+            id=uuid.uuid4().hex[:16],
+            url=url,
+            events_json=json.dumps(events),
+            secret_hash=hashlib.sha256(secret.encode()).hexdigest() if secret else "",
+            enabled=True,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        logger.info(f"创建Webhook: {row.id} -> {url}")
+        return _webhook_orm_to_dict(row)
+    finally:
+        db.close()
 
 
 @router.get("/webhooks", summary="列出Webhooks")
 async def list_webhooks():
-    return {"webhooks": list(_webhooks.values())}
+    from ...db import get_session
+    from ...db.models import WebhookORM
+
+    db = get_session()
+    try:
+        rows = db.query(WebhookORM).all()
+        return {"webhooks": [_webhook_orm_to_dict(r) for r in rows]}
+    finally:
+        db.close()
 
 
 @router.get("/webhooks/{webhook_id}", summary="获取Webhook")
 async def get_webhook(webhook_id: str):
-    if webhook_id not in _webhooks:
-        raise HTTPException(status_code=404, detail="Webhook不存在")
-    return _webhooks[webhook_id]
+    from ...db import get_session
+    from ...db.models import WebhookORM
+
+    db = get_session()
+    try:
+        row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Webhook不存在")
+        return _webhook_orm_to_dict(row)
+    finally:
+        db.close()
 
 
 class WebhookUpdate(BaseModel):
@@ -169,23 +223,45 @@ class WebhookUpdate(BaseModel):
 
 @router.patch("/webhooks/{webhook_id}", summary="更新Webhook")
 async def update_webhook(webhook_id: str, body: WebhookUpdate):
-    if webhook_id not in _webhooks:
-        raise HTTPException(status_code=404, detail="Webhook不存在")
-    if body.url is not None:
-        _webhooks[webhook_id]["url"] = body.url
-    if body.events is not None:
-        _webhooks[webhook_id]["events"] = body.events
-    if body.enabled is not None:
-        _webhooks[webhook_id]["enabled"] = body.enabled
-    return _webhooks[webhook_id]
+    import json
+
+    from ...db import get_session
+    from ...db.models import WebhookORM
+
+    db = get_session()
+    try:
+        row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Webhook不存在")
+        if body.url is not None:
+            _validate_outbound(body.url)
+            row.url = body.url
+        if body.events is not None:
+            row.events_json = json.dumps(body.events)
+        if body.enabled is not None:
+            row.enabled = body.enabled
+        db.commit()
+        db.refresh(row)
+        return _webhook_orm_to_dict(row)
+    finally:
+        db.close()
 
 
 @router.delete("/webhooks/{webhook_id}", summary="删除Webhook")
 async def delete_webhook(webhook_id: str):
-    if webhook_id not in _webhooks:
-        raise HTTPException(status_code=404, detail="Webhook不存在")
-    del _webhooks[webhook_id]
-    return {"status": "ok"}
+    from ...db import get_session
+    from ...db.models import WebhookORM
+
+    db = get_session()
+    try:
+        row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Webhook不存在")
+        db.delete(row)
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
 
 
 # ===== Notification (Feishu / DingTalk) =====
@@ -318,30 +394,36 @@ async def sync_to_jira(body: JiraIssueCreate):
     global _jira_client
     if _jira_client is None:
         raise HTTPException(status_code=400, detail="未配置Jira连接，请先调用 /jira/config")
+    from fastapi.concurrency import run_in_threadpool
+
     from ...db import get_session
     from ...db.convert import orm_to_vuln
     from ...db.models import VulnerabilityORM
 
-    db = next(get_session())
-    try:
-        vulns = []
-        if body.vuln_ids:
-            for vid in body.vuln_ids:
-                o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vid).first()
-                if o:
+    # sync SQLAlchemy + sync HTTP 放线程池,避免阻塞事件循环。
+    def _do_sync():
+        db = get_session()
+        try:
+            vulns = []
+            if body.vuln_ids:
+                for vid in body.vuln_ids:
+                    o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vid).first()
+                    if o:
+                        vulns.append(orm_to_vuln(o))
+            else:
+                for o in db.query(VulnerabilityORM).filter(VulnerabilityORM.status == "open").limit(50).all():
                     vulns.append(orm_to_vuln(o))
-        else:
-            for o in db.query(VulnerabilityORM).filter(VulnerabilityORM.status == "open").limit(50).all():
-                vulns.append(orm_to_vuln(o))
-        if not vulns:
-            return {"synced": 0, "issues": []}
-        issues = _jira_client.create_issues_batch(vulns)
-        return {
-            "synced": len(issues),
-            "issues": [{"key": i.key, "url": i.url, "summary": i.summary} for i in issues],
-        }
-    finally:
-        db.close()
+            if not vulns:
+                return {"synced": 0, "issues": []}
+            issues = _jira_client.create_issues_batch(vulns)
+            return {
+                "synced": len(issues),
+                "issues": [{"key": i.key, "url": i.url, "summary": i.summary} for i in issues],
+            }
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_do_sync)
 
 
 @router.get("/jira/issue/{issue_key}", summary="获取Jira工单状态")

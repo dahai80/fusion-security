@@ -54,6 +54,9 @@ class Scan:
     branch: str = ""
     base_commit: str = ""
     head_commit: str = ""
+    # A-P0-2: 扫描目标原始路径,对账与队列恢复依赖。
+    path: str = ""
+    tenant_id: str = ""
     files_scanned: int = 0
     files_skipped: int = 0
     duration_ms: float = 0.0
@@ -86,6 +89,8 @@ class Scan:
             "branch": self.branch,
             "base_commit": self.base_commit,
             "head_commit": self.head_commit,
+            "path": self.path,
+            "tenant_id": self.tenant_id,
             "files_scanned": self.files_scanned,
             "files_skipped": self.files_skipped,
             "duration_ms": round(self.duration_ms, 1),
