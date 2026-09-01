@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -148,15 +149,20 @@ class SCAScanner:
         }
 
     def scan(self, project_path: str) -> list[Vulnerability]:
-        deps = self.collect_dependencies(project_path)
-        logger.info(f"[SCA] 收集到 {len(deps)} 个依赖")
-        vulns = self.check_vulnerabilities(deps)
-        vulns.extend(self.check_deprecated(deps))
-        vulns.extend(self.check_license(project_path))
-        vulns.extend(self.check_stale_versions(deps))
-        if self.osv_client:
-            self.osv_client.close()
-        return vulns
+        # osv_client.close() 此前在 return 前,异常路径(任一 check 抛错)泄漏 httpx.Client。
+        # 移入 finally 确保释放。
+        try:
+            deps = self.collect_dependencies(project_path)
+            logger.info(f"[SCA] 收集到 {len(deps)} 个依赖")
+            vulns = self.check_vulnerabilities(deps)
+            vulns.extend(self.check_deprecated(deps))
+            vulns.extend(self.check_license(project_path))
+            vulns.extend(self.check_stale_versions(deps))
+            return vulns
+        finally:
+            if self.osv_client:
+                with contextlib.suppress(Exception):
+                    self.osv_client.close()
 
     def collect_dependencies(self, project_path: str) -> list[Dependency]:
         deps: list[Dependency] = []
@@ -485,6 +491,11 @@ class SCAScanner:
             data = json.loads(content)
             for section, is_dev in [("dependencies", False), ("devDependencies", True)]:
                 for name, ver in data.get(section, {}).items():
+                    # ver 可能是 dist-tag("latest")/alias("npm:foo@1.0")/非字符串(file:/...)
+                    # re.sub 对非字符串抛 TypeError(此前仅捕获 JSONDecodeError)。跳过非字符串
+                    # 与无纯数字版本,避免误报。
+                    if not isinstance(ver, str):
+                        continue
                     clean_ver = re.sub(r"[^0-9.]", "", ver)
                     if clean_ver:
                         deps.append(

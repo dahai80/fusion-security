@@ -12,9 +12,18 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from ._url_guard import validate_outbound_url
+from ._url_guard import pin_url
 
 logger = logging.getLogger(__name__)
+
+
+class _NullResolver:
+    # resolver 为 None(校验未提供 pinned_ips)时的占位上下文,什么都不做。
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
 
 
 @dataclass
@@ -56,7 +65,7 @@ class WebhookNotifier:
         return results
 
     def _send(self, config: WebhookConfig, event: str, payload: dict[str, Any]) -> bool:
-        guard = validate_outbound_url(config.url)
+        guard, resolver = pin_url(config.url)
         if not guard.ok:
             logger.warning(f"[Webhook] SSRF 校验拒绝 host={_host_of(config.url)}: {guard.reason}")
             return False
@@ -79,17 +88,19 @@ class WebhookNotifier:
             headers["X-Fusion-Security-Signature"] = f"sha256={signature}"
         headers.update(config.headers)
 
-        try:
-            req = Request(guard.safe_url, data=body, headers=headers, method="POST")
-            with urlopen(req, timeout=10) as resp:
-                logger.info(f"[Webhook] 发送成功 host={_host_of(config.url)} status={resp.status}")
-                return 200 <= resp.status < 300
-        except URLError as e:
-            logger.warning(f"[Webhook] URL错误 host={_host_of(config.url)}: {e}")
-            return False
-        except Exception as e:
-            logger.warning(f"[Webhook] 发送异常 host={_host_of(config.url)}: {e}")
-            return False
+        # DNS pinning:urlopen 期间固定为校验通过的 IP,关闭 DNS-rebinding TOCTOU 窗口。
+        with resolver or _NullResolver():
+            try:
+                req = Request(guard.safe_url, data=body, headers=headers, method="POST")
+                with urlopen(req, timeout=10) as resp:
+                    logger.info(f"[Webhook] 发送成功 host={_host_of(config.url)} status={resp.status}")
+                    return 200 <= resp.status < 300
+            except URLError as e:
+                logger.warning(f"[Webhook] URL错误 host={_host_of(config.url)}: {e}")
+                return False
+            except Exception as e:
+                logger.warning(f"[Webhook] 发送异常 host={_host_of(config.url)}: {e}")
+                return False
 
     def notify_scan_complete(
         self, scan_id: str, total: int, critical: int, high: int, medium: int, low: int, gate_passed: bool = True

@@ -9,7 +9,17 @@ from pydantic import BaseModel
 
 from ... import __version__
 
-_MLX_BASE_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
+
+def _resolve_mlx_url() -> str:
+    # 与 analyzer.py 同一来源:MLX_BASE_URL 优先,回退 FUSION_AI_URL / FUSION_MLX_URL。
+    for var in ("MLX_BASE_URL", "FUSION_AI_URL", "FUSION_MLX_URL"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return val.rstrip("/")
+    return "http://localhost:11432/v1"
+
+
+_MLX_BASE_URL = _resolve_mlx_url()
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,17 +43,22 @@ def health_check():
     return {"status": "ok"}
 
 
-@public_router.get("/health/detailed")
-def health_detailed_public():
+@router.get("/health/detailed")
+def health_detailed():
+    # S-P1: 此前挂在 public_router(无鉴权),泄露 DB/AI/CPU/磁盘状态。移到鉴权 router。
+    # 修复 next(get_session()) 误用 + s.execute("SELECT 1") 在 SA 2.x 报错(需 text())。
     import httpx
+    from sqlalchemy import text
 
     db_ok = True
     try:
         from ...db import get_session
 
-        s = next(get_session())
-        s.execute("SELECT 1")
-        s.close()
+        s = get_session()
+        try:
+            s.execute(text("SELECT 1"))
+        finally:
+            s.close()
     except Exception as e:
         db_ok = False
         logger.warning(f"DB健康检查失败: {e}")

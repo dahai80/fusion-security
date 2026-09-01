@@ -18,6 +18,10 @@ class URLGuardResult:
     ok: bool
     reason: str = ""
     safe_url: str = ""
+    # DNS-rebinding TOCTOU: validate 时解析的公网 IP 与 urlopen 实际连接的 IP 可能不同
+    # (攻击者在两次 getaddrinfo 之间切换到内网地址)。pinned_ips 保存校验通过的 IP,
+    # 调用方据此在请求期间 pin 住解析结果,杜绝重绑定窗口。
+    pinned_ips: list[str] = None
 
 
 def _is_forbidden_ip(addr: ipaddress._BaseAddress) -> bool:
@@ -66,4 +70,60 @@ def validate_outbound_url(raw_url: str) -> URLGuardResult:
         return URLGuardResult(ok=False, reason=f"无可用公网 IP: {hostname}")
 
     logger.debug(f"[URLGuard] 放行 {hostname} -> {resolved_ips[0]}")
-    return URLGuardResult(ok=True, safe_url=raw_url, reason="ok")
+    return URLGuardResult(ok=True, safe_url=raw_url, reason="ok", pinned_ips=resolved_ips)
+
+
+class _PinnedResolver:
+    # DNS pinning:请求期间把 hostname 解析固定为校验时通过的 IP,关闭重绑定窗口。
+    # 通过 monkeypatch socket.getaddrinfo,仅命中目标 host 时返回 pinned 结果,
+    # 其余 host 走原解析(避免影响同进程其他请求)。
+
+    def __init__(self, hostname: str, pinned_ips: list[str]):
+        self._hostname = hostname
+        self._pinned = pinned_ips or []
+        self._orig = socket.getaddrinfo
+
+    def __enter__(self):
+        if not self._pinned:
+            return self
+        host = self._hostname
+        pinned = self._pinned
+
+        def _patched(host_arg, port, *args, **kwargs):
+            if host_arg == host:
+                results = []
+                for ip in pinned:
+                    try:
+                        results.append(
+                            (
+                                socket.AF_INET if ":" not in ip else socket.AF_INET6,
+                                socket.SOCK_STREAM,
+                                0,
+                                "",
+                                (ip, port or 0),
+                            )
+                        )
+                    except OSError:
+                        continue
+                if results:
+                    return results
+            return self._orig(host_arg, port, *args, **kwargs)
+
+        socket.getaddrinfo = _patched
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        socket.getaddrinfo = self._orig
+        return False
+
+
+def pin_url(raw_url: str) -> tuple[URLGuardResult, _PinnedResolver | None]:
+    # 一步校验 + 返回 pin 上下文管理器:with pin_url(url)[1]: urlopen(...)。
+    result = validate_outbound_url(raw_url)
+    if not result.ok:
+        return result, None
+    parsed = urllib.parse.urlsplit(raw_url)
+    hostname = parsed.hostname or ""
+    if hostname.startswith("[") and hostname.endswith("]"):
+        hostname = hostname[1:-1]
+    return result, _PinnedResolver(hostname, result.pinned_ips or [])

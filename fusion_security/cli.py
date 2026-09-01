@@ -1,4 +1,12 @@
-"""Fusion-Security CLI 入口。"""
+"""Fusion-Security CLI 入口。
+
+引擎分工:
+- scan --pipeline / --sca  -> ScanPipeline(6 阶段:Recon→Discover→Verify→Triage→Patch→Retest),权威扫描路径。
+- scan(无 --pipeline)       -> Scanner(legacy 单遍并行批扫),保留兼容,结果与 pipeline 等价但无阶段/断点。
+- check / gate / sarif      -> Scanner(use_ai=False),CI 友好的轻量路径(纯规则+AST,无 AI,快速)。
+  这是刻意的 legacy 保留:CI 场景只需规则结果 + 退出码,不需要 AI 验证或补丁生成。
+  API(POST /scans)已统一走 ScanPipeline,CLI 的 check/gate/sarif 不经 pipeline。
+"""
 
 from __future__ import annotations
 
@@ -189,6 +197,7 @@ def check(path: str):
 
 
 async def _async_check(path: str):
+    # CI 轻量路径:Scanner(use_ai=False) 纯规则+AST,不经 ScanPipeline。刻意的 legacy。
     target = ScanTarget(path)
     scanner = Scanner(use_ai=False)
     result = await scanner.scan(target)
@@ -251,6 +260,7 @@ def gate(path: str, policy: str):
 
 
 async def _async_gate(path: str, policy: str):
+    # CI 门禁:Scanner(use_ai=False) 纯规则,不经 pipeline。
     from .engine.ci.gate import GatePolicy, SecurityGate
 
     target = ScanTarget(path)
@@ -273,6 +283,7 @@ def sarif(path: str, output: str):
 
 
 async def _async_sarif(path: str, output: str):
+    # SARIF 导出:Scanner(use_ai=False) 纯规则,不经 pipeline。
     from .report.sarif import save_sarif
 
     target = ScanTarget(path)

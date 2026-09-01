@@ -47,11 +47,16 @@ class ScanRule:
 
 
 class RuleEngine:
-    def __init__(self):
+    # Feature 1: 支持注入租户自定义规则(custom_rules),与内置规则合并编译。
+    def __init__(self, custom_rules: list[ScanRule] | None = None):
         self._rules: list[ScanRule] = []
         self._compiled: list[tuple] = []
         self._ast_parser = ASTParser()
         self._init_rules()
+        if custom_rules:
+            for rule in custom_rules:
+                self.add_rule(rule)
+            logger.info(f"[RuleEngine] 注入 {len(custom_rules)} 条自定义规则,合计 {len(self._rules)} 条")
 
     def _init_rules(self) -> None:
         rules = [

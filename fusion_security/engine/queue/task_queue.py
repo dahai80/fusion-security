@@ -89,12 +89,15 @@ class TaskQueue:
         return tasks
 
     async def cancel_task(self, task_id: str) -> bool:
+        # 仅标记 CANCELLED。运行中任务的 asyncio.Task 中断由 WorkerPool.cancel_active 负责
+        # (TaskQueue 不持有 pool 引用,职责分离)。排队中任务 dequeue 后见 CANCELLED 即跳过。
         async with self._lock:
-            if task_id in self._tasks:
-                self._tasks[task_id].status = TaskStatus.CANCELLED
-                logger.info(f"[TaskQueue] 取消任务: {task_id}")
-                return True
-        return False
+            task = self._tasks.get(task_id)
+            if not task:
+                return False
+            task.status = TaskStatus.CANCELLED
+            logger.info(f"[TaskQueue] 取消任务: {task_id}")
+            return True
 
     @property
     def size(self) -> int:
@@ -136,10 +139,22 @@ class WorkerPool:
             self._tasks.append(t)
         logger.info(f"[WorkerPool] 启动 {self._workers} 个工作线程")
 
+    async def cancel_active(self, task_id: str) -> bool:
+        # 运行中任务中断其 asyncio.Task,触发 worker_loop 的 CancelledError 分支。
+        at = self._active.get(task_id)
+        if at is None:
+            return False
+        at.cancel()
+        logger.info(f"[WorkerPool] 中断运行中任务: {task_id}")
+        return True
+
     async def stop(self) -> None:
         self._running = False
         for t in self._tasks:
             t.cancel()
+        # 同时中断在跑任务(此前仅 cancel loop task,executor 内长调用继续跑完)。
+        for at in self._active.values():
+            at.cancel()
         # 带超时 await 在跑任务,给在途 MLX 请求 drain 窗口,避免半写数据。
         # 跨事件循环(TestClient lifespan 线程 vs 请求线程)时 gather 抛 ValueError,降级为仅 cancel。
         if self._tasks:

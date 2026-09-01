@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/tests-690%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-847%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -152,6 +152,8 @@ cd frontend && npm install && npm run dev
 ```
 
 ### Engine Components
+
+> **Pipeline is authoritative.** `POST /api/v1/scans` and `/resume` route through the 6-stage `ScanPipeline` (Recon→Discover→Verify→Triage→Patch→Retest), which now carries findings + patches all the way to DB persistence. The legacy `Scanner` is retained only for the CI-friendly CLI commands (`check`, `gate`, `sarif`) where AI is not needed. Path-only scans (no `project_id`) are supported — `scans.project_id` is nullable with no FK constraint.
 
 | Component | Description |
 |-----------|-------------|
@@ -546,7 +548,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 ```
 
-690 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 91% coverage.
+690 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
 
 ---
 
@@ -559,10 +561,37 @@ pytest tests/ -v
 - **Compliance Mapping** — ISO 27001 / PCI DSS
 - **CVSS 3.1 Scoring** — Standardized vulnerability severity assessment
 - **RBAC** — admin/operator/viewer role-based access control
+- **DB-Backed Hashed Keys** — API keys are persisted as `sha256` hashes in the `api_keys` table (never plaintext); the master admin key is stabilized via `FUSION_SECURITY_MASTER_KEY` so it survives restarts, and the raw key is shown **once** in the create response — never in logs
+- **Webhook Secret Safety** — Webhook secrets are stored as hashes; `secret_hash` is never returned in API responses
 - **Audit Trail** — Complete operation audit logs (JSONL)
-- **Multi-Tenant Isolation** — Physical data isolation per tenant
-- **API Key Auth** — Secure API access control
+- **Multi-Tenant Isolation** — Per-tenant data dirs + `tenant_id` threaded through scan routes; tenant resolved from the API key's row
+- **API Key Auth** — `X-API-Key` header; constant-time hash comparison (`hmac.compare_digest`)
 - **Webhook Signing** — HMAC-SHA256 for Feishu/DingTalk notifications
+
+## 🔧 Configuration (Environment Variables)
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `FUSION_SECURITY_PORT` | `11454` | API server port |
+| `FUSION_SECURITY_HOST` | `127.0.0.1` | API server bind host |
+| `FUSION_SECURITY_MASTER_KEY` | _generated_ | Stable master admin API key. Set it explicitly in production so the admin key survives restarts and is not regenerated each boot. The plaintext value is **never logged**. |
+| `MLX_BASE_URL` | `http://localhost:11432/v1` | fusion-mlx OpenAI-compatible API URL. Falls back to `FUSION_AI_URL` then `FUSION_MLX_URL` for backward compatibility with existing Docker/Helm configs. **Set this to the running fusion-mlx port** (the monorepo default is `11434`). |
+| `FUSION_MODEL` | _auto_ | Model name override (e.g. `qwen3.5-9b`). If unset, the analyzer auto-detects the first loaded model from `/models`. |
+| `FUSION_SECURITY_DB_URL` | _empty_ | Full SQLAlchemy URL for a shared DB (see Database section) |
+| `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite file path (single-node) |
+| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | Comma-separated allowed CORS origins |
+
+## ✨ Wired Features (v0.1.8)
+
+Five features previously declared in code but never connected are now fully wired into production paths and **persisted to DB** (survive restart):
+
+| Feature | Status |
+|---------|--------|
+| **Custom Rules** | `CustomRuleStore` injected into `RuleEngine`; CRUD via `/api/v1/integrations/rules` |
+| **Feedback Loop** | `FeedbackStore.filter_vulnerabilities()` runs in pipeline `_stage_triage`; false-positive feedback persisted to `feedbacks` table and suppresses repeat findings |
+| **Multi-Tenant** | `TenantManager` initialized at app startup; `tenant_id` resolved from API key and threaded through scan/persist paths |
+| **Scan Scheduler** | `ScanScheduler.start()` runs on app startup; schedules persisted to `scheduled_scans` table; cron/periodic scans dispatched automatically |
+| **Webhook** | Webhooks persisted to `webhooks` table (replaces in-memory dict); `scan.completed` events fire `WebhookNotifier` on both scan completion paths |
 
 ---
 

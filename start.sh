@@ -9,7 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV="/Users/dahai/fusion/.venv"
+# VENV 可移植:优先用 VENV 环境变量,否则回退 monorepo 共享 .venv(上一级目录)。
+VENV="${VENV:-$(dirname "$SCRIPT_DIR")/.venv}"
 PID_FILE="${SCRIPT_DIR}/.fusion-security.pid"
 LOG_DIR="${SCRIPT_DIR}/logs"
 STDOUT_LOG="${LOG_DIR}/stdout.log"

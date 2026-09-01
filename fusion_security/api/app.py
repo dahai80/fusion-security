@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import ROLES, auth_manager, get_current_key, require_permission
-from .routes import integrations, patches, projects, reports, scans, system, vulnerabilities
+from .routes import integrations, patches, projects, reports, scans, schedules, system, vulnerabilities
 
 try:
     from .. import __version__ as _PKG_VERSION
@@ -20,18 +21,61 @@ logger = logging.getLogger(__name__)
 _AUTH = [Depends(get_current_key)]
 
 
+async def _dispatch_scheduled_scan(schedule) -> None:
+    # Feature 4 tick 回调:把计划扫描入队执行(复用 scans 队列路径)。
+    from ..engine.queue import ScanTask, TaskPriority
+    from ..models.project import Scan
+    from .routes import scans as _scans
+
+    scan = Scan(project_id=schedule.project_id, scan_type="full", trigger="scheduled")
+    from ..db.convert import scan_to_orm
+    from ..db.session import get_session
+
+    db = get_session()
+    try:
+        orm = scan_to_orm(scan)
+        orm.status = "queued"
+        orm.path = schedule.project_path
+        orm.tenant_id = schedule.tenant_id or ""
+        db.add(orm)
+        db.commit()
+        db.refresh(orm)
+        task = ScanTask(
+            priority=TaskPriority.LOW,
+            project_path=schedule.project_path,
+            config={
+                "scan_id": orm.id,
+                "scan_type": "full",
+                "severity_threshold": schedule.severity,
+                "use_ai": False,
+                "changed_files": [],
+                "tenant_id": orm.tenant_id,
+            },
+        )
+        queue = _scans._get_queue()
+        await queue.enqueue(task)
+        logger.info(f"[Scheduler] 计划 {schedule.id} 已入队 scan={orm.id}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from ..db import init_db
 
     init_db()
-    master_key = os.environ.get("FUSION_SECURITY_MASTER_KEY", "")
-    if master_key:
-        auth_manager.create_api_key_from_raw("master", master_key, ["admin"])
-    else:
-        master_key = auth_manager.create_api_key("master", ["admin"])
-        logger.warning(f"[Auth] 未设 FUSION_SECURITY_MASTER_KEY，已生成临时 master key: {master_key}")
+    # S-P0-3: 绝不记录 master key 明文,只记录就绪状态。
+    auth_manager.ensure_master_key()
     logger.info("Fusion-Security API 已启动, master key 已就绪")
+
+    # Feature 3: 初始化多租户管理器单例。
+    try:
+        from ..engine.tenant.manager import TenantManager
+
+        TenantManager()
+        logger.info("[Startup] TenantManager 已初始化")
+    except Exception as e:
+        logger.warning(f"[Startup] TenantManager 初始化失败(非致命): {e}")
 
     # 自动启动 WorkerPool,否则入队扫描永久 PENDING;回收上次崩溃遗留的孤儿扫描。
     try:
@@ -43,15 +87,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"[Startup] WorkerPool 自动启动失败: {e}")
 
+    # Feature 4: 启动定时扫描调度器(此前从未启动)。单例存于 routes/schedules 供 CRUD。
+    scheduler = None
+    try:
+        from ..engine.scheduler import ScanScheduler
+        from .routes import schedules as _schedules
+
+        scheduler = ScanScheduler()
+        _schedules.set_scheduler(scheduler)
+        await scheduler.start(_dispatch_scheduled_scan)
+        logger.info("[Startup] ScanScheduler 已启动")
+    except Exception as e:
+        logger.warning(f"[Startup] ScanScheduler 启动失败(非致命): {e}")
+
     yield
 
-    # 优雅停机:停工作池,在途任务带 timeout drain。
-    try:
+    # 优雅停机:停调度器,停工作池,在途任务带 timeout drain。
+    if scheduler is not None:
+        with contextlib.suppress(Exception):
+            await scheduler.stop()
+    with contextlib.suppress(Exception):
         from .routes import scans as _scans
 
         await _scans._get_pool().stop()
-    except Exception:
-        pass
 
 
 def create_app() -> FastAPI:
@@ -81,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations.router, prefix="/api/v1/integrations", tags=["Integrations"], dependencies=_AUTH)
     app.include_router(patches.router, prefix="/api/v1/patches", tags=["Patches"], dependencies=_AUTH)
     app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"], dependencies=_AUTH)
+    app.include_router(schedules.router, prefix="/api/v1/schedules", tags=["Schedules"], dependencies=_AUTH)
 
     @app.post("/api/v1/keys", tags=["Auth"], dependencies=[Depends(require_permission("api_key:manage"))])
     async def create_api_key(name: str = "default", roles: str = "viewer"):

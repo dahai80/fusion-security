@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/测试-690%20通过-brightgreen" alt="测试">
+  <img src="https://img.shields.io/badge/测试-847%20通过-brightgreen" alt="测试">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -104,6 +104,8 @@ cd frontend && npm install && npm run dev
 ```
 
 ### 引擎组件
+
+> **流水线为权威路径。** `POST /api/v1/scans` 与 `/resume` 走 6 阶段 `ScanPipeline`（侦察→发现→验证→分诊→补丁→复测），findings 与 patches 全程落库。旧版 `Scanner` 仅保留给无 AI 的 CI 友好 CLI 命令（`check`/`gate`/`sarif`）。支持 path-only 扫描（无 `project_id`）— `scans.project_id` 可空且无外键约束。
 
 | 组件 | 说明 |
 |------|------|
@@ -480,7 +482,7 @@ fusion-security scan ~/my-project
 ```bash
 pip install -e ".[test]"
 pytest tests/ -v
-# 690 测试用例，91% 覆盖率
+# 847 测试用例，90% 覆盖率（CI 门禁 --cov-fail-under=90）
 ```
 
 覆盖所有模块：规则引擎（37规则）、扫描器、AI 分析器（8语义规则）、SCA 扫描器（废弃/许可证/过期）、Jira 集成、流水线、断点续扫、熔断器、通知、修复生成器、报告、API 路由、CLI。
@@ -496,10 +498,37 @@ pytest tests/ -v
 - **合规映射** — 等保2.0 / ISO 27001 / PCI DSS
 - **CVSS 3.1 评分** — 标准化漏洞严重度评估
 - **RBAC 权限** — admin/operator/viewer 三级角色
+- **DB 落库哈希密钥** — API key 以 `sha256` 哈希存入 `api_keys` 表（绝不存明文）；master 管理密钥经 `FUSION_SECURITY_MASTER_KEY` 稳定，重启不丢失，明文**仅在创建响应中返回一次**，绝不写入日志
+- **Webhook 密钥安全** — Webhook secret 只存哈希；`secret_hash` 绝不出现在 API 响应中
 - **审计溯源** — 完整操作审计日志（JSONL）
-- **多租户隔离** — 租户数据物理隔离
-- **API Key 认证** — 安全的 API 访问控制
+- **多租户隔离** — 每租户独立数据目录 + `tenant_id` 贯穿扫描路由；租户从 API key 行解析
+- **API Key 认证** — `X-API-Key` 请求头；常量时间哈希比较（`hmac.compare_digest`）
 - **Webhook 签名** — 飞书/钉钉 HMAC-SHA256 签名验证
+
+## 🔧 配置（环境变量）
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `FUSION_SECURITY_PORT` | `11454` | API 服务端口 |
+| `FUSION_SECURITY_HOST` | `127.0.0.1` | API 服务绑定地址 |
+| `FUSION_SECURITY_MASTER_KEY` | _自动生成_ | 稳定的 master 管理 API key。生产环境请显式设置，保证 admin key 重启不丢失、不在每次启动时重新生成。明文值**绝不记录日志**。 |
+| `MLX_BASE_URL` | `http://localhost:11432/v1` | fusion-mlx OpenAI 兼容 API 地址。回退到 `FUSION_AI_URL` 再 `FUSION_MLX_URL`，兼容现有 Docker/Helm 配置。**请设为实际运行的 fusion-mlx 端口**（monorepo 默认 11434）。 |
+| `FUSION_MODEL` | _自动_ | 模型名覆盖（如 `qwen3.5-9b`）。未设时分析器从 `/models` 自动探测首个已加载模型。 |
+| `FUSION_SECURITY_DB_URL` | _空_ | 共享库完整 SQLAlchemy URL（见数据库章节） |
+| `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite 文件路径（单机） |
+| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | 允许的 CORS 来源（逗号分隔） |
+
+## ✨ 已打通特性（v0.1.8）
+
+此前代码中声明但从未接通的 5 个特性现已全部接通到生产路径并**落库持久化**（重启不丢）：
+
+| 特性 | 状态 |
+|------|------|
+| **自定义规则** | `CustomRuleStore` 注入 `RuleEngine`；经 `/api/v1/integrations/rules` 增删改查 |
+| **反馈闭环** | `FeedbackStore.filter_vulnerabilities()` 在流水线 `_stage_triage` 运行；误报反馈落 `feedbacks` 表并抑制重复发现 |
+| **多租户** | `TenantManager` 在应用启动时初始化；`tenant_id` 从 API key 解析并贯穿扫描/落库路径 |
+| **扫描调度器** | `ScanScheduler.start()` 在应用启动时运行；计划落 `scheduled_scans` 表；定时/周期扫描自动派发 |
+| **Webhook** | Webhook 落 `webhooks` 表（替代内存 dict）；两条扫描完成路径均触发 `WebhookNotifier` 的 `scan.completed` 事件 |
 
 ---
 
