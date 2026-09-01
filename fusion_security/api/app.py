@@ -10,6 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth import ROLES, auth_manager, get_current_key, require_permission
 from .routes import integrations, patches, projects, reports, scans, system, vulnerabilities
 
+try:
+    from .. import __version__ as _PKG_VERSION
+except Exception:
+    _PKG_VERSION = "0.0.0"
+
 logger = logging.getLogger(__name__)
 
 _AUTH = [Depends(get_current_key)]
@@ -27,14 +32,33 @@ async def lifespan(app: FastAPI):
         master_key = auth_manager.create_api_key("master", ["admin"])
         logger.warning(f"[Auth] 未设 FUSION_SECURITY_MASTER_KEY，已生成临时 master key: {master_key}")
     logger.info("Fusion-Security API 已启动, master key 已就绪")
+
+    # 自动启动 WorkerPool,否则入队扫描永久 PENDING;回收上次崩溃遗留的孤儿扫描。
+    try:
+        from .routes import scans as _scans
+
+        await _scans.startup_reconcile_scans()
+        await _scans._get_pool().start()
+        logger.info("[Startup] WorkerPool 已自动启动")
+    except Exception as e:
+        logger.error(f"[Startup] WorkerPool 自动启动失败: {e}")
+
     yield
+
+    # 优雅停机:停工作池,在途任务带 timeout drain。
+    try:
+        from .routes import scans as _scans
+
+        await _scans._get_pool().stop()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Fusion-Security API",
         description="本地 AI 代码安全审计工具 API — 100% 离线",
-        version="0.5.0",
+        version=_PKG_VERSION,
         lifespan=lifespan,
     )
 

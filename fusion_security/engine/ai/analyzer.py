@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -18,10 +19,13 @@ _MLX_DEFAULT_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
 
 
 class AIAnalyzer:
-    def __init__(self, model: str = "", mlx_url: str = ""):
+    def __init__(self, model: str = "", mlx_url: str = "", max_concurrency: int = 4):
         self.model = model
         self.mlx_url = (mlx_url or _MLX_DEFAULT_URL).rstrip("/")
         self._client = None
+        # 单 MLX 实例并发上限:无 semaphore 时 N 漏洞串行调用,但对抗/补丁阶段可能多 pipeline 并发。
+        # 限制并发请求数避免 MLX OOM,配合 with_retry 退避形成背压。
+        self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def __aenter__(self):
         return self
@@ -42,26 +46,27 @@ class AIAnalyzer:
         return self._client
 
     async def _chat(self, messages: list[dict]) -> str:
-        if not self.model:
-            try:
-                models = await with_retry(lambda: self.client.get("/models"))
-                data = models.json()
-                available = data.get("data", [])
-                if available:
-                    self.model = available[0].get("id", available[0].get("model", ""))
-            except Exception:
-                self.model = "qwen3.5-9b"
+        async with self._semaphore:
+            if not self.model:
+                try:
+                    models = await with_retry(lambda: self.client.get("/models"))
+                    data = models.json()
+                    available = data.get("data", [])
+                    if available:
+                        self.model = available[0].get("id", available[0].get("model", ""))
+                except Exception:
+                    self.model = "qwen3.5-9b"
 
-        payload = {
-            "model": self.model or "qwen3.5-9b",
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 2048,
-        }
-        resp = await with_retry(lambda: self.client.post("/chat/completions", json=payload))
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+            payload = {
+                "model": self.model or "qwen3.5-9b",
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 2048,
+            }
+            resp = await with_retry(lambda: self.client.post("/chat/completions", json=payload))
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
 
     async def verify_findings(
         self,
@@ -125,6 +130,8 @@ CWE编号: {vuln.cwe_id}
         from ...engine.rules.engine import AI_SEMANTIC_RULES
 
         code_summary = []
+        if len(files) > 5:
+            logger.warning(f"[AI] semantic_scan 仅采样前 5 个文件(共 {len(files)}),语义覆盖率受限")
         for f in files[:5]:
             try:
                 content = f.read_text(encoding="utf-8", errors="ignore")[:2000]

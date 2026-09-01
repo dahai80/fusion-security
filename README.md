@@ -57,6 +57,10 @@
 | **AI patch review** | AI-generated fixes are validated and flagged `needs_review=True`; failure markers and no-op output are rejected |
 | **Constant-time auth** | Tenant API-key hashes compared with `hmac.compare_digest` |
 | **Tenant path safety** | Audit log filenames sanitize `tenant_id` to a safe slug (path-traversal safe) |
+| **Fail-closed verifiers** | Retest marks a patch `failed` (not `verified`) when its rule regex throws; Verify keeps `verified=False` when AI verification aborts — security gates never fail-open |
+| **Orphan-scan recovery** | On API startup, scans left `running` by a prior crash are marked `failed`, and `queued` scans are re-enqueued — no scan hangs forever after a restart |
+| **AI backpressure** | MLX calls are gated by a concurrency semaphore (default 4) so concurrent scans cannot OOM the single inference instance |
+| **Batched cache writes** | `ProjectScanCache` flushes once per stage instead of committing per file, eliminating N fsync storms on large repos |
 
 ---
 

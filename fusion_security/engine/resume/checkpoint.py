@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -62,7 +63,11 @@ class CheckpointManager:
             logger.info(f"[Checkpoint] 加载 scan_id={scan_id} stage={cp.completed_stage}")
             return cp
         except Exception as e:
-            logger.error(f"[Checkpoint] 加载失败: {e}")
+            # 损坏 checkpoint 与"无 checkpoint"不可区分会导致续扫静默从 RECON 重跑,丢弃已付 AI 算力。
+            # 显式报错并删除损坏文件,避免下次再试;调用方按 None 处理为全新扫描。
+            logger.error(f"[Checkpoint] 加载失败,删除损坏文件 scan_id={scan_id}: {e}")
+            with contextlib.suppress(Exception):
+                path.unlink()
             return None
 
     def remove(self, scan_id: str) -> bool:
@@ -80,8 +85,9 @@ class CheckpointManager:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 results.append(StageCheckpoint.from_dict(data))
-            except Exception:
-                pass
+            except Exception as e:
+                # 损坏 checkpoint 静默跳过会让运维误以为无断点;记录可见日志。
+                logger.warning(f"[Checkpoint] 跳过损坏断点文件 {path.name}: {e}")
         return results
 
 
