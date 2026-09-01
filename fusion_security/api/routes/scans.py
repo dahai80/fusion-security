@@ -168,7 +168,8 @@ async def _run_scan(
             scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
             if scan_orm:
                 scan_orm.status = "failed"
-                scan_orm.summary = str(e)
+                # P1-5: 异常文本不写入 summary(对外可见),日志已记明细。
+                scan_orm.summary = "scan failed: internal error"
                 db.commit()
         except Exception:
             pass
@@ -586,7 +587,8 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
             scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
             if scan_orm:
                 scan_orm.status = "failed"
-                scan_orm.summary = str(e)
+                # P1-5: 异常文本不写入 summary(对外可见),日志已记明细。
+                scan_orm.summary = "scan failed: internal error"
                 db.commit()
         except Exception:
             pass
@@ -636,7 +638,9 @@ def create_incremental_scan(
         git = GitHelper(body.path)
         diff = git.get_changed_files(base=body.base, head=body.head)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        # P1-6: 不回显内部路径/错误,日志保留明细。
+        logger.warning(f"incremental scan 路径非法: {e}")
+        raise HTTPException(status_code=400, detail="invalid scan path or not a git repository") from e
 
     from ...models.project import Scan
 

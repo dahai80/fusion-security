@@ -176,8 +176,10 @@ class WorkerPool:
                 continue
             task.status = TaskStatus.RUNNING
             task.started_at = time.time()
-            await self._queue.update_status(task.task_id, TaskStatus.RUNNING)
+            # P1-9: 先登记 _active 再 update_status。否则 cancel_active 在两步之间读到空,
+            # 无法取消已 RUNNING 的任务,造成取消竞态。
             self._active[task.task_id] = asyncio.current_task()
+            await self._queue.update_status(task.task_id, TaskStatus.RUNNING)
             try:
                 if self._executor:
                     result = await self._executor(task)

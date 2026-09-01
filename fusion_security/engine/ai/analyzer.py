@@ -261,7 +261,9 @@ CWE编号: {vuln.cwe_id}
                 ]
             )
         except Exception as e:
-            return f"// 修复生成失败: {e}"
+            # P3-2: 不把异常文本写进补丁代码(可能泄露内部信息到源码),日志保留明细。
+            logger.warning(f"generate_fix 失败: {e}")
+            return "// 修复生成失败"
 
     def _parse_json(self, text: str, as_array: bool = False) -> Any:
         text = text.strip()

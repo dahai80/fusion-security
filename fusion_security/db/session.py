@@ -92,13 +92,26 @@ def init_db(db_path: str | None = None, echo: bool = False, db_url: str | None =
         if _is_sqlite(url):
             # SQLite 单文件:StaticPool 共享单连接(进程内并发安全靠 GIL+check_same_thread=False),
             # WAL 提升并发读,parent 目录需预创建。多节点共享库不走这里。
+            # P0-4: 库文件含 key_hash/源码片段,落盘必须 0600。umask 在建引擎前生效,
+            # create_all 创建文件及 -wal/-shm 均受约束;已存在文件显式 chmod 收紧。
             path = Path(url.replace("sqlite:///", "").replace("sqlite+aiosqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
+            _old_umask = os.umask(0o077)
+            try:
+                if path.exists():
+                    os.chmod(path, 0o600)
+            finally:
+                os.umask(_old_umask)
             kwargs["connect_args"] = {"check_same_thread": False}
             kwargs["poolclass"] = StaticPool
 
-        _engine = create_engine(url, **kwargs)
+        _old_umask = os.umask(0o077) if _is_sqlite(url) else None
+        try:
+            _engine = create_engine(url, **kwargs)
+        finally:
+            if _old_umask is not None:
+                os.umask(_old_umask)
 
         if _is_sqlite(url):
 
@@ -235,8 +248,20 @@ def init_async_db(db_path: str | None = None, echo: bool = False, db_url: str | 
             path = Path(url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
+            # P0-4: 异步库同样收紧文件权限到 0600。
+            _old_umask = os.umask(0o077)
+            try:
+                if path.exists():
+                    os.chmod(path, 0o600)
+            finally:
+                os.umask(_old_umask)
 
-        _async_engine = create_async_engine(url, **kwargs)
+        _old_umask = os.umask(0o077) if _is_sqlite(url) else None
+        try:
+            _async_engine = create_async_engine(url, **kwargs)
+        finally:
+            if _old_umask is not None:
+                os.umask(_old_umask)
         _AsyncSessionLocal = async_sessionmaker(_async_engine, expire_on_commit=False)
 
         from . import models  # noqa: F401

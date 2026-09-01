@@ -100,8 +100,9 @@ def model_config():
             return {"available": True, "models": models, "default": models[0]["id"] if models else ""}
         return {"available": False, "models": [], "default": ""}
     except Exception as e:
+        # P1-4: 异常文本可能泄露内网拓扑/路径,日志保留明细,响应只回通用文案。
         logger.warning(f"获取模型配置失败: {e}")
-        return {"available": False, "models": [], "default": "", "error": str(e)}
+        return {"available": False, "models": [], "default": "", "error": "model backend unavailable"}
 
 
 @router.get("/rules")

@@ -374,6 +374,8 @@ class JiraIssueCreate(BaseModel):
 @router.post("/jira/config", summary="配置Jira连接")
 async def configure_jira(body: JiraConfigModel):
     global _jira_client
+    # P0-3: 校验 base_url 防 SSRF,拒绝内网/localhost 等危险目标。
+    _validate_outbound(body.base_url)
     if _jira_client is not None:
         _jira_client.close()
     config = JiraConfig(

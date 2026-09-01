@@ -6,7 +6,8 @@ version: "3.8"
 services:
   fusion-security:
     environment:
-      - FUSION_SECURITY_DB_URL=postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion
+      # P0-8: 凭据来自宿主环境,不在 compose 里硬编码明文密码。缺失则 compose 启动直接失败。
+      - FUSION_SECURITY_DB_URL=postgresql+asyncpg://fusion:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@fusion-postgres:5432/fusion
     depends_on:
       fusion-postgres:
         condition: service_healthy
@@ -16,7 +17,7 @@ services:
     container_name: fusion-postgres
     environment:
       POSTGRES_USER: fusion
-      POSTGRES_PASSWORD: fusion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: fusion
     volumes:
       - pg-data:/var/lib/postgresql/data

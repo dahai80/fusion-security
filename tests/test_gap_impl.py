@@ -15,6 +15,17 @@ from fusion_security.engine.scanner import ScanTarget
 from fusion_security.models.vulnerability import Vulnerability
 
 
+@pytest.fixture(autouse=True)
+def _stub_url_guard():
+    # JiraClient.__init__ / integrations._validate_outbound 调用 SSRF 校验,
+    # 沙箱无 DNS,统一打桩放行,避免单测依赖外网。
+    from fusion_security.engine.ci import _url_guard
+
+    ok = _url_guard.URLGuardResult(ok=True, safe_url="https://jira.example.com", reason="ok", pinned_ips=["1.2.3.4"])
+    with patch.object(_url_guard, "validate_outbound_url", return_value=ok):
+        yield
+
+
 class TestHI01UUIDVulnID:
     def test_ast_vuln_id_is_uuid_format(self):
         engine = RuleEngine()
