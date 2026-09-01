@@ -114,6 +114,91 @@ class TestDBSession:
                 assert s is not None
 
 
+class TestMultiDBUrl:
+    # A1: SQLite->分布式。多节点走共享库,单机仍 SQLite 默认。
+
+    def test_resolve_url_explicit_path(self):
+        from fusion_security.db.session import _resolve_url
+
+        url = _resolve_url(db_path="/tmp/x.db", db_url=None)
+        assert url == "sqlite:////tmp/x.db"
+
+    def test_resolve_url_explicit_url_wins(self):
+        from fusion_security.db.session import _resolve_url
+
+        url = _resolve_url(db_path="/tmp/x.db", db_url="postgresql://u:p@h:5432/db")
+        assert url == "postgresql://u:p@h:5432/db"
+
+    def test_resolve_url_env_override(self, monkeypatch):
+        from fusion_security.db.session import DB_PATH_ENV, DB_URL_ENV, _resolve_url
+
+        monkeypatch.setenv(DB_URL_ENV, "postgresql://u:p@h:5432/db")
+        monkeypatch.setenv(DB_PATH_ENV, "/tmp/should_be_ignored.db")
+        url = _resolve_url(db_path=None, db_url=None)
+        assert url == "postgresql://u:p@h:5432/db"
+
+    def test_resolve_url_env_path_fallback(self, monkeypatch):
+        from fusion_security.db.session import DB_PATH_ENV, DB_URL_ENV, _resolve_url
+
+        monkeypatch.delenv(DB_URL_ENV, raising=False)
+        monkeypatch.setenv(DB_PATH_ENV, "/tmp/env.db")
+        url = _resolve_url(db_path=None, db_url=None)
+        assert url == "sqlite:////tmp/env.db"
+
+    def test_to_async_url_sqlite(self):
+        from fusion_security.db.session import _to_async_url
+
+        assert _to_async_url("sqlite:////tmp/a.db") == "sqlite+aiosqlite:////tmp/a.db"
+
+    def test_to_async_url_postgres(self):
+        from fusion_security.db.session import _to_async_url
+
+        assert _to_async_url("postgresql://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
+
+    def test_to_async_url_already_async(self):
+        from fusion_security.db.session import _to_async_url
+
+        assert _to_async_url("postgresql+asyncpg://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
+
+    def test_init_db_postgres_no_sqlite_pragma(self, monkeypatch):
+        # 非 SQLite 库不应挂 SQLite PRAGMA 事件监听,也不走 PRAGMA table_info 迁移。
+        # 不真实连 PG:用 mock engine 验证不走 StaticPool/PRAGMA 分支。
+        from fusion_security.db import session as sess
+
+        captured = {}
+
+        class FakeEngine:
+            def __init__(self):
+                self.event_listeners = []
+
+            class metadata:
+                @staticmethod
+                def create_all(engine):
+                    captured["create_all"] = True
+
+        real_create = sess.create_engine
+
+        def fake_create_engine(url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return real_create("sqlite://", **{k: v for k, v in kwargs.items() if k == "echo"})
+
+        monkeypatch.setattr(sess, "create_engine", fake_create_engine)
+        monkeypatch.setattr(sess, "_migrate_schema", lambda e: captured.setdefault("migrate_sqlite", True))
+        monkeypatch.setattr(sess, "_migrate_schema_portable", lambda e: captured.setdefault("migrate_portable", True))
+        try:
+            sess.init_db(db_url="postgresql://u:p@h:5432/db")
+            assert captured["url"] == "postgresql://u:p@h:5432/db"
+            assert "poolclass" not in captured["kwargs"]
+            assert "connect_args" not in captured["kwargs"]
+            assert captured.get("migrate_portable") is True
+            assert "migrate_sqlite" not in captured
+        finally:
+            monkeypatch.setattr(sess, "create_engine", real_create)
+            sess._engine = None
+            sess._SessionLocal = None
+
+
 class TestReportGenerator:
     def _make_result(self, vulns=None):
         target = ScanTarget("/tmp/test_project")
