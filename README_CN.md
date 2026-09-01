@@ -148,7 +148,11 @@ cd frontend && npm install && npm run dev
 | **日志脱敏** | 日志过滤器在落盘前清洗 `password`/`api_key`/`token`/`Bearer`/`Authorization` 值（`utils/logger.py`） |
 | **离线优先 SCA** | 依赖扫描默认本地已知漏洞库；OSV.dev 云查询经 `--osv` 显式开启并告警 |
 | **AI 补丁审核** | AI 生成修复经校验并标记 `needs_review=True`；失败标记串与空输出被拒绝 |
-| **常量时间鉴权** | 租户 API key 哈希用 `hmac.compare_digest` 比较 |
+| **哈希密钥库** | API key 以 `sha256` 哈希存入 DB（`ApiKeyORM`）；明文仅在创建时返回一次，不落库不记日志 |
+| **DB 文件权限** | SQLite 库文件（含 key 哈希与代码片段）以 `umask 0o077` 创建为 `0600` |
+| **CORS 加固** | `allow_credentials=True` 配显式方法/头白名单；`FUSION_CORS_ORIGINS=*` 启动时即拒绝（带凭据时非法且危险） |
+| **SSRF 纵深防御** | Jira `base_url` 在 API 配置与客户端初始化两处经 SSRF 守卫校验；`issue_key` 防路径/查询注入净化 |
+| **错误脱敏** | 扫描失败 summary、`/system/model/config`、AI 修复失败标记均回通用文案 — 异常细节仅留服务端日志 |
 | **租户路径安全** | 审计日志文件名将 `tenant_id` 净化为安全 slug（防路径穿越） |
 | **验证器 fail-closed** | Retest 在规则正则抛异常时判 `failed`（非 `verified`）；Verify 在 AI 验证中止时保留 `verified=False` — 安全门禁绝不 fail-open |
 | **孤儿扫描回收** | API 启动时将上次崩溃遗留的 `running` 扫描标 `failed`，`queued` 扫描重入队 — 重启后无扫描永久挂起 |
@@ -433,13 +437,15 @@ fusion-security scan ~/my-project   # 写入 ~/.fusion-security/fusion_security.
 pip install -e ".[postgres]"     # asyncpg（异步）+ psycopg2-binary（同步）
 
 # 2. 每个节点指向同一个共享库
-export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion"
+export POSTGRES_PASSWORD="你的强密码"
+export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:${POSTGRES_PASSWORD}@fusion-postgres:5432/fusion"
 fusion-security serve --port 11454
 ```
 
-Docker Compose 多节点：`docker-compose.postgres.yml` override 会拉起 `postgres:16` 服务并把 `FUSION_SECURITY_DB_URL` 指向它。
+Docker Compose 多节点：`docker-compose.postgres.yml` override 会拉起 `postgres:16` 服务并把 `FUSION_SECURITY_DB_URL` 指向它。PostgreSQL 密码**不硬编码** — 从 `POSTGRES_PASSWORD` 环境变量读取，未设置时 compose 直接启动失败。
 
 ```bash
+export POSTGRES_PASSWORD="你的强密码"   # 必填
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
 ```
 
@@ -502,7 +508,7 @@ pytest tests/ -v
 - **Webhook 密钥安全** — Webhook secret 只存哈希；`secret_hash` 绝不出现在 API 响应中
 - **审计溯源** — 完整操作审计日志（JSONL）
 - **多租户隔离** — 每租户独立数据目录 + `tenant_id` 贯穿扫描路由；租户从 API key 行解析
-- **API Key 认证** — `X-API-Key` 请求头；常量时间哈希比较（`hmac.compare_digest`）
+- **API Key 认证** — `X-API-Key` 请求头；密钥以 `sha256` 哈希存入 DB，明文仅创建时返回一次
 - **Webhook 签名** — 飞书/钉钉 HMAC-SHA256 签名验证
 
 ## 🔧 配置（环境变量）
@@ -516,7 +522,7 @@ pytest tests/ -v
 | `FUSION_MODEL` | _自动_ | 模型名覆盖（如 `qwen3.5-9b`）。未设时分析器从 `/models` 自动探测首个已加载模型。 |
 | `FUSION_SECURITY_DB_URL` | _空_ | 共享库完整 SQLAlchemy URL（见数据库章节） |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite 文件路径（单机） |
-| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | 允许的 CORS 来源（逗号分隔） |
+| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | 允许的 CORS 来源（逗号分隔；`*` 被拒 — 带凭据时非法） |
 
 ## ✨ 已打通特性（v0.1.8）
 

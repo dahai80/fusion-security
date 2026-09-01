@@ -55,7 +55,11 @@
 | **Secret redaction** | Log filter scrubs `password`/`api_key`/`token`/`Bearer`/`Authorization` values before they reach stdout or log files (`utils/logger.py`) |
 | **Offline-first SCA** | Dependency scan defaults to local known-vuln DB; OSV.dev cloud lookup is opt-in via `--osv` and warns when enabled |
 | **AI patch review** | AI-generated fixes are validated and flagged `needs_review=True`; failure markers and no-op output are rejected |
-| **Constant-time auth** | Tenant API-key hashes compared with `hmac.compare_digest` |
+| **Hashed key store** | API keys stored as `sha256` hashes in DB (`ApiKeyORM`); plaintext returned only once at creation, never persisted or logged |
+| **DB file perms** | SQLite database file (holds key hashes + code snippets) is created `0600` via `umask 0o077` on init |
+| **CORS hardening** | `allow_credentials=True` with explicit method/header lists; `FUSION_CORS_ORIGINS=*` is rejected at startup (invalid + dangerous with credentials) |
+| **SSRF defense-in-depth** | Jira `base_url` validated via the SSRF guard on both API config and client init; `issue_key` sanitized against path/query injection |
+| **Error redaction** | Scan failure summaries, `/system/model/config`, and AI fix-failure markers return generic text — exception internals stay in server logs only |
 | **Tenant path safety** | Audit log filenames sanitize `tenant_id` to a safe slug (path-traversal safe) |
 | **Fail-closed verifiers** | Retest marks a patch `failed` (not `verified`) when its rule regex throws; Verify keeps `verified=False` when AI verification aborts — security gates never fail-open |
 | **Orphan-scan recovery** | On API startup, scans left `running` by a prior crash are marked `failed`, and `queued` scans are re-enqueued — no scan hangs forever after a restart |
@@ -497,13 +501,15 @@ fusion-security scan ~/my-project   # writes to ~/.fusion-security/fusion_securi
 pip install -e ".[postgres]"     # asyncpg (async) + psycopg2-binary (sync)
 
 # 2. Point every node at the same shared DB
-export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion"
+export POSTGRES_PASSWORD="your-strong-password"
+export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:${POSTGRES_PASSWORD}@fusion-postgres:5432/fusion"
 fusion-security serve --port 11454
 ```
 
-Docker Compose multi-node: the `docker-compose.postgres.yml` override brings up a `postgres:16` service and wires `FUSION_SECURITY_DB_URL` to it.
+Docker Compose multi-node: the `docker-compose.postgres.yml` override brings up a `postgres:16` service and wires `FUSION_SECURITY_DB_URL` to it. The PostgreSQL password is **not** hardcoded — it is read from the `POSTGRES_PASSWORD` environment variable and compose fails fast if it is unset.
 
 ```bash
+export POSTGRES_PASSWORD="your-strong-password"   # required
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
 ```
 
@@ -565,7 +571,7 @@ pytest tests/ -v
 - **Webhook Secret Safety** — Webhook secrets are stored as hashes; `secret_hash` is never returned in API responses
 - **Audit Trail** — Complete operation audit logs (JSONL)
 - **Multi-Tenant Isolation** — Per-tenant data dirs + `tenant_id` threaded through scan routes; tenant resolved from the API key's row
-- **API Key Auth** — `X-API-Key` header; constant-time hash comparison (`hmac.compare_digest`)
+- **API Key Auth** — `X-API-Key` header; keys stored as `sha256` hashes in DB, plaintext returned once at creation
 - **Webhook Signing** — HMAC-SHA256 for Feishu/DingTalk notifications
 
 ## 🔧 Configuration (Environment Variables)
@@ -579,7 +585,7 @@ pytest tests/ -v
 | `FUSION_MODEL` | _auto_ | Model name override (e.g. `qwen3.5-9b`). If unset, the analyzer auto-detects the first loaded model from `/models`. |
 | `FUSION_SECURITY_DB_URL` | _empty_ | Full SQLAlchemy URL for a shared DB (see Database section) |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite file path (single-node) |
-| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | Comma-separated allowed CORS origins |
+| `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | Comma-separated allowed CORS origins (`*` rejected — invalid with credentials) |
 
 ## ✨ Wired Features (v0.1.8)
 
