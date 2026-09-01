@@ -17,6 +17,7 @@ class Patch:
     status: str = "draft"  # draft | applied | verified | rejected
     strategy: str = "template"  # template | ai_generated | hybrid
     verified: bool = False
+    needs_review: bool = False  # AI 来源补丁需人工审核，模板补丁免审
     created_at: str = ""
 
     def __post_init__(self):
@@ -48,5 +49,14 @@ class Patch:
             "status": self.status,
             "strategy": self.strategy,
             "verified": self.verified,
+            "needs_review": self.needs_review,
             "created_at": self.created_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Patch:
+        from dataclasses import fields
+
+        valid = {f.name for f in fields(cls)}
+        kwargs = {k: v for k, v in data.items() if k in valid}
+        return cls(**kwargs)

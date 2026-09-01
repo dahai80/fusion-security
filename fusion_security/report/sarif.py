@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ..__init__ import __version__
 from ..models.vulnerability import Vulnerability
 
 logger = logging.getLogger(__name__)
@@ -16,8 +17,9 @@ SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sari
 
 
 def vulnerabilities_to_sarif(
-    vulnerabilities: list[Vulnerability], tool_name: str = "fusion-security", tool_version: str = "0.5.0"
+    vulnerabilities: list[Vulnerability], tool_name: str = "fusion-security", tool_version: str = ""
 ) -> dict[str, Any]:
+    tool_version = tool_version or __version__
     rules_map: dict[str, dict[str, Any]] = {}
     results = []
 
@@ -42,7 +44,6 @@ def vulnerabilities_to_sarif(
         }
         result_entry = {
             "ruleId": v.rule_id,
-            "ruleIndex": list(rules_map.keys()).index(v.rule_id),
             "level": _severity_to_level(v.severity),
             "message": {"text": v.description or v.title},
             "locations": [location],
@@ -58,6 +59,11 @@ def vulnerabilities_to_sarif(
                 }
             ]
         results.append(result_entry)
+
+    # ruleIndex 必须对齐 rules 列表顺序。dict 保插入序，一次建索引避免 O(n) 逐条 .index()。
+    rule_index = {rule_id: i for i, rule_id in enumerate(rules_map)}
+    for entry in results:
+        entry["ruleIndex"] = rule_index[entry["ruleId"]]
 
     sarif = {
         "$schema": SARIF_SCHEMA,
@@ -76,7 +82,7 @@ def vulnerabilities_to_sarif(
             }
         ],
     }
-    logger.info(f"[SARIF] 生成 {len(results)} 个结果")
+    logger.info(f"[SARIF] 生成 {len(results)} 个结果, {len(rules_map)} 条规则")
     return sarif
 
 
@@ -84,7 +90,7 @@ def save_sarif(
     vulnerabilities: list[Vulnerability],
     output_path: str,
     tool_name: str = "fusion-security",
-    tool_version: str = "0.5.0",
+    tool_version: str = "",
 ) -> str:
     sarif = vulnerabilities_to_sarif(vulnerabilities, tool_name, tool_version)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)

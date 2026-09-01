@@ -47,6 +47,17 @@
 | **Web API** | ✅ FastAPI REST API | ✅ |
 | **License** | MIT (free) | Enterprise subscription |
 
+### Security Hardening
+
+| Control | What it does |
+|---------|--------------|
+| **SSRF guard** | Webhook / notification outbound URLs validated against private/loopback/link-local/metadata IPs; DNS-rebinding safe (`engine/ci/_url_guard.py`) |
+| **Secret redaction** | Log filter scrubs `password`/`api_key`/`token`/`Bearer`/`Authorization` values before they reach stdout or log files (`utils/logger.py`) |
+| **Offline-first SCA** | Dependency scan defaults to local known-vuln DB; OSV.dev cloud lookup is opt-in via `--osv` and warns when enabled |
+| **AI patch review** | AI-generated fixes are validated and flagged `needs_review=True`; failure markers and no-op output are rejected |
+| **Constant-time auth** | Tenant API-key hashes compared with `hmac.compare_digest` |
+| **Tenant path safety** | Audit log filenames sanitize `tenant_id` to a safe slug (path-traversal safe) |
+
 ---
 
 ## 🚀 Quick Start
@@ -90,7 +101,8 @@ cd frontend && npm install && npm run dev
 | `scan --format html` | Generate HTML report |
 | `scan --no-ai` | Disable AI analysis |
 | `scan --pipeline` | 5-stage pipeline scan (Recon→Discover→Verify→Triage→Patch) |
-| `scan --sca` | Enable SCA dependency vulnerability scan |
+| `scan --sca` | Enable SCA dependency vulnerability scan (local known-vuln DB, offline) |
+| `scan --sca --osv` | Enable SCA + OSV.dev cloud lookup (sends dep list to osv.dev, breaks offline) |
 | `check <path>` | Quick check (JSON output, CI-friendly) |
 | `gate <path>` | Security quality gate (CI/CD pass/fail) |
 | `gate --policy strict` | Gate policy: strict/standard/permissive |

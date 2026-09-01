@@ -12,7 +12,16 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from ._url_guard import validate_outbound_url
+
 logger = logging.getLogger(__name__)
+
+
+def _host_of(url: str) -> str:
+    try:
+        return urllib.parse.urlsplit(url).hostname or "unknown"
+    except Exception:
+        return "unknown"
 
 
 @dataclass
@@ -33,20 +42,24 @@ class DingTalkConfig:
 
 
 def _urllib_post(url: str, data: bytes, headers: dict[str, str], timeout: int = 10) -> bool:
+    guard = validate_outbound_url(url)
+    if not guard.ok:
+        logger.warning(f"[Notifier] SSRF 校验拒绝 host={_host_of(url)}: {guard.reason}")
+        return False
     try:
-        req = Request(url, data=data, headers=headers, method="POST")
+        req = Request(guard.safe_url, data=data, headers=headers, method="POST")
         with urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
             if body.get("code", body.get("errcode", 0)) != 0:
-                logger.warning(f"[Notifier] 响应错误: {body}")
+                logger.warning(f"[Notifier] 响应错误 host={_host_of(url)}: {body}")
                 return False
-            logger.info(f"[Notifier] 发送成功 status={resp.status}")
+            logger.info(f"[Notifier] 发送成功 host={_host_of(url)} status={resp.status}")
             return True
     except URLError as e:
-        logger.warning(f"[Notifier] URL错误: {e}")
+        logger.warning(f"[Notifier] URL错误 host={_host_of(url)}: {e}")
         return False
     except Exception as e:
-        logger.warning(f"[Notifier] 发送异常: {e}")
+        logger.warning(f"[Notifier] 发送异常 host={_host_of(url)}: {e}")
         return False
 
 
@@ -188,11 +201,11 @@ class NotificationDispatcher:
 
     def add_feishu(self, config: FeishuConfig) -> None:
         self.feishu_notifiers.append(FeishuNotifier(config))
-        logger.info(f"[Notifier] 添加飞书通知: {config.webhook_url[:40]}")
+        logger.info(f"[Notifier] 添加飞书通知 host={_host_of(config.webhook_url)}")
 
     def add_dingtalk(self, config: DingTalkConfig) -> None:
         self.dingtalk_notifiers.append(DingTalkNotifier(config))
-        logger.info(f"[Notifier] 添加钉钉通知: {config.webhook_url[:40]}")
+        logger.info(f"[Notifier] 添加钉钉通知 host={_host_of(config.webhook_url)}")
 
     def notify(
         self,

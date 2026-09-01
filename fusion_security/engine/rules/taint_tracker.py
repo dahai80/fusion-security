@@ -55,6 +55,11 @@ SINKS = {
     "call": "命令注入",
 }
 
+# 泛型 sink 基名 (run/call/open/query/execute/system/Popen) 单独出现时误报极高
+# (app.run、client.query、config.open 等)。只有挂在危险所有者上才认定为 sink。
+GENERIC_SINK_BASES = {"run", "call", "open", "query", "execute", "system", "Popen"}
+DANGEROUS_OWNERS = {"os", "subprocess", "cursor", "db", "session", "conn", "engine", "shell", "commands"}
+
 SANITIZERS = {
     "escape",
     "html_escape",
@@ -181,14 +186,21 @@ class TaintTracker:
         for call in ast_result.calls:
             name = call.get("name", "")
             base = name.split(".")[-1] if "." in name else name
-            if base in SINKS:
-                sinks.append(
-                    TaintSink(
-                        name=name,
-                        line=call.get("line", 0),
-                        sink_type=SINKS[base],
-                    )
+            if base not in SINKS:
+                continue
+            # 泛型基名必须挂在危险所有者上才算 sink，否则 app.run()/client.query()
+            # 这类正常调用会产生大量误报。非泛型 sink (eval/exec/innerHTML 等) 直采纳。
+            if base in GENERIC_SINK_BASES:
+                owner = name.rsplit(".", 1)[0].lower() if "." in name else ""
+                if owner not in DANGEROUS_OWNERS:
+                    continue
+            sinks.append(
+                TaintSink(
+                    name=name,
+                    line=call.get("line", 0),
+                    sink_type=SINKS[base],
                 )
+            )
         return sinks
 
     def _trace_propagation(self, source: TaintSource, sink: TaintSink, ast_result: ASTResult) -> list[dict[str, Any]]:
@@ -248,19 +260,24 @@ class TaintTracker:
                     for exp_fpath, exp_line, _exp_func_name, exp_calls in exports[imp_name]:
                         for call_name in exp_calls:
                             base = call_name.split(".")[-1] if "." in call_name else call_name
-                            if base in SINKS:
-                                paths.append(
-                                    TaintPath(
-                                        source=source,
-                                        sink=TaintSink(name=call_name, line=exp_line, sink_type=SINKS[base]),
-                                        propagation=[
-                                            {"type": "source", "name": source.name, "line": source.line, "file": fpath},
-                                            {"type": "import", "name": imp_name, "file": exp_fpath},
-                                            {"type": "sink", "name": call_name, "line": exp_line, "file": exp_fpath},
-                                        ],
-                                        is_sanitized=False,
-                                    )
+                            if base not in SINKS:
+                                continue
+                            if base in GENERIC_SINK_BASES:
+                                owner = call_name.rsplit(".", 1)[0].lower() if "." in call_name else ""
+                                if owner not in DANGEROUS_OWNERS:
+                                    continue
+                            paths.append(
+                                TaintPath(
+                                    source=source,
+                                    sink=TaintSink(name=call_name, line=exp_line, sink_type=SINKS[base]),
+                                    propagation=[
+                                        {"type": "source", "name": source.name, "line": source.line, "file": fpath},
+                                        {"type": "import", "name": imp_name, "file": exp_fpath},
+                                        {"type": "sink", "name": call_name, "line": exp_line, "file": exp_fpath},
+                                    ],
+                                    is_sanitized=False,
                                 )
+                            )
 
         return paths
 

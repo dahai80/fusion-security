@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from fusion_security.api.app import create_app
+from fusion_security.api.auth import get_current_key
 from fusion_security.db.models import ProjectORM, ScanCacheORM, ScanORM
 from fusion_security.db.session import Base, get_session
 from fusion_security.engine.cache import ProjectScanCache, _content_hash, _json_to_vulns, _vulns_to_json
@@ -199,6 +200,7 @@ class TestProjectScanSummaryAPI:
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.app = create_app()
         self.app.dependency_overrides[get_session] = self._override_session
+        self.app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
         self.client = TestClient(self.app)
 
     def _override_session(self):

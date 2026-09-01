@@ -166,6 +166,7 @@ def patch_to_orm(p: Patch) -> PatchORM:
         status=p.status,
         strategy=p.strategy,
         verified=p.verified,
+        needs_review=p.needs_review,
     )
 
 
@@ -181,6 +182,7 @@ def orm_to_patch(o: PatchORM) -> Patch:
         status=o.status,
         strategy=o.strategy,
         verified=o.verified,
+        needs_review=o.needs_review,
     )
 
 

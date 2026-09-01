@@ -58,15 +58,58 @@ class CustomRule:
         )
 
     def _is_redos_risk(self, pattern: str) -> bool:
-        dangerous = re.compile(
-            r"(\([^)]*[+*][^)]*\)){2,}|"
-            r"(\[[^\]]*[+*][^\]]*\]){2,}|"
-            r"(\(.+\))[+*]{2,}|"
-            r"(\(\?:.+\))[+*]\1"
-        )
-        if dangerous.search(pattern):
+        if len(pattern) > 500:
             return True
-        return len(pattern) > 500
+        return self._has_nested_quantifier(pattern)
+
+    @staticmethod
+    def _has_nested_quantifier(pattern: str) -> bool:
+        # 栈式扫描：带量词的分组本身再被量词修饰 => 经典 ReDoS 星号重复(a+)+ / (a*)*。
+        # 每层栈记录该分组内是否已出现量词，闭合时若本组有量词且紧跟量词即判定风险。
+        stack: list[bool] = []
+        i = 0
+        n = len(pattern)
+        while i < n:
+            c = pattern[i]
+            if c == "\\":
+                i += 2
+                continue
+            if c == "[":
+                i += 1
+                while i < n and pattern[i] != "]":
+                    if pattern[i] == "\\":
+                        i += 2
+                        continue
+                    i += 1
+                i += 1
+                continue
+            if c == "(":
+                j = i + 1
+                if j < n and pattern[j] == "?":
+                    j += 1
+                    if j < n and pattern[j] in "=!":
+                        j += 1
+                    elif j < n and pattern[j] == "<" and j + 1 < n and pattern[j + 1] in "=!":
+                        j += 2
+                stack.append(False)
+                i = j
+                continue
+            if c == ")":
+                if not stack:
+                    i += 1
+                    continue
+                group_has_quant = stack.pop()
+                if group_has_quant and i + 1 < n and pattern[i + 1] in "*+?{":
+                    return True
+                i += 1
+                continue
+            if c in "*+?{":
+                if stack:
+                    stack[-1] = True
+                i += 1
+                continue
+            i += 1
+        return False
 
     def should_apply(self, tenant_id: str = "") -> bool:
         if not self.enabled:

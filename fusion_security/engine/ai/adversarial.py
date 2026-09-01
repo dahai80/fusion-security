@@ -73,7 +73,17 @@ CWE: {vuln.cwe_id}
                 {"role": "user", "content": prompt},
             ]
         )
-        return self.ai._parse_json(response) or {"is_exploitable": False}
+        parsed = self.ai._parse_json(response)
+        if not parsed:
+            logger.warning(f"攻击代理解析失败, fail-closed 保留漏洞: {vuln.id}")
+            return {
+                "is_exploitable": True,
+                "exploit": "AI解析失败",
+                "difficulty": 0.5,
+                "impact": 0.5,
+                "reason": "AI无响应或解析失败, 保守保留",
+            }
+        return parsed
 
     async def _defend(self, vuln: Vulnerability, attack_result: dict[str, Any]) -> dict[str, Any]:
         prompt = f"""你是防御代理。你的任务是反驳以下漏洞利用。

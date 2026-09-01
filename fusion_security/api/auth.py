@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import secrets
 import time
@@ -60,6 +61,10 @@ class AuthManager:
 
     def create_api_key(self, name: str, roles: list[str] = None, expires_in: int = 0) -> str:
         raw_key = f"fs_{secrets.token_hex(24)}"
+        self.create_api_key_from_raw(name, raw_key, roles, expires_in)
+        return raw_key
+
+    def create_api_key_from_raw(self, name: str, raw_key: str, roles: list[str] = None, expires_in: int = 0) -> None:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         api_key = APIKey(
             key_hash=key_hash,
@@ -70,19 +75,18 @@ class AuthManager:
         )
         self.api_keys[key_hash] = api_key
         logger.info(f"[Auth] 创建 API Key: name={name} roles={api_key.roles}")
-        return raw_key
 
     def validate_key(self, raw_key: str) -> APIKey | None:
         if not raw_key:
             return None
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        api_key = self.api_keys.get(key_hash)
-        if not api_key:
-            return None
-        if api_key.is_expired():
-            logger.warning(f"[Auth] API Key 已过期: {api_key.name}")
-            return None
-        return api_key
+        for stored_hash, api_key in self.api_keys.items():
+            if hmac.compare_digest(stored_hash, key_hash):
+                if api_key.is_expired():
+                    logger.warning(f"[Auth] API Key 已过期: {api_key.name}")
+                    return None
+                return api_key
+        return None
 
     def has_permission(self, api_key: APIKey, permission: str) -> bool:
         for role_name in api_key.roles:
@@ -117,7 +121,7 @@ async def get_current_key(request: Request, api_key: str = Security(API_KEY_HEAD
     return key_obj
 
 
-async def require_permission(permission: str):
+def require_permission(permission: str):
     async def _check(key: APIKey = Depends(get_current_key)) -> APIKey:
         if not auth_manager.has_permission(key, permission):
             raise HTTPException(status_code=403, detail=f"权限不足: 需要 {permission}")

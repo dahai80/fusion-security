@@ -143,7 +143,9 @@ def _dict_to_ast_result(data: dict[str, Any]) -> ASTResult:
 
 
 class ASTParser:
-    SUBPROCESS_SIZE_THRESHOLD = 100 * 1024  # 100KB 以上走子进程
+    # tree-sitter 是原生 C 扩展，畸形输入可能段错误。8KB 以上走子进程隔离，
+    # 避免主扫描进程崩溃；8KB 以下进程内解析以保留吞吐（绝大多数源文件 < 8KB）。
+    SUBPROCESS_SIZE_THRESHOLD = 8 * 1024
 
     def __init__(self):
         self._parsers: dict[str, Parser] = {}

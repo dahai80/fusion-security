@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ...db import get_session
 from ...db.convert import orm_to_vuln
-from ...db.models import ScanORM, VulnerabilityORM
+from ...db.models import ScanORM
 from ...report.report import ReportGenerator
 from ...report.sarif import vulnerabilities_to_sarif
 
@@ -41,10 +41,16 @@ def generate_report(body: ReportRequest, db: Session = Depends(get_session)):
     result.low = scan_orm.low
     result.summary = scan_orm.summary
 
-    db.query(VulnerabilityORM).join("findings").filter_by(scan_id=scan_orm.id).all() if scan_orm.findings else []
-    result.vulnerabilities = [
-        orm_to_vuln(v) for v in db.query(VulnerabilityORM).all()[: scan_orm.total_vulnerabilities]
-    ]
+    seen_vuln_ids: set[str] = set()
+    result.vulnerabilities = []
+    for finding in scan_orm.findings:
+        if not finding.vulnerability or finding.vuln_id in seen_vuln_ids:
+            continue
+        seen_vuln_ids.add(finding.vuln_id)
+        result.vulnerabilities.append(orm_to_vuln(finding.vulnerability))
+    logger.info(
+        f"报告 scan={scan_orm.id}: {len(result.vulnerabilities)} 个漏洞 (过滤前 total={scan_orm.total_vulnerabilities})"
+    )
 
     reporter = ReportGenerator()
 
@@ -64,6 +70,12 @@ def scan_sarif(scan_id: str, db: Session = Depends(get_session)):
     scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    vulns = [orm_to_vuln(v) for v in db.query(VulnerabilityORM).all()[: scan_orm.total_vulnerabilities]]
+    seen_vuln_ids: set[str] = set()
+    vulns = []
+    for finding in scan_orm.findings:
+        if not finding.vulnerability or finding.vuln_id in seen_vuln_ids:
+            continue
+        seen_vuln_ids.add(finding.vuln_id)
+        vulns.append(orm_to_vuln(finding.vulnerability))
     sarif_data = vulnerabilities_to_sarif(vulns)
     return JSONResponse(content=sarif_data)

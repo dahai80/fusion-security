@@ -43,3 +43,11 @@ class Finding:
             "confidence": self.confidence,
             "created_at": self.created_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Finding:
+        from dataclasses import fields
+
+        valid = {f.name for f in fields(cls)}
+        kwargs = {k: v for k, v in data.items() if k in valid}
+        return cls(**kwargs)

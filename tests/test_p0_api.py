@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 
 from fusion_security.api.app import create_app
+from fusion_security.api.auth import get_current_key
 
 
 @pytest.fixture
 def client():
     app = create_app()
+    app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
     return TestClient(app)
 
 
@@ -193,3 +197,28 @@ class TestScansAPI:
             },
         )
         assert resp.status_code in (200, 400, 500)
+
+
+# ===== Auth enforcement (P0-1) =====
+
+
+class TestAuthEnforcement:
+    def test_scans_blocked_without_key(self):
+        app = create_app()
+        tc = TestClient(app)
+        resp = tc.get("/api/v1/scans")
+        assert resp.status_code == 401
+
+    def test_system_health_public(self):
+        app = create_app()
+        tc = TestClient(app)
+        resp = tc.get("/api/v1/system/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_keys_endpoint_blocked_without_admin(self):
+        app = create_app()
+        app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["viewer"])
+        tc = TestClient(app)
+        resp = tc.get("/api/v1/keys")
+        assert resp.status_code == 403

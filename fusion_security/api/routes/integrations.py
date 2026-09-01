@@ -298,6 +298,8 @@ class JiraIssueCreate(BaseModel):
 @router.post("/jira/config", summary="配置Jira连接")
 async def configure_jira(body: JiraConfigModel):
     global _jira_client
+    if _jira_client is not None:
+        _jira_client.close()
     config = JiraConfig(
         base_url=body.base_url,
         email=body.email,

@@ -43,6 +43,7 @@ def cli(verbose: bool):
 @click.option("--model", "-m", default="", help="fusion-mlx 模型名称")
 @click.option("--pipeline", is_flag=True, help="使用5阶段流水线扫描")
 @click.option("--sca", is_flag=True, help="启用 SCA 依赖漏洞扫描")
+@click.option("--osv", is_flag=True, help="启用 OSV.dev 云端依赖漏洞查询(会向 osv.dev 外发依赖清单，打破离线)")
 @click.option("--incremental", "-i", is_flag=True, help="增量扫描(仅扫描git diff变更文件)")
 @click.option("--base", "-b", default="", help="增量扫描基准commit(默认HEAD~1)")
 def scan(
@@ -54,11 +55,12 @@ def scan(
     model: str,
     pipeline: bool,
     sca: bool,
+    osv: bool,
     incremental: bool,
     base: str,
 ):
     """扫描代码安全漏洞。"""
-    asyncio.run(_async_scan(path, severity, output, fmt, no_ai, model, pipeline, sca, incremental, base))
+    asyncio.run(_async_scan(path, severity, output, fmt, no_ai, model, pipeline, sca, osv, incremental, base))
 
 
 async def _async_scan(
@@ -70,6 +72,7 @@ async def _async_scan(
     model: str,
     pipeline: bool,
     sca: bool,
+    osv: bool,
     incremental: bool,
     base: str,
 ):
@@ -111,12 +114,14 @@ async def _async_scan(
                 model=model,
                 severity_threshold=severity,
                 enable_sca=sca or pipeline,
+                enable_osv=osv,
             )
             pl = ScanPipeline(config)
             click.echo(f"  扫描目标: {path}")
             click.echo("  扫描模式: 🔄 5阶段流水线")
             click.echo(f"  AI 分析:  {'✅ 已启用' if not no_ai else '❌ 已禁用'}")
             click.echo(f"  SCA 扫描: {'✅ 已启用' if config.enable_sca else '❌ 已禁用'}")
+            click.echo(f"  OSV 云查: {'✅ 已启用(将外发依赖清单)' if config.enable_osv else '❌ 已禁用(离线)'}")
             click.echo()
 
             with click.progressbar(length=100, label="扫描中...") as bar:
