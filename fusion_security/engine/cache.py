@@ -49,7 +49,9 @@ class ProjectScanCache:
         logger.debug(f"缓存未命中: project={project_id} file={file_path}")
         return None
 
-    def put(self, project_id: str, file_path: str, content: str, vulns: list[Vulnerability]) -> None:
+    def put(
+        self, project_id: str, file_path: str, content: str, vulns: list[Vulnerability], commit: bool = True
+    ) -> None:
         ch = _content_hash(content)
         row = (
             self._db.query(ScanCacheORM)
@@ -72,7 +74,16 @@ class ProjectScanCache:
             )
             self._db.add(row)
             logger.debug(f"缓存写入: project={project_id} file={file_path}")
-        self._db.commit()
+        if commit:
+            self._db.commit()
+
+    def flush(self) -> None:
+        # 批量写后统一提交,避免 put 逐文件 commit 导致 N 次 fsync。空事务提交无副作用。
+        try:
+            self._db.commit()
+        except Exception as e:
+            logger.warning(f"[Cache] flush 提交失败: {e}")
+            self._db.rollback()
 
     def get_multi(
         self, project_id: str, file_paths: list[str], contents: dict[str, str]
@@ -87,8 +98,10 @@ class ProjectScanCache:
         return results
 
     def put_multi(self, project_id: str, results_map: dict[str, tuple]) -> None:
+        # 批量写:逐条 put 不 commit,最后一次 commit,避免 N 次 fsync。
         for fp, (content, vulns) in results_map.items():
-            self.put(project_id, fp, content, vulns)
+            self.put(project_id, fp, content, vulns, commit=False)
+        self._db.commit()
 
     def invalidate_project(self, project_id: str) -> int:
         count = (

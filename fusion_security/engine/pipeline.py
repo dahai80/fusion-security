@@ -84,7 +84,7 @@ STAGE_ORDER = [
 
 
 class ScanPipeline:
-    def __init__(self, config: PipelineConfig | None = None):
+    def __init__(self, config: PipelineConfig | None = None, db=None, project_id: str = ""):
         self.config = config or PipelineConfig()
         self.rule_engine = RuleEngine()
         self.ast_parser = ASTParser()
@@ -98,6 +98,13 @@ class ScanPipeline:
         self.checkpoint_mgr = CheckpointManager()
         self.circuit_breaker = CircuitBreaker()
         self.retry_policy = RetryPolicy()
+        self.project_id = project_id
+        self._db = db
+        self._project_cache = None
+        if project_id and db:
+            from .cache import ProjectScanCache
+
+            self._project_cache = ProjectScanCache(db)
 
     async def run(
         self, path: str, changed_files: list[str] | None = None, scan_id: str | None = None
@@ -248,10 +255,19 @@ class ScanPipeline:
         logger.info("[Discover] 漏洞发现阶段开始")
 
         all_vulns: list[Vulnerability] = []
+        scan_failed = 0
+        root = Path(ctx.project_path)
 
         async def scan_file(f: Path) -> list[Vulnerability]:
+            nonlocal scan_failed
             try:
                 content = f.read_text(encoding="utf-8", errors="ignore")
+                # 命中 DB 缓存则跳过规则/污点重算,续扫重跑 Discover 时不重复消耗算力。
+                if self._project_cache:
+                    rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
+                    cached = self._project_cache.get(self.project_id, rel, content)
+                    if cached is not None:
+                        return cached
                 vulns = self.rule_engine.scan_file(f, content)
                 if self.config.enable_taint:
                     taint_result = self.taint_tracker.analyze(f, content)
@@ -272,9 +288,13 @@ class ScanPipeline:
                                 else f"{tp.source} → {tp.sink}",
                             )
                             vulns.append(v)
+                if self._project_cache:
+                    rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
+                    self._project_cache.put(self.project_id, rel, content, vulns, commit=False)
                 return vulns
             except Exception as e:
-                logger.debug(f"[Discover] 扫描失败 {f}: {e}")
+                scan_failed += 1
+                logger.warning(f"[Discover] 扫描失败 {f}: {e}")
                 return []
 
         for i in range(0, len(ctx.files), self.config.batch_size):
@@ -284,12 +304,21 @@ class ScanPipeline:
                 if isinstance(findings, list):
                     all_vulns.extend(findings)
 
+        if scan_failed:
+            ctx.errors.append(f"discover {scan_failed} 个文件扫描失败")
+            logger.warning(f"[Discover] 共 {scan_failed} 个文件扫描失败")
+
+        if self._project_cache:
+            self._project_cache.flush()
+
         if self.ai_analyzer and ctx.files:
             try:
                 semantic = await self.ai_analyzer.semantic_scan(ctx.files)
                 all_vulns.extend(semantic)
             except Exception as e:
                 logger.warning(f"[Discover] AI语义扫描失败: {e}")
+                ctx.errors.append(f"discover AI 语义扫描失败: {e}")
+                self.circuit_breaker.record_failure()
 
         if self.sca_scanner and ctx.dependency_files:
             try:
@@ -298,6 +327,8 @@ class ScanPipeline:
                 logger.info(f"[Discover] SCA发现 {len(sca_vulns)} 个依赖漏洞")
             except Exception as e:
                 logger.warning(f"[Discover] SCA扫描失败: {e}")
+                ctx.errors.append(f"discover SCA 扫描失败: {e}")
+                self.circuit_breaker.record_failure()
 
         ctx.vulnerabilities = all_vulns
         ctx.stage_results["discover"] = {
@@ -315,11 +346,15 @@ class ScanPipeline:
             ctx.stage_results["verify"] = {"verified": 0, "duration_ms": 0}
             return
 
+        verify_ok = True
         if self.ai_analyzer:
             try:
                 ctx.vulnerabilities = await self.ai_analyzer.verify_findings(ctx.vulnerabilities, ctx.files)
             except Exception as e:
+                verify_ok = False
                 logger.warning(f"[Verify] AI验证失败: {e}")
+                ctx.errors.append(f"verify AI 验证失败: {e}")
+                self.circuit_breaker.record_failure()
 
         if self.adversarial and ctx.vulnerabilities:
             try:
@@ -329,10 +364,17 @@ class ScanPipeline:
                         file_contents[str(f)] = f.read_text(encoding="utf-8", errors="ignore")
                 ctx.vulnerabilities = await self.adversarial.verify_batch(ctx.vulnerabilities, file_contents)
             except Exception as e:
+                verify_ok = False
                 logger.warning(f"[Verify] 对抗验证失败: {e}")
+                ctx.errors.append(f"verify 对抗验证失败: {e}")
+                self.circuit_breaker.record_failure()
 
-        for v in ctx.vulnerabilities:
-            v.verified = True
+        # 仅当验证实际成功才标记 verified;失败时保留 verified=False,避免未验证漏洞被报为已验证。
+        if verify_ok:
+            for v in ctx.vulnerabilities:
+                v.verified = True
+        else:
+            logger.warning("[Verify] 验证未成功完成,漏洞保留 verified=False")
 
         ctx.stage_results["verify"] = {
             "verified": len(ctx.vulnerabilities),
@@ -398,8 +440,10 @@ class ScanPipeline:
                 alt_patches = self.fix_generator.generate_alternatives(v, max_strategies=3)
                 for patch in alt_patches:
                     if self.ai_analyzer:
-                        with contextlib.suppress(Exception):
+                        try:
                             patch = await self.fix_generator.ai_enhance_fix(patch)
+                        except Exception as e:
+                            logger.warning(f"[Patch] AI 增强失败,保留模板补丁 {v.id}: {e}")
                     patch.vuln_id = v.id
                     patch.scan_id = ctx.scan_id
                     ctx.patches.append(patch)
@@ -448,9 +492,11 @@ class ScanPipeline:
                 else:
                     patch.verified = False
                     failed += 1
-            except Exception:
-                patch.verified = True
-                passed += 1
+            except Exception as e:
+                # 正则异常(灾难回溯/非法转义)不得 fail-open 标通过,否则坏补丁以"已验证"发布。
+                logger.warning(f"[Retest] 复测正则异常,判失败 {patch.vuln_id}: {e}")
+                patch.verified = False
+                failed += 1
 
         ctx.stage_results["retest"] = {
             "retested": retested,

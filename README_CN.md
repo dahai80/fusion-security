@@ -138,6 +138,21 @@ cd frontend && npm install && npm run dev
 | **GitLab CI** | 包含模板，全量/增量扫描任务 |
 | **Helm Chart** | Kubernetes 部署（fusion-security + fusion-mlx 双容器） |
 
+### 安全硬化
+
+| 控制项 | 作用 |
+|--------|------|
+| **SSRF 防护** | Webhook/通知外发 URL 校验私网/环回/链路本地/元数据 IP，防 DNS 重绑定（`engine/ci/_url_guard.py`） |
+| **日志脱敏** | 日志过滤器在落盘前清洗 `password`/`api_key`/`token`/`Bearer`/`Authorization` 值（`utils/logger.py`） |
+| **离线优先 SCA** | 依赖扫描默认本地已知漏洞库；OSV.dev 云查询经 `--osv` 显式开启并告警 |
+| **AI 补丁审核** | AI 生成修复经校验并标记 `needs_review=True`；失败标记串与空输出被拒绝 |
+| **常量时间鉴权** | 租户 API key 哈希用 `hmac.compare_digest` 比较 |
+| **租户路径安全** | 审计日志文件名将 `tenant_id` 净化为安全 slug（防路径穿越） |
+| **验证器 fail-closed** | Retest 在规则正则抛异常时判 `failed`（非 `verified`）；Verify 在 AI 验证中止时保留 `verified=False` — 安全门禁绝不 fail-open |
+| **孤儿扫描回收** | API 启动时将上次崩溃遗留的 `running` 扫描标 `failed`，`queued` 扫描重入队 — 重启后无扫描永久挂起 |
+| **AI 背压** | MLX 调用受并发信号量限制（默认 4），并发扫描不会压垮单一推理实例导致 OOM |
+| **缓存批量写入** | `ProjectScanCache` 每阶段统一 flush 而非逐文件 commit，消除大库的 N 次 fsync 风暴 |
+
 ### 漏洞覆盖（37 规则）
 
 | 类别 | 规则 | CWE |

@@ -324,6 +324,48 @@ async def stop_pool():
     return {"status": "stopped"}
 
 
+async def startup_reconcile_scans() -> dict:
+    # 进程重启后回收孤儿扫描:running 是上次崩溃遗留(无在途执行器),queued 需重入队。
+    # 不回收 running 会导致 dashboard 永远显示一个假扫描;不重入队 queued 则任务永久挂起。
+    from ...db import get_session
+    from ...db.models import ScanORM
+    from ...engine.queue import ScanTask, TaskPriority
+
+    db = get_session()
+    revived = 0
+    failed = 0
+    try:
+        running = db.query(ScanORM).filter(ScanORM.status == "running").all()
+        for s in running:
+            s.status = "failed"
+            s.summary = "进程重启回收:上次异常退出未完成"
+            failed += 1
+        db.commit()
+
+        queued = db.query(ScanORM).filter(ScanORM.status == "queued").all()
+        queue = _get_queue()
+        for s in queued:
+            task = ScanTask(
+                priority=TaskPriority.NORMAL,
+                project_path="",
+                config={
+                    "scan_id": s.id,
+                    "scan_type": s.scan_type,
+                    "severity_threshold": s.severity_threshold,
+                    "use_ai": s.use_ai,
+                    "model": s.model,
+                    "changed_files": [],
+                },
+            )
+            await queue.enqueue(task)
+            revived += 1
+        if revived or failed:
+            logger.info(f"[Startup] 孤儿扫描回收: running->failed={failed} queued->reenqueue={revived}")
+    finally:
+        db.close()
+    return {"failed": failed, "reenqueued": revived}
+
+
 @router.get("/checkpoints", summary="列出所有断点")
 def list_checkpoints():
     from ...engine.resume import CheckpointManager
@@ -385,7 +427,7 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
         if not scan_orm:
             return
 
-        pipeline = ScanPipeline()
+        pipeline = ScanPipeline(db=db, project_id=scan_orm.project_id)
         ctx = await pipeline.run(path, changed_files=changed_files or None, scan_id=scan_id)
 
         scan_orm.status = "completed"

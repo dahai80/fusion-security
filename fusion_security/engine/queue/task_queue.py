@@ -140,6 +140,13 @@ class WorkerPool:
         self._running = False
         for t in self._tasks:
             t.cancel()
+        # 带超时 await 在跑任务,给在途 MLX 请求 drain 窗口,避免半写数据。
+        # 跨事件循环(TestClient lifespan 线程 vs 请求线程)时 gather 抛 ValueError,降级为仅 cancel。
+        if self._tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*self._tasks, return_exceptions=True), timeout=10.0)
+            except (TimeoutError, ValueError) as e:
+                logger.warning(f"[WorkerPool] 停机 drain 跳过 ({type(e).__name__}): {e}")
         self._tasks.clear()
         self._active.clear()
         logger.info("[WorkerPool] 已停止")
