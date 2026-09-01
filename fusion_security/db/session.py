@@ -166,6 +166,50 @@ def _migrate_schema_portable(engine) -> None:
     _ensure_column_portable(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
     _ensure_column_portable(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
     _ensure_column_portable(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
+    # ID 列拓宽:String(16) → String(32)。Scan.id="scan_"+hex12(17),Project.id="proj_"+hex12(17),
+    # SQLite 静默截断,PG 严格校验报 StringDataRightTruncation(POST /scans 500)。旧库需 ALTER 拓宽。
+    _widen_column_portable(engine, "scans", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scans", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "vulnerabilities", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "findings", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "findings", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "patches", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "patches", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scan_cache", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scan_cache", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scheduled_scans", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scheduled_scans", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "feedbacks", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "feedbacks", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "api_keys", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "webhooks", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "projects", "id", "VARCHAR(32)")
+
+
+def _widen_column_portable(engine, table: str, column: str, new_type: str) -> None:
+    from sqlalchemy import inspect
+
+    with engine.connect() as conn:
+        insp = inspect(conn)
+        cols = {c["name"]: c for c in insp.get_columns(table)}
+        if column not in cols:
+            return
+        cur_type = str(cols[column].get("type", "")).upper()
+        target = new_type.upper()
+        cur_len = _varchar_len(cur_type)
+        tgt_len = _varchar_len(target)
+        if cur_len is None or tgt_len is None or cur_len >= tgt_len:
+            return
+        logger.info(f"[Migration] 拓宽列 {table}.{column}: {cur_type} -> {new_type}")
+        conn.exec_driver_sql(f'ALTER TABLE "{table}" ALTER COLUMN {column} TYPE {new_type}')
+        conn.commit()
+
+
+def _varchar_len(type_str: str) -> int | None:
+    import re
+
+    m = re.search(r"VARCHAR\((\d+)\)", type_str)
+    return int(m.group(1)) if m else None
 
 
 def _ensure_column_portable(engine, table: str, column: str, definition: str) -> None:
