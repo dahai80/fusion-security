@@ -24,6 +24,8 @@ class ScanCache:
         self.max_entries = max_entries
         self.ttl_seconds = ttl_seconds
         self._cache: OrderedDict[str, tuple[float, list[Vulnerability]]] = OrderedDict()
+        # 路径 → 缓存键集合。invalidate 按路径反查键，避免遍历全部哈希键。
+        self._path_index: dict[str, set[str]] = {}
         self._hits = 0
         self._misses = 0
 
@@ -41,6 +43,7 @@ class ScanCache:
                 self._hits += 1
                 return vulns
             del self._cache[key]
+            self._drop_index(str(file_path), key)
         self._misses += 1
         return None
 
@@ -48,16 +51,28 @@ class ScanCache:
         key = self._make_key(file_path, content)
         self._cache[key] = (time.time(), vulns)
         self._cache.move_to_end(key)
+        self._path_index.setdefault(str(file_path), set()).add(key)
         while len(self._cache) > self.max_entries:
-            self._cache.popitem(last=False)
+            evict_key, _ = self._cache.popitem(last=False)
+            for keys in self._path_index.values():
+                keys.discard(evict_key)
 
     def invalidate(self, file_path: Path) -> None:
-        keys_to_remove = [k for k in self._cache if str(file_path) in k]
-        for k in keys_to_remove:
-            del self._cache[k]
+        path_str = str(file_path)
+        for key in list(self._path_index.get(path_str, set())):
+            self._cache.pop(key, None)
+        self._path_index.pop(path_str, None)
+
+    def _drop_index(self, path_str: str, key: str) -> None:
+        keys = self._path_index.get(path_str)
+        if keys is not None:
+            keys.discard(key)
+            if not keys:
+                self._path_index.pop(path_str, None)
 
     def clear(self) -> None:
         self._cache.clear()
+        self._path_index.clear()
         self._hits = 0
         self._misses = 0
 
@@ -87,6 +102,15 @@ class ScanTarget:
         self.max_files = max_files
         self.files: list[Path] = []
         self._incremental_files: list[str] = incremental_files or []
+        self._root = self.path
+
+    def _is_within_root(self, candidate: Path) -> bool:
+        try:
+            candidate.resolve().relative_to(self._root.resolve())
+            return True
+        except ValueError:
+            logger.warning(f"路径越界扫描根, 跳过: {candidate}")
+            return False
 
     def discover(self, extensions: set[str] | None = None) -> list[Path]:
         if not extensions:
@@ -145,6 +169,10 @@ class ScanTarget:
                 for f in self.path.glob(pattern):
                     if len(self.files) >= self.max_files:
                         break
+                    if f.is_symlink():
+                        continue
+                    if not self._is_within_root(f):
+                        continue
                     if any(p in f.parts for p in exclude_dirs):
                         continue
                     if self._check_file_size(f):
@@ -189,6 +217,11 @@ class ScanTarget:
             p = Path(cf)
             if not p.is_absolute():
                 p = self.path / p
+            if p.is_symlink():
+                logger.warning(f"增量扫描跳过 symlink: {cf}")
+                continue
+            if not self._is_within_root(p):
+                continue
             if p.suffix in extensions and p.exists() and self._check_file_size(p):
                 self.files.append(p)
 

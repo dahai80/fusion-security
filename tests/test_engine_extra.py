@@ -1089,7 +1089,15 @@ class TestWebhookExtra:
         config = WebhookConfig(url="http://localhost:9999/hook", secret="my_secret_key")
         body = json.dumps({"event": "test", "payload": {}}).encode("utf-8")
         hmac.new(b"my_secret_key", body, hashlib.sha256).hexdigest()
-        with patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen:
+        from fusion_security.engine.ci._url_guard import URLGuardResult
+
+        with (
+            patch(
+                "fusion_security.engine.ci.webhook.validate_outbound_url",
+                return_value=URLGuardResult(ok=True, safe_url=config.url),
+            ),
+            patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
+        ):
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
@@ -1101,7 +1109,15 @@ class TestWebhookExtra:
     def test_send_without_secret(self):
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://localhost:9999/hook")
-        with patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen:
+        from fusion_security.engine.ci._url_guard import URLGuardResult
+
+        with (
+            patch(
+                "fusion_security.engine.ci.webhook.validate_outbound_url",
+                return_value=URLGuardResult(ok=True, safe_url=config.url),
+            ),
+            patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
+        ):
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
@@ -1113,16 +1129,44 @@ class TestWebhookExtra:
     def test_send_url_error(self):
         from urllib.error import URLError
 
+        from fusion_security.engine.ci._url_guard import URLGuardResult
+
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://localhost:9999/hook")
-        with patch("fusion_security.engine.ci.webhook.urlopen", side_effect=URLError("fail")):
+        with (
+            patch(
+                "fusion_security.engine.ci.webhook.validate_outbound_url",
+                return_value=URLGuardResult(ok=True, safe_url=config.url),
+            ),
+            patch("fusion_security.engine.ci.webhook.urlopen", side_effect=URLError("fail")),
+        ):
             result = notifier._send(config, "test", {})
         assert result is False
 
     def test_send_general_exception(self):
+        from fusion_security.engine.ci._url_guard import URLGuardResult
+
         notifier = WebhookNotifier()
         config = WebhookConfig(url="http://localhost:9999/hook")
-        with patch("fusion_security.engine.ci.webhook.urlopen", side_effect=Exception("boom")):
+        with (
+            patch(
+                "fusion_security.engine.ci.webhook.validate_outbound_url",
+                return_value=URLGuardResult(ok=True, safe_url=config.url),
+            ),
+            patch("fusion_security.engine.ci.webhook.urlopen", side_effect=Exception("boom")),
+        ):
+            result = notifier._send(config, "test", {})
+        assert result is False
+
+    def test_send_ssrf_rejected(self):
+        from fusion_security.engine.ci._url_guard import URLGuardResult
+
+        notifier = WebhookNotifier()
+        config = WebhookConfig(url="http://169.254.169.254/latest/meta-data/")
+        with patch(
+            "fusion_security.engine.ci.webhook.validate_outbound_url",
+            return_value=URLGuardResult(ok=False, reason="目标地址禁止外发"),
+        ):
             result = notifier._send(config, "test", {})
         assert result is False
 
@@ -1234,9 +1278,9 @@ class TestScannerExtra:
         cache.put(p, "content", [_make_vuln()])
         cache.invalidate(p)
         result = cache.get(p, "content")
-        # invalidate checks str(file_path) in key, but keys are hashes
-        # so the entry may still exist; just verify no crash
-        assert isinstance(result, (list, type(None)))
+        # invalidate 按路径反查并删除条目，缓存应已清空
+        assert result is None
+        assert cache.stats["entries"] == 0
 
     def test_scan_cache_clear(self):
         cache = ScanCache()
@@ -1483,3 +1527,68 @@ class TestGitHelper:
             if head:
                 result = helper.get_changed_files(base=head, extensions=[".py"])
                 assert all(Path(f).suffix == ".py" for f in result.changed_files)
+
+
+class TestSecretRedactingFilter:
+    def _emit(self, msg):
+        import logging
+
+        from fusion_security.utils.logger import SecretRedactingFilter
+
+        rec = logging.LogRecord("t", logging.INFO, __file__, 1, msg, None, None)
+        SecretRedactingFilter().filter(rec)
+        return rec.getMessage()
+
+    def test_redacts_password_kv(self):
+        out = self._emit("login password=s3cr3t-xyz done")
+        assert "s3cr3t-xyz" not in out
+        assert "[REDACTED]" in out
+
+    def test_redacts_api_key_quotes(self):
+        out = self._emit('cfg api_key="AKIA1234567890ABCDEF" loaded')
+        assert "AKIA1234567890ABCDEF" not in out
+        assert "[REDACTED]" in out
+
+    def test_redacts_bearer(self):
+        out = self._emit("Authorization: Bearer eyJhbGci.eyJzdWIi.SflKxw")
+        assert "eyJhbGci.eyJzdWIi.SflKxw" not in out
+        assert "[REDACTED]" in out
+
+    def test_preserves_nonsecret(self):
+        out = self._emit("scan 12 files, 3 vulns, duration 240ms")
+        assert out == "scan 12 files, 3 vulns, duration 240ms"
+
+
+class TestReDoSDetector:
+    @pytest.mark.parametrize(
+        "pattern, risky",
+        [
+            ("(a+)+", True),
+            ("(a*)*", True),
+            ("([a-z]+)+", True),
+            ("(?:a+)*", True),
+            ("(a+)*b", True),
+            ("((ab)+)+", True),
+            ("a+b+", False),
+            ("(a|b)*", False),
+            ("(foo)*", False),
+            ("password.*=", False),
+            ("[a-z]+", False),
+        ],
+    )
+    def test_nested_quantifier(self, pattern, risky):
+        from fusion_security.engine.rules.custom import CustomRule
+
+        assert CustomRule._has_nested_quantifier(pattern) is risky
+
+    def test_redos_rule_returns_none(self):
+        from fusion_security.engine.rules.custom import CustomRule
+
+        rule = CustomRule(id="R", name="bad", pattern="(a+)+")
+        assert rule.to_scan_rule() is None
+
+    def test_safe_rule_compiles(self):
+        from fusion_security.engine.rules.custom import CustomRule
+
+        rule = CustomRule(id="R", name="ok", pattern="eval\\(")
+        assert rule.to_scan_rule() is not None

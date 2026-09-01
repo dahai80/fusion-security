@@ -110,6 +110,12 @@ class JiraClient:
             self._client.close()
             self._client = None
 
+    def __enter__(self) -> JiraClient:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     def _build_description(self, vuln: Vulnerability) -> str:
         parts = [
             f"h2. {vuln.title}",

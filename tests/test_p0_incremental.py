@@ -42,7 +42,13 @@ class TestGitHelper:
         repo.mkdir()
         (repo / ".git").mkdir()
         git = GitHelper(str(repo))
-        with patch.object(git, "_run_git", return_value=""):
+
+        def mock_git(*args):
+            if "rev-parse" in args:
+                return "abc123"
+            return ""
+
+        with patch.object(git, "_run_git", side_effect=mock_git):
             diff = git.get_changed_files("HEAD~1", "HEAD")
             assert diff.changed_files == []
 
@@ -56,6 +62,8 @@ class TestGitHelper:
         diff_content = "diff content..."
 
         def mock_git(*args):
+            if "rev-parse" in args:
+                return "abc123"
             if "--name-status" in args:
                 return name_status
             return diff_content
@@ -75,7 +83,13 @@ class TestGitHelper:
         git = GitHelper(str(repo))
 
         name_status = "M\tapp/main.py\nM\tREADME.md\nM\timage.png"
-        with patch.object(git, "_run_git", return_value=name_status):
+
+        def mock_git(*args):
+            if "rev-parse" in args:
+                return "abc123"
+            return name_status
+
+        with patch.object(git, "_run_git", side_effect=mock_git):
             diff = git.get_changed_files("HEAD~1", "HEAD")
             assert len(diff.changed_files) == 1
             assert "app/main.py" in diff.changed_files
@@ -106,6 +120,26 @@ class TestGitHelper:
             commits = git.list_commits()
             assert len(commits) == 2
             assert commits[0]["hash"] == "abc"
+
+    def test_get_changed_files_rejects_option_injection(self, tmp_path):
+        from fusion_security.engine.vcs.git import GitArgError
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        git = GitHelper(str(repo))
+        with pytest.raises(GitArgError):
+            git.get_changed_files(base="--output=/tmp/x", head="HEAD")
+
+    def test_get_file_at_commit_rejects_path_injection(self, tmp_path):
+        from fusion_security.engine.vcs.git import GitArgError
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        git = GitHelper(str(repo))
+        with pytest.raises(GitArgError):
+            git.get_file_at_commit(filepath="-anything", commit="HEAD")
 
 
 class TestIncrementalScan:

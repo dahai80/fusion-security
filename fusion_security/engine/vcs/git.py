@@ -8,6 +8,30 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+class GitArgError(ValueError):
+    pass
+
+
+def _validate_rev(rev: str) -> str:
+    if not rev or rev.startswith("-"):
+        raise GitArgError(f"非法 git rev: {rev!r}")
+    return rev
+
+
+def _validate_path_arg(path_arg: str) -> str:
+    if not path_arg or path_arg.startswith("-"):
+        raise GitArgError(f"非法 git path: {path_arg!r}")
+    return path_arg
+
+
+def _resolve_rev(helper, rev: str) -> str:
+    rev = _validate_rev(rev)
+    verified = helper._run_git("rev-parse", "--verify", f"{rev}^{{commit}}")
+    if not verified:
+        raise GitArgError(f"无法解析的 git rev: {rev!r}")
+    return verified
+
+
 @dataclass
 class DiffResult:
     base_commit: str = ""
@@ -62,7 +86,9 @@ class GitHelper:
     ) -> DiffResult:
         result = DiffResult(base_commit=base, head_commit=head)
 
-        name_status = self._run_git("diff", "--name-status", f"{base}...{head}")
+        base_sha = _resolve_rev(self, base)
+        head_sha = _resolve_rev(self, head)
+        name_status = self._run_git("diff", "--name-status", f"{base_sha}...{head_sha}")
         if not name_status:
             logger.info(f"无差异: {base}...{head}")
             return result
@@ -104,7 +130,7 @@ class GitHelper:
             elif status.startswith("D"):
                 result.deleted_files.append(filepath)
 
-        result.diff_content = self._run_git("diff", f"{base}...{head}")
+        result.diff_content = self._run_git("diff", f"{base_sha}...{head_sha}")
         logger.info(
             f"增量扫描: {base}...{head}, "
             f"changed={len(result.changed_files)}, "
@@ -115,14 +141,19 @@ class GitHelper:
         return result
 
     def get_file_at_commit(self, filepath: str, commit: str = "HEAD") -> str | None:
-        content = self._run_git("show", f"{commit}:{filepath}")
+        commit_sha = _resolve_rev(self, commit)
+        _validate_path_arg(filepath)
+        content = self._run_git("show", f"{commit_sha}:{filepath}")
         return content if content else None
 
     def get_blame(self, filepath: str) -> str:
-        return self._run_git("blame", filepath)
+        _validate_path_arg(filepath)
+        return self._run_git("blame", "--", filepath)
 
     def list_commits(self, base: str = "HEAD~10", head: str = "HEAD") -> list[dict]:
-        log = self._run_git("log", "--oneline", "--format=%H|%s|%an|%ai", f"{base}..{head}")
+        base_sha = _resolve_rev(self, base)
+        head_sha = _resolve_rev(self, head)
+        log = self._run_git("log", "--oneline", "--format=%H|%s|%an|%ai", f"{base_sha}..{head_sha}")
         if not log:
             return []
         commits = []

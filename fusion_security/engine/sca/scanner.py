@@ -133,7 +133,8 @@ class OSVClient:
 
 
 class SCAScanner:
-    def __init__(self, use_osv: bool = True):
+    def __init__(self, use_osv: bool = False):
+        # use_osv 默认 False：保持 100% 离线承诺。开启则向 osv.dev 外发依赖清单。
         self.use_osv = use_osv
         self.osv_client = OSVClient() if use_osv else None
         self.parsers = {

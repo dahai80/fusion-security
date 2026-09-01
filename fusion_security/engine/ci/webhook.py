@@ -6,10 +6,13 @@ import hashlib
 import hmac
 import json
 import logging
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from ._url_guard import validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,13 @@ class WebhookConfig:
     headers: dict[str, str] = field(default_factory=dict)
 
 
+def _host_of(url: str) -> str:
+    try:
+        return urllib.parse.urlsplit(url).hostname or "unknown"
+    except Exception:
+        return "unknown"
+
+
 class WebhookNotifier:
     def __init__(self, configs: list[WebhookConfig] | None = None):
         self.configs = configs or []
@@ -29,7 +39,7 @@ class WebhookNotifier:
 
     def add_config(self, config: WebhookConfig) -> None:
         self.configs.append(config)
-        logger.info(f"[Webhook] 添加 webhook: {config.url[:50]}")
+        logger.info(f"[Webhook] 添加 webhook host={_host_of(config.url)}")
 
     def notify(self, event: str, payload: dict[str, Any]) -> list[bool]:
         results = []
@@ -41,11 +51,16 @@ class WebhookNotifier:
                 success = self._send(config, event, payload)
                 results.append(success)
             except Exception as e:
-                logger.warning(f"[Webhook] 发送失败 {config.url[:30]}: {e}")
+                logger.warning(f"[Webhook] 发送失败 host={_host_of(config.url)}: {e}")
                 results.append(False)
         return results
 
     def _send(self, config: WebhookConfig, event: str, payload: dict[str, Any]) -> bool:
+        guard = validate_outbound_url(config.url)
+        if not guard.ok:
+            logger.warning(f"[Webhook] SSRF 校验拒绝 host={_host_of(config.url)}: {guard.reason}")
+            return False
+
         body = json.dumps(
             {
                 "event": event,
@@ -65,15 +80,15 @@ class WebhookNotifier:
         headers.update(config.headers)
 
         try:
-            req = Request(config.url, data=body, headers=headers, method="POST")
+            req = Request(guard.safe_url, data=body, headers=headers, method="POST")
             with urlopen(req, timeout=10) as resp:
-                logger.info(f"[Webhook] 发送成功 {config.url[:30]} status={resp.status}")
+                logger.info(f"[Webhook] 发送成功 host={_host_of(config.url)} status={resp.status}")
                 return 200 <= resp.status < 300
         except URLError as e:
-            logger.warning(f"[Webhook] URL错误: {e}")
+            logger.warning(f"[Webhook] URL错误 host={_host_of(config.url)}: {e}")
             return False
         except Exception as e:
-            logger.warning(f"[Webhook] 发送异常: {e}")
+            logger.warning(f"[Webhook] 发送异常 host={_host_of(config.url)}: {e}")
             return False
 
     def notify_scan_complete(

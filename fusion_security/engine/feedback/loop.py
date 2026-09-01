@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,17 +33,18 @@ class FeedbackStore:
     def __init__(self, store_path: str = "", max_entries: int = 10000):
         self.store_path = store_path
         self.max_entries = max_entries
-        self.entries: list[FeedbackEntry] = []
+        # deque.popleft 为 O(1)；list.pop(0) 在万级条目下每次平移整表，改用有界 deque。
+        self.entries: deque[FeedbackEntry] = deque(maxlen=max_entries)
         self._fp_signatures: set[str] = set()
         if store_path:
             self._load()
 
     def add_feedback(self, entry: FeedbackEntry) -> None:
+        # 达到上限时先取出最旧条目并清除其误报签名，再 append，保证签名集与队列一致。
+        if len(self.entries) == self.max_entries:
+            removed = self.entries.popleft()
+            self._fp_signatures.discard(self._signature(removed))
         self.entries.append(entry)
-        if len(self.entries) > self.max_entries:
-            removed = self.entries.pop(0)
-            sig = self._signature(removed)
-            self._fp_signatures.discard(sig)
         if entry.is_false_positive:
             sig = self._signature(entry)
             self._fp_signatures.add(sig)
@@ -134,6 +136,9 @@ class FeedbackStore:
                 self.entries.append(entry)
                 if entry.is_false_positive:
                     self._fp_signatures.add(self._signature(entry))
+            # 加载量超过 maxlen 时 deque 已静默驱逐最旧条目，需清掉残留的误报签名保持一致。
+            live_sigs = {self._signature(e) for e in self.entries if e.is_false_positive}
+            self._fp_signatures &= live_sigs
             logger.info(f"[Feedback] 加载 {len(self.entries)} 条反馈")
         except Exception as e:
             logger.warning(f"[Feedback] 加载失败: {e}")

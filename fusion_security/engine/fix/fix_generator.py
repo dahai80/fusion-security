@@ -128,24 +128,49 @@ class FixGenerator:
         return pattern.sub(f'{var_name} = os.environ.get("{var_name}", "")', code, count=1)
 
     async def ai_enhance_fix(self, patch: Patch) -> Patch:
-        if self.ai_analyzer:
-            try:
-                from ...models.vulnerability import Vulnerability
+        if not self.ai_analyzer:
+            return patch
+        try:
+            from ...models.vulnerability import Vulnerability
 
-                dummy_vuln = Vulnerability(
-                    id=patch.vuln_id,
-                    title="",
-                    description=patch.description,
-                    severity="medium",
-                    confidence=80,
-                    file_path="",
-                    line_number=0,
-                    code_snippet=patch.original_code,
-                )
-                enhanced = await self.ai_analyzer.generate_fix(dummy_vuln)
-                if enhanced and len(enhanced) > 5:
-                    patch.patched_code = enhanced
-                    patch.strategy = "ai_enhanced"
-            except Exception as e:
-                logger.warning(f"AI 修复增强失败: {e}")
+            dummy_vuln = Vulnerability(
+                id=patch.vuln_id,
+                title="",
+                description=patch.description,
+                severity="medium",
+                confidence=80,
+                file_path="",
+                line_number=0,
+                code_snippet=patch.original_code,
+            )
+            enhanced = await self.ai_analyzer.generate_fix(dummy_vuln)
+        except Exception as e:
+            logger.warning(f"AI 修复增强失败, 保留模板补丁 {patch.vuln_id}: {e}")
+            return patch
+
+        # AI 可能返回失败标记串 (generate_fix 异常时返回 "// 修复生成失败: ...")，
+        # 不得直接当作补丁内容落库。校验通过才采用，否则保留模板补丁。
+        if not enhanced or not self._is_valid_ai_patch(enhanced, patch.original_code):
+            logger.warning(f"AI 补丁内容非法或无效, 保留模板补丁 {patch.vuln_id}")
+            return patch
+
+        patch.patched_code = enhanced
+        patch.strategy = "ai_enhanced"
+        # AI 生成的补丁存在幻觉风险，必须标记人工审核后方可应用
+        patch.needs_review = True
+        logger.info(f"AI 增强补丁生成 (需人工审核) {patch.vuln_id}")
         return patch
+
+    @staticmethod
+    def _is_valid_ai_patch(candidate: str, original: str) -> bool:
+        if not candidate or len(candidate) < 6:
+            return False
+        # 拒绝 generate_fix 的失败标记串
+        if candidate.lstrip().startswith("// 修复生成失败"):
+            return False
+        # AI 返回原样未改动，无修复价值
+        if candidate.strip() == original.strip():
+            return False
+        # 纯解释性输出 (无代码行) 风险高，拒绝：需含换行或任一代码结构字符。
+        stripped = candidate.strip()
+        return "\n" in stripped or any(c in stripped for c in ("{", "(", "=", ";", "<"))

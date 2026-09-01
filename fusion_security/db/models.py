@@ -124,6 +124,7 @@ class PatchORM(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     strategy: Mapped[str] = mapped_column(String(20), default="template")
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     vulnerability: Mapped[VulnerabilityORM] = relationship(back_populates="patches")

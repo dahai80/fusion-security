@@ -64,6 +64,9 @@ class PipelineConfig:
     enable_taint: bool = True
     enable_adversarial: bool = True
     enable_sca: bool = True
+    # OSV.dev 是云端依赖漏洞库，默认关闭以保持 100% 离线承诺。
+    # 开启后会向 https://osv.dev 外发依赖清单，需用户显式同意。
+    enable_osv: bool = False
     enable_patch: bool = True
     batch_size: int = 50
     max_files: int = 10000
@@ -91,7 +94,7 @@ class ScanPipeline:
             AdversarialVerifier(self.ai_analyzer) if self.config.enable_adversarial and self.ai_analyzer else None
         )
         self.fix_generator = FixGenerator()
-        self.sca_scanner = SCAScanner() if self.config.enable_sca else None
+        self.sca_scanner = SCAScanner(use_osv=self.config.enable_osv) if self.config.enable_sca else None
         self.checkpoint_mgr = CheckpointManager()
         self.circuit_breaker = CircuitBreaker()
         self.retry_policy = RetryPolicy()
@@ -116,9 +119,16 @@ class ScanPipeline:
                 ctx.language_stats = cp.stage_data.get("language_stats", {})
                 ctx.dependency_files = [Path(p) for p in cp.stage_data.get("dependency_files", [])]
                 ctx.files = [Path(p) for p in cp.stage_data.get("files", [])]
-                ctx.vulnerabilities = []
-                ctx.findings = []
-                ctx.patches = []
+                ctx.vulnerabilities = [Vulnerability.from_dict(v) for v in cp.stage_data.get("vulnerabilities", [])]
+                ctx.findings = [Finding.from_dict(f) for f in cp.stage_data.get("findings", [])]
+                ctx.patches = [Patch.from_dict(p) for p in cp.stage_data.get("patches", [])]
+                logger.info(
+                    f"[Pipeline] 恢复状态 vulns={len(ctx.vulnerabilities)} "
+                    f"findings={len(ctx.findings)} patches={len(ctx.patches)}"
+                )
+        else:
+            self.circuit_breaker.reset()
+            logger.debug("[Pipeline] 熔断器已重置 (新扫描)")
 
         logger.info(f"[Pipeline] 开始 scan_id={ctx.scan_id} resume_from={resume_from}")
 
@@ -159,6 +169,9 @@ class ScanPipeline:
                             "files": [str(p) for p in ctx.files],
                             "language_stats": ctx.language_stats,
                             "dependency_files": [str(p) for p in ctx.dependency_files],
+                            "vulnerabilities": [v.to_dict() for v in ctx.vulnerabilities],
+                            "findings": [f.to_dict() for f in ctx.findings],
+                            "patches": [p.to_dict() for p in ctx.patches],
                             "stage_results": {k: self._sanitize_stage_result(v) for k, v in ctx.stage_results.items()},
                         },
                         errors=ctx.errors,

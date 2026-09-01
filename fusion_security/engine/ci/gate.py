@@ -66,7 +66,7 @@ class SecurityGate:
     def evaluate(self, vulnerabilities: list[Vulnerability]) -> GateResult:
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for v in vulnerabilities:
-            sev = v.severity if v.severity in counts else "low"
+            sev = v.severity if v.severity in counts else "critical"
             counts[sev] += 1
 
         result = GateResult(
@@ -93,23 +93,31 @@ class SecurityGate:
 
     def evaluate_from_pipeline(self, stage_results: dict[str, dict[str, Any]]) -> GateResult:
         triage = stage_results.get("triage", {})
-        vulns = []
-        for sev in ("critical", "high", "medium", "low"):
-            count = triage.get(sev, 0)
-            for _ in range(count):
-                from ...models.vulnerability import Vulnerability as V
+        counts = {
+            "critical": int(triage.get("critical", 0)),
+            "high": int(triage.get("high", 0)),
+            "medium": int(triage.get("medium", 0)),
+            "low": int(triage.get("low", 0)),
+        }
+        total = int(triage.get("total", sum(counts.values())))
 
-                vulns.append(
-                    V(
-                        id="gate-v",
-                        title=f"gate-{sev}",
-                        description="",
-                        severity=sev,
-                        confidence=100,
-                        file_path="",
-                        line_number=0,
-                        code_snippet="",
-                        rule_id="GATE",
-                    )
-                )
-        return self.evaluate(vulns)
+        result = GateResult(
+            policy=self.policy,
+            total_vulns=total,
+            critical_count=counts["critical"],
+            high_count=counts["high"],
+            medium_count=counts["medium"],
+            low_count=counts["low"],
+        )
+
+        for sev, count in counts.items():
+            threshold = self.thresholds.get(sev, 999)
+            if count > threshold:
+                result.passed = False
+                result.blocked_by.append(f"{sev}:{count}>{threshold}")
+
+        if result.passed:
+            logger.info(f"[Gate] ✅ 通过 (pipeline) total={total}")
+        else:
+            logger.warning(f"[Gate] ❌ 阻断 (pipeline) blocked_by={result.blocked_by}")
+        return result

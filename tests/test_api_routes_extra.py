@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fusion_security.api.app import create_app
+from fusion_security.api.auth import get_current_key
 from fusion_security.db import get_session
 
 
@@ -104,7 +105,9 @@ def _make_patch_orm(**overrides):
 
 @pytest.fixture
 def client():
-    return TestClient(create_app())
+    app = create_app()
+    app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -131,6 +134,7 @@ def mock_db():
 def override_client(mock_db):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: mock_db
+    app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
     tc = TestClient(app)
     tc._app = app
     return tc
@@ -1205,9 +1209,9 @@ class TestAuthDependencies:
         mgr = AuthManager()
         raw = mgr.create_api_key("viewer-only", ["viewer"])
         key = mgr.validate_key(raw)
-        checker = asyncio.run(require_permission("scan:run"))
+        checker = require_permission("scan:run")
         with pytest.raises(Exception) as exc_info:
-            asyncio.run(checker(key))
+            asyncio.run(checker(key=key))
         assert exc_info.value.status_code == 403
 
     def test_require_permission_sufficient(self):
@@ -1218,8 +1222,8 @@ class TestAuthDependencies:
         mgr = AuthManager()
         raw = mgr.create_api_key("admin-user", ["admin"])
         key = mgr.validate_key(raw)
-        checker = asyncio.run(require_permission("scan:run"))
-        result = asyncio.run(checker(key))
+        checker = require_permission("scan:run")
+        result = asyncio.run(checker(key=key))
         assert result.name == "admin-user"
 
     def test_get_current_key_missing_header_returns_401(self):

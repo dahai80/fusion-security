@@ -10,12 +10,22 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_TENANT_SAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_tenant_slug(tenant_id: str) -> str:
+    # tenant_id 进入审计文件名，必须做路径穿越防护。
+    # 仅保留字母数字及 ._-，其余替换为 _；空值回落 system。
+    slug = _TENANT_SAFE.sub("_", tenant_id or "").strip("._-")
+    return slug or "system"
 
 
 @dataclass
@@ -93,7 +103,7 @@ class AuditLogger:
     def _append_to_file(self, entry: AuditEntry) -> None:
         try:
             Path(self.log_dir).mkdir(parents=True, exist_ok=True)
-            log_file = Path(self.log_dir) / f"audit_{self.tenant_id or 'system'}.jsonl"
+            log_file = Path(self.log_dir) / f"audit_{_safe_tenant_slug(self.tenant_id)}.jsonl"
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry.to_dict(), ensure_ascii=False, default=str) + "\n")
         except Exception as e:

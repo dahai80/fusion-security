@@ -14,6 +14,8 @@ _MLX_BASE_URL = os.environ.get("MLX_BASE_URL", "http://localhost:11432/v1")
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+public_router = APIRouter()
+
 
 @router.get("/info")
 def system_info():
@@ -26,13 +28,13 @@ def system_info():
     }
 
 
-@router.get("/health")
+@public_router.get("/health")
 def health_check():
     return {"status": "ok"}
 
 
-@router.get("/health/detailed")
-def health_detailed():
+@public_router.get("/health/detailed")
+def health_detailed_public():
     import httpx
 
     db_ok = True

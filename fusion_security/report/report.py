@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
 from jinja2 import BaseLoader, Environment
 
+from ..__init__ import __version__
 from ..engine.scanner import ScanResult
 
 logger = logging.getLogger(__name__)
+
+
+def _fence_for(code: str) -> str:
+    # 扫描的源码可能包含 ``` 序列，会闭合外层 markdown 围栏造成注入。
+    # 生成比内容中最长连续反引号多一个反引号的围栏，确保不会提前闭合。
+    runs = re.findall(r"`+", code or "")
+    longest = max((len(r) for r in runs), default=0)
+    return "`" * max(3, longest + 1)
+
 
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
@@ -70,7 +81,7 @@ footer{text-align:center;color:#999;font-size:12px;margin-top:40px;padding:20px 
 {% endfor %}
 
 <footer>
-    <p>由 Fusion-Security v0.1.0 于 {{ scan_time }} 自动生成 | 100% 本地离线，代码不出境</p>
+    <p>由 Fusion-Security v{{ version }} 于 {{ scan_time }} 自动生成 | 100% 本地离线，代码不出境</p>
     <p>⚠️ 修复建议由 AI 生成，请人工审核后再应用</p>
 </footer>
 </body>
@@ -111,13 +122,14 @@ class ReportGenerator:
                 if vuln.fix_suggestion:
                     lines.append(f"- **修复建议**: {vuln.fix_suggestion}")
                 lines.append("")
-                lines.append("```")
+                fence = _fence_for(vuln.code_snippet[:500])
+                lines.append(f"{fence}")
                 lines.append(vuln.code_snippet[:500])
-                lines.append("```")
+                lines.append(f"{fence}")
                 lines.append("")
 
         lines.append("---")
-        lines.append(f"*由 Fusion-Security v0.1.0 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
+        lines.append(f"*由 Fusion-Security v{__version__} 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
         lines.append("*100% 本地离线，代码不出境*")
         lines.append("*⚠️ 修复建议由 AI 生成，请人工审核后再应用*")
         return "\n".join(lines)
@@ -150,6 +162,7 @@ class ReportGenerator:
             duration_ms=f"{result.duration_ms:.0f}",
             summary=result.summary,
             vulnerabilities=vuln_data,
+            version=__version__,
         )
 
     def save_report(self, result: ScanResult, output_dir: str, formats: list[str] = None) -> dict[str, str]:

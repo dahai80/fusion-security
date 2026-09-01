@@ -25,11 +25,13 @@ class PatchResponse(BaseModel):
     status: str
     strategy: str
     verified: bool
+    needs_review: bool = False
 
 
 class PatchUpdate(BaseModel):
     status: str | None = None
     verified: bool | None = None
+    needs_review: bool | None = None
 
 
 def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
@@ -44,6 +46,7 @@ def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
         status=o.status,
         strategy=o.strategy,
         verified=o.verified,
+        needs_review=o.needs_review,
     )
 
 
@@ -81,6 +84,8 @@ def update_patch(patch_id: str, body: PatchUpdate, db: Session = Depends(get_ses
         o.status = body.status
     if body.verified is not None:
         o.verified = body.verified
+    if body.needs_review is not None:
+        o.needs_review = body.needs_review
     db.commit()
     db.refresh(o)
     return _patch_orm_to_response(o)

@@ -251,19 +251,31 @@ class TestFastAPIApp:
         assert resp.json()["status"] == "ok"
 
     def test_info_endpoint(self):
+        from unittest.mock import MagicMock
+
         from fastapi.testclient import TestClient
 
+        from fusion_security.api.auth import get_current_key
+
+        app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
         client = TestClient(app)
         resp = client.get("/api/v1/system/info")
         assert resp.status_code == 200
         data = resp.json()
         assert "version" in data
+        app.dependency_overrides.pop(get_current_key, None)
 
     def test_rules_endpoint(self):
+        from unittest.mock import MagicMock
+
         from fastapi.testclient import TestClient
 
+        from fusion_security.api.auth import get_current_key
+
+        app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
         client = TestClient(app)
         resp = client.get("/api/v1/system/rules")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] > 0
+        app.dependency_overrides.pop(get_current_key, None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -58,7 +59,8 @@ class TenantManager:
     def authenticate(self, raw_key: str) -> Tenant | None:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         for t in self.tenants.values():
-            if t.api_key_hash == key_hash and t.is_active:
+            # 常量时间比较避免侧信道泄露 hash 比较信息；isActive 先校验短路非密钥属性不影响安全。
+            if t.is_active and hmac.compare_digest(t.api_key_hash, key_hash):
                 return t
         return None
 
