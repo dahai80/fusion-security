@@ -10,6 +10,9 @@ services:
       - scan-data:/app/data
       - ${SCAN_PATH:-/tmp}:/scan:ro
     environment:
+      # 单机默认 SQLite(零配置离线);多节点共享库取消注释下一行指向 postgres 服务。
+      # 安装 postgres extra: pip install -e ".[postgres]"
+      # - FUSION_SECURITY_DB_URL=postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion
       - FUSION_DB_PATH=/app/data/fusion.db
       - FUSION_AI_URL=http://fusion-mlx:11432/v1
       - FUSION_AI_MODEL=qwen3.5-9b

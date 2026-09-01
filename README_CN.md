@@ -98,8 +98,8 @@ cd frontend && npm install && npm run dev
 │  飞书通知 │ 钉钉通知 │ GitHub Actions │ GitLab CI                 │
 ├──────────────────────────────────────────────────────────────────┤
 │                          基础层                                   │
-│  SQLite+SQLAlchemy │ 本地AI (fusion-mlx) │ 多租户 │ 审计日志     │
-│  Kubernetes (Helm) │ PVC 持久化 │ HPA 弹性伸缩                   │
+│  可插拔 DB（默认 SQLite / 多节点共享 PostgreSQL）│ 本地AI          │
+│  多租户 │ 审计日志 │ Kubernetes (Helm) │ PVC │ HPA 弹性伸缩      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -402,6 +402,46 @@ helm install fusion-security deploy/helm/fusion-security \
 | `fusionMLX.image` | `fusion-mlx` | MLX 镜像 |
 | `autoscaling.enabled` | `false` | 启用 HPA |
 | `autoscaling.maxReplicas` | `5` | 最大副本数 |
+
+---
+
+## 🗄️ 数据库（默认 SQLite / 多节点共享 PostgreSQL）
+
+存储层基于 SQLAlchemy，可插拔。**单机部署仍用 SQLite（零配置、100% 离线）**，无需额外设置。**多节点集群**让所有节点指向同一个共享 PostgreSQL（或任意 SQLAlchemy 支持的库），扫描结果、项目、漏洞在节点间一致，不再每节点数据分叉。
+
+### 配置
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `FUSION_SECURITY_DB_URL` | _空_ | 共享库的完整 SQLAlchemy URL。设置后覆盖 SQLite 默认。示例：`postgresql+asyncpg://user:pass@host:5432/fusion` |
+| `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite 文件路径（单机）。设置 `FUSION_SECURITY_DB_URL` 后忽略。 |
+
+解析优先级：显式 `db_url` 参数 > 显式 `db_path` 参数 > `FUSION_SECURITY_DB_URL` > `FUSION_DB_PATH` > 默认 SQLite 文件。
+
+### 单机（默认，无需操作）
+
+```bash
+fusion-security scan ~/my-project   # 写入 ~/.fusion-security/fusion_security.db
+```
+
+### 多节点集群（共享 PostgreSQL）
+
+```bash
+# 1. 安装可选数据库驱动
+pip install -e ".[postgres]"     # asyncpg（异步）+ psycopg2-binary（同步）
+
+# 2. 每个节点指向同一个共享库
+export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion"
+fusion-security serve --port 11454
+```
+
+Docker Compose 多节点：`docker-compose.postgres.yml` override 会拉起 `postgres:16` 服务并把 `FUSION_SECURITY_DB_URL` 指向它。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+```
+
+> SQLite 专属优化（WAL 日志模式、`StaticPool`、`PRAGMA foreign_keys`、`PRAGMA table_info` 迁移）**仅在解析出的 URL 为 SQLite 时**自动启用。在 PostgreSQL/MySQL 上引擎使用标准连接池与可移植的 `information_schema` 迁移，不会向共享库发送任何 SQLite 专有 SQL。
 
 ---
 

@@ -1,0 +1,31 @@
+# 多节点分布式部署 override:启用共享 PostgreSQL 后端。
+# 用法: docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+# 依赖: pip install -e ".[postgres]" (asyncpg + psycopg2-binary)
+version: "3.8"
+
+services:
+  fusion-security:
+    environment:
+      - FUSION_SECURITY_DB_URL=postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion
+    depends_on:
+      fusion-postgres:
+        condition: service_healthy
+
+  fusion-postgres:
+    image: postgres:16-alpine
+    container_name: fusion-postgres
+    environment:
+      POSTGRES_USER: fusion
+      POSTGRES_PASSWORD: fusion
+      POSTGRES_DB: fusion
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fusion -d fusion"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pg-data:

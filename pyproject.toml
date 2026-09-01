@@ -1,6 +1,6 @@
 [project]
 name = "fusion-security"
-version = "0.1.7"
+version = "0.1.8"
 description = "Fusion-Security — Local AI-powered code security audit tool. macOS Apple Silicon native, 100% offline, powered by fusion-mlx."
 requires-python = ">=3.12"
 dependencies = [
@@ -34,6 +34,11 @@ test = [
 ]
 lint = [
     "ruff>=0.5.0",
+]
+# 多节点共享库后端:单机默认仍走 SQLite(零配置离线),配 FUSION_SECURITY_DB_URL 指向共享 PG 才需要。
+postgres = [
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.0",
 ]
 
 [project.scripts]

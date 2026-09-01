@@ -146,8 +146,8 @@ cd frontend && npm install && npm run dev
 │  Feishu Notifier │ DingTalk Notifier │ GitHub Actions │ GitLab CI│
 ├──────────────────────────────────────────────────────────────────┤
 │                        Infra Layer                                │
-│  SQLite+SQLAlchemy │ Local AI (fusion-mlx) │ Multi-tenant │ Audit│
-│  Kubernetes (Helm) │ PVC Persistence │ HPA Autoscaling           │
+│  Pluggable DB (SQLite default / PostgreSQL shared) │ Local AI     │
+│  Multi-tenant │ Audit │ Kubernetes (Helm) │ PVC │ HPA Autoscaling │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -466,6 +466,46 @@ helm install fusion-security deploy/helm/fusion-security \
 | `fusionMLX.image` | `fusion-mlx` | MLX image |
 | `autoscaling.enabled` | `false` | Enable HPA |
 | `autoscaling.maxReplicas` | `5` | Max replicas |
+
+---
+
+## 🗄️ Database (SQLite default / PostgreSQL shared)
+
+The storage layer is pluggable via SQLAlchemy. **Single-node deployments stay on SQLite (zero-config, 100% offline)** — no extra setup. **Multi-node clusters** point all nodes at one shared PostgreSQL (or any SQLAlchemy-supported DB) so scan results, projects, and findings are consistent across nodes instead of forking per-node.
+
+### Configuration
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `FUSION_SECURITY_DB_URL` | _empty_ | Full SQLAlchemy URL for a shared DB. When set, overrides the SQLite default. Example: `postgresql+asyncpg://user:pass@host:5432/fusion` |
+| `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite file path (single-node). Ignored if `FUSION_SECURITY_DB_URL` is set. |
+
+Resolution priority: explicit `db_url` arg > explicit `db_path` arg > `FUSION_SECURITY_DB_URL` > `FUSION_DB_PATH` > default SQLite file.
+
+### Single-node (default — nothing to do)
+
+```bash
+fusion-security scan ~/my-project   # writes to ~/.fusion-security/fusion_security.db
+```
+
+### Multi-node cluster (shared PostgreSQL)
+
+```bash
+# 1. Install the optional DB drivers
+pip install -e ".[postgres]"     # asyncpg (async) + psycopg2-binary (sync)
+
+# 2. Point every node at the same shared DB
+export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:fusion@fusion-postgres:5432/fusion"
+fusion-security serve --port 11454
+```
+
+Docker Compose multi-node: the `docker-compose.postgres.yml` override brings up a `postgres:16` service and wires `FUSION_SECURITY_DB_URL` to it.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+```
+
+> SQLite-only optimizations (WAL journal mode, `StaticPool`, `PRAGMA foreign_keys`, `PRAGMA table_info` migrations) are auto-applied **only** when the resolved URL is SQLite. On PostgreSQL/MySQL the engine uses standard pooling and portable `information_schema` migrations, so no SQLite-specific SQL is ever sent to the shared DB.
 
 ---
 
