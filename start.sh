@@ -49,7 +49,7 @@ do_start() {
         --host "$HOST" --port "$PORT" \
         >> "$STDOUT_LOG" 2>> "$STDERR_LOG" &
     local pid=$!
-    echo "$pid" > "$PID_FILE"
+    echo "$pid" > "$PID_FILE" && chmod 600 "$PID_FILE"
     sleep 2
     if is_running; then
         log_info "fusion-security started (pid $pid, port $PORT)"

@@ -6,15 +6,22 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
+# builder 需要 git:fusion-core 从 git+https 安装,pip 依赖 git clone。
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # fusion-core 是 in-tree 上游依赖,CI/容器内从 git 安装(见 CLAUDE.md)。
-ARG FUSION_CORE_REF=main
+# 用 builder venv 而非 --prefix:fusion-security 依赖 fusion-core,--prefix 隔离
+# 会让后续 pip 解析看不到刚装的 fusion-core(报 No matching distribution)。
+ARG FUSION_CORE_REF=master
 COPY pyproject.toml README.md ./
 COPY fusion_security/ fusion_security/
 
-RUN pip install --no-cache-dir --prefix=/install \
-    git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF} \
-    . \
-    && pip install --no-cache-dir --prefix=/install ".[postgres]"
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir \
+        git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF} \
+        ".[postgres]"
 
 
 FROM python:3.12-slim AS runtime
@@ -28,7 +35,7 @@ RUN useradd -r -u 1000 -d /app -s /sbin/nologin fusion
 
 WORKDIR /app
 
-COPY --from=builder /install /usr/local
+COPY --from=builder /opt/venv /opt/venv
 COPY fusion_security/ fusion_security/
 COPY pyproject.toml README.md ./
 
@@ -39,7 +46,8 @@ USER fusion
 
 ENV FUSION_DB_PATH=/app/data/fusion.db \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/opt/venv/bin:$PATH
 
 EXPOSE 11454
 

@@ -15,6 +15,14 @@ spec:
       labels:
         {{- include "fusion-mlx.selectorLabels" . | nindent 8 }}
     spec:
+      # P0-7: 补齐 pod 级 securityContext,对齐 deployment.yaml(否则以 root 运行)。
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
       containers:
         - name: fusion-mlx
           image: "{{ .Values.fusionMLX.image.repository }}:{{ .Values.fusionMLX.image.tag }}"

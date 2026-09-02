@@ -1096,13 +1096,15 @@ class TestWebhookExtra:
                 "fusion_security.engine.ci.webhook.pin_url",
                 return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
-            patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
+            patch("fusion_security.engine.ci.webhook.build_opener") as mock_build,
         ):
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
             mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
+            mock_opener = MagicMock()
+            mock_opener.open.return_value = mock_resp
+            mock_build.return_value = mock_opener
             result = notifier._send(config, "test", {})
         assert result is True
 
@@ -1116,13 +1118,15 @@ class TestWebhookExtra:
                 "fusion_security.engine.ci.webhook.pin_url",
                 return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
-            patch("fusion_security.engine.ci.webhook.urlopen") as mock_urlopen,
+            patch("fusion_security.engine.ci.webhook.build_opener") as mock_build,
         ):
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
             mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
+            mock_opener = MagicMock()
+            mock_opener.open.return_value = mock_resp
+            mock_build.return_value = mock_opener
             result = notifier._send(config, "test", {})
         assert result is True
 
@@ -1138,8 +1142,11 @@ class TestWebhookExtra:
                 "fusion_security.engine.ci.webhook.pin_url",
                 return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
-            patch("fusion_security.engine.ci.webhook.urlopen", side_effect=URLError("fail")),
+            patch("fusion_security.engine.ci.webhook.build_opener") as mock_build,
         ):
+            mock_opener = MagicMock()
+            mock_opener.open.side_effect = URLError("fail")
+            mock_build.return_value = mock_opener
             result = notifier._send(config, "test", {})
         assert result is False
 
@@ -1153,8 +1160,11 @@ class TestWebhookExtra:
                 "fusion_security.engine.ci.webhook.pin_url",
                 return_value=(URLGuardResult(ok=True, safe_url=config.url), None),
             ),
-            patch("fusion_security.engine.ci.webhook.urlopen", side_effect=Exception("boom")),
+            patch("fusion_security.engine.ci.webhook.build_opener") as mock_build,
         ):
+            mock_opener = MagicMock()
+            mock_opener.open.side_effect = Exception("boom")
+            mock_build.return_value = mock_opener
             result = notifier._send(config, "test", {})
         assert result is False
 

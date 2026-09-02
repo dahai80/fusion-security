@@ -20,7 +20,7 @@ def _now() -> datetime:
 class ProjectORM(Base):
     __tablename__ = "projects"
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), default="")
     tech_stack: Mapped[str] = mapped_column(String(200), default="")
@@ -42,10 +42,10 @@ class ScanORM(Base):
         Index("ix_scans_tenant_id", "tenant_id"),
     )
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     # A-P0-2/FK: path-only 扫描无关联 project,project_id 可空且无 FK。
     # 此前 FK("projects.id") + default="" 在 foreign_keys=ON 时让无 project 的扫描写入失败(整个 POST /scans 不可用)。
-    project_id: Mapped[str | None] = mapped_column(String(16), ForeignKey("projects.id"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("projects.id"), nullable=True, default=None)
     scan_type: Mapped[str] = mapped_column(String(20), default="full")
     status: Mapped[str] = mapped_column(String(20), default="pending")
     severity_threshold: Mapped[str] = mapped_column(String(10), default="low")
@@ -101,7 +101,7 @@ class VulnerabilityORM(Base):
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(20), default="open")
     data_flow_path: Mapped[str] = mapped_column(Text, default="")
-    scan_id: Mapped[str] = mapped_column(String(16), default="")
+    scan_id: Mapped[str] = mapped_column(String(32), default="")
     tenant_id: Mapped[str] = mapped_column(String(16), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
@@ -114,9 +114,9 @@ class FindingORM(Base):
     __tablename__ = "findings"
     __table_args__ = (Index("ix_findings_vuln_id", "vuln_id"), Index("ix_findings_scan_id", "scan_id"))
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     vuln_id: Mapped[str] = mapped_column(String(32), ForeignKey("vulnerabilities.id"), default="")
-    scan_id: Mapped[str] = mapped_column(String(16), ForeignKey("scans.id"), default="")
+    scan_id: Mapped[str] = mapped_column(String(32), ForeignKey("scans.id"), default="")
     file_path: Mapped[str] = mapped_column(String(500), default="")
     line_number: Mapped[int] = mapped_column(Integer, default=0)
     line_end: Mapped[int] = mapped_column(Integer, default=0)
@@ -134,9 +134,9 @@ class PatchORM(Base):
     __tablename__ = "patches"
     __table_args__ = (Index("ix_patches_vuln_id", "vuln_id"), Index("ix_patches_scan_id", "scan_id"))
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     vuln_id: Mapped[str] = mapped_column(String(32), ForeignKey("vulnerabilities.id"), default="")
-    scan_id: Mapped[str] = mapped_column(String(16), ForeignKey("scans.id"), default="")
+    scan_id: Mapped[str] = mapped_column(String(32), ForeignKey("scans.id"), default="")
     diff_content: Mapped[str] = mapped_column(Text, default="")
     original_code: Mapped[str] = mapped_column(Text, default="")
     patched_code: Mapped[str] = mapped_column(Text, default="")
@@ -159,8 +159,8 @@ class ScanCacheORM(Base):
         Index("ix_cache_project_file", "project_id", "file_path"),
     )
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
-    project_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(32), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(16), nullable=False)
     results_json: Mapped[str] = mapped_column(Text, default="")
@@ -192,7 +192,7 @@ class ApiKeyORM(Base):
     __tablename__ = "api_keys"
     __table_args__ = (UniqueConstraint("key_hash", name="uq_api_key_hash"),)
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(100), default="")
     role: Mapped[str] = mapped_column(String(20), default="viewer")
@@ -204,14 +204,15 @@ class ApiKeyORM(Base):
 
 
 class WebhookORM(Base):
-    # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢);secret 只存哈希。
+    # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢)。
+    # P0-5: secret_hash 现存 Fernet 可逆密文(签名需回放),不再是单向 sha256。
     __tablename__ = "webhooks"
     __table_args__ = (Index("ix_webhooks_enabled", "enabled"),)
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     url: Mapped[str] = mapped_column(String(500), default="")
     events_json: Mapped[str] = mapped_column(Text, default="[]")
-    secret_hash: Mapped[str] = mapped_column(String(64), default="")
+    secret_hash: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
@@ -223,11 +224,11 @@ class ScheduledScanORM(Base):
     __tablename__ = "scheduled_scans"
     __table_args__ = (Index("ix_schedules_enabled", "enabled"),)
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), default="")
     # project_id 可空且无 FK:Feature 4 以 project_path 为主,path-only 计划无关联 project。
     # 此前 FK("projects.id") 会导致无 project 的计划写入失败(整个 Feature 4 不可用)。
-    project_id: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     project_path: Mapped[str] = mapped_column(String(500), default="")
     cron: Mapped[str] = mapped_column(String(100), default="")
     frequency: Mapped[str] = mapped_column(String(20), default="daily")
@@ -245,9 +246,9 @@ class FeedbackORM(Base):
     __tablename__ = "feedbacks"
     __table_args__ = (Index("ix_feedback_vuln_id", "vuln_id"), Index("ix_feedback_scan_id", "scan_id"))
 
-    id: Mapped[str] = mapped_column(String(16), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     vuln_id: Mapped[str] = mapped_column(String(32), default="")
-    scan_id: Mapped[str] = mapped_column(String(16), default="")
+    scan_id: Mapped[str] = mapped_column(String(32), default="")
     flag: Mapped[str] = mapped_column(String(20), default="confirmed")
     note: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(String(64), default="")

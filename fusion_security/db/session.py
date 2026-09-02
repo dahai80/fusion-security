@@ -92,13 +92,26 @@ def init_db(db_path: str | None = None, echo: bool = False, db_url: str | None =
         if _is_sqlite(url):
             # SQLite 单文件:StaticPool 共享单连接(进程内并发安全靠 GIL+check_same_thread=False),
             # WAL 提升并发读,parent 目录需预创建。多节点共享库不走这里。
+            # P0-4: 库文件含 key_hash/源码片段,落盘必须 0600。umask 在建引擎前生效,
+            # create_all 创建文件及 -wal/-shm 均受约束;已存在文件显式 chmod 收紧。
             path = Path(url.replace("sqlite:///", "").replace("sqlite+aiosqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
+            _old_umask = os.umask(0o077)
+            try:
+                if path.exists():
+                    os.chmod(path, 0o600)
+            finally:
+                os.umask(_old_umask)
             kwargs["connect_args"] = {"check_same_thread": False}
             kwargs["poolclass"] = StaticPool
 
-        _engine = create_engine(url, **kwargs)
+        _old_umask = os.umask(0o077) if _is_sqlite(url) else None
+        try:
+            _engine = create_engine(url, **kwargs)
+        finally:
+            if _old_umask is not None:
+                os.umask(_old_umask)
 
         if _is_sqlite(url):
 
@@ -166,6 +179,50 @@ def _migrate_schema_portable(engine) -> None:
     _ensure_column_portable(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
     _ensure_column_portable(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
     _ensure_column_portable(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
+    # ID 列拓宽:String(16) → String(32)。Scan.id="scan_"+hex12(17),Project.id="proj_"+hex12(17),
+    # SQLite 静默截断,PG 严格校验报 StringDataRightTruncation(POST /scans 500)。旧库需 ALTER 拓宽。
+    _widen_column_portable(engine, "scans", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scans", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "vulnerabilities", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "findings", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "findings", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "patches", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "patches", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scan_cache", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scan_cache", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scheduled_scans", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "scheduled_scans", "project_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "feedbacks", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "feedbacks", "scan_id", "VARCHAR(32)")
+    _widen_column_portable(engine, "api_keys", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "webhooks", "id", "VARCHAR(32)")
+    _widen_column_portable(engine, "projects", "id", "VARCHAR(32)")
+
+
+def _widen_column_portable(engine, table: str, column: str, new_type: str) -> None:
+    from sqlalchemy import inspect
+
+    with engine.connect() as conn:
+        insp = inspect(conn)
+        cols = {c["name"]: c for c in insp.get_columns(table)}
+        if column not in cols:
+            return
+        cur_type = str(cols[column].get("type", "")).upper()
+        target = new_type.upper()
+        cur_len = _varchar_len(cur_type)
+        tgt_len = _varchar_len(target)
+        if cur_len is None or tgt_len is None or cur_len >= tgt_len:
+            return
+        logger.info(f"[Migration] 拓宽列 {table}.{column}: {cur_type} -> {new_type}")
+        conn.exec_driver_sql(f'ALTER TABLE "{table}" ALTER COLUMN {column} TYPE {new_type}')
+        conn.commit()
+
+
+def _varchar_len(type_str: str) -> int | None:
+    import re
+
+    m = re.search(r"VARCHAR\((\d+)\)", type_str)
+    return int(m.group(1)) if m else None
 
 
 def _ensure_column_portable(engine, table: str, column: str, definition: str) -> None:
@@ -191,8 +248,20 @@ def init_async_db(db_path: str | None = None, echo: bool = False, db_url: str | 
             path = Path(url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
+            # P0-4: 异步库同样收紧文件权限到 0600。
+            _old_umask = os.umask(0o077)
+            try:
+                if path.exists():
+                    os.chmod(path, 0o600)
+            finally:
+                os.umask(_old_umask)
 
-        _async_engine = create_async_engine(url, **kwargs)
+        _old_umask = os.umask(0o077) if _is_sqlite(url) else None
+        try:
+            _async_engine = create_async_engine(url, **kwargs)
+        finally:
+            if _old_umask is not None:
+                os.umask(_old_umask)
         _AsyncSessionLocal = async_sessionmaker(_async_engine, expire_on_commit=False)
 
         from . import models  # noqa: F401

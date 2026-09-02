@@ -15,6 +15,17 @@ from fusion_security.engine.scanner import ScanTarget
 from fusion_security.models.vulnerability import Vulnerability
 
 
+@pytest.fixture(autouse=True)
+def _stub_url_guard():
+    # JiraClient.__init__ / integrations._validate_outbound 调用 SSRF 校验,
+    # 沙箱无 DNS,统一打桩放行,避免单测依赖外网。
+    from fusion_security.engine.ci import _url_guard
+
+    ok = _url_guard.URLGuardResult(ok=True, safe_url="https://jira.example.com", reason="ok", pinned_ips=["1.2.3.4"])
+    with patch.object(_url_guard, "validate_outbound_url", return_value=ok):
+        yield
+
+
 class TestHI01UUIDVulnID:
     def test_ast_vuln_id_is_uuid_format(self):
         engine = RuleEngine()
@@ -449,13 +460,15 @@ class TestNewAPIEndpoints:
     @pytest.fixture(autouse=True)
     def setup(self):
         from fusion_security.api.app import create_app
-        from fusion_security.api.auth import get_current_key
+        from fusion_security.api.auth import APIKey, get_current_key
         from fusion_security.db import get_session
 
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
-        self.app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+        self.app.dependency_overrides[get_current_key] = lambda: APIKey(
+            key_hash="t", name="t", roles=["admin"], tenant_id=""
+        )
         self.client = TestClient(self.app)
 
     def test_put_project_update(self):
@@ -566,13 +579,15 @@ class TestJiraAPIEndpoints:
     @pytest.fixture(autouse=True)
     def setup(self):
         from fusion_security.api.app import create_app
-        from fusion_security.api.auth import get_current_key
+        from fusion_security.api.auth import APIKey, get_current_key
         from fusion_security.db import get_session
 
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
-        self.app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+        self.app.dependency_overrides[get_current_key] = lambda: APIKey(
+            key_hash="t", name="t", roles=["admin"], tenant_id=""
+        )
         self.client = TestClient(self.app)
 
     def test_jira_config(self):

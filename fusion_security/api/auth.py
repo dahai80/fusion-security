@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
 import os
 import secrets
@@ -132,8 +131,8 @@ class AuthManager:
             row = db.query(ApiKeyORM).filter(ApiKeyORM.key_hash == key_hash, ApiKeyORM.enabled.is_(True)).first()
             if not row:
                 return None
-            if not hmac.compare_digest(row.key_hash, key_hash):
-                return None
+            # P2-1: compare_digest 在 DB 等值过滤已命中后再比 hash 是死代码(过滤即相等)。
+            # 跨 DB 等值过滤无法做常量时间比较,这里靠 key_hash 唯一索引 + enabled 过滤保证安全性。
             expires_ts = row.expires_at.timestamp() if row.expires_at else 0.0
             # row.expires_at 是 naive UTC(utcnow 写入),用 utcnow 比较避免本地时区偏移导致的误判过期。
             now_ts = datetime.utcnow().timestamp()

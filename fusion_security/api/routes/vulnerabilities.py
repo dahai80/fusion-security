@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ...db import get_session
 from ...db.models import VulnerabilityORM
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,6 +58,21 @@ def _orm_to_response(o: VulnerabilityORM) -> VulnResponse:
     )
 
 
+def _tenant_scope(query, api_key: APIKey):
+    # P1-1 IDOR: 列表查询按调用方 tenant_id 过滤,跨租户不可见。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id:
+        return query.filter(VulnerabilityORM.tenant_id == tenant_id)
+    return query
+
+
+def _check_tenant(o: VulnerabilityORM, api_key: APIKey) -> None:
+    # P1-1 IDOR: 单条查询校验租户归属,跨租户访问返回 404(不泄露存在性)。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (o.tenant_id or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
+
 @router.get("", response_model=list[VulnResponse])
 def list_vulnerabilities(
     severity: str | None = None,
@@ -66,8 +82,9 @@ def list_vulnerabilities(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:read")),
 ):
-    q = db.query(VulnerabilityORM)
+    q = _tenant_scope(db.query(VulnerabilityORM), api_key)
     if severity:
         q = q.filter(VulnerabilityORM.severity == severity)
     if status:
@@ -81,30 +98,40 @@ def list_vulnerabilities(
 
 
 @router.get("/stats/summary")
-def vulnerability_stats(db: Session = Depends(get_session)):
+def vulnerability_stats(db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:read"))):
     from sqlalchemy import func
 
-    total = db.query(func.count(VulnerabilityORM.id)).scalar()
+    base = _tenant_scope(db.query(VulnerabilityORM), api_key)
+    total = base.count()
     by_severity = {}
     for row in (
-        db.query(VulnerabilityORM.severity, func.count(VulnerabilityORM.id)).group_by(VulnerabilityORM.severity).all()
+        _tenant_scope(db.query(VulnerabilityORM.severity, func.count(VulnerabilityORM.id)), api_key)
+        .group_by(VulnerabilityORM.severity)
+        .all()
     ):
         by_severity[row[0]] = row[1]
     by_status = {}
     for row in (
-        db.query(VulnerabilityORM.status, func.count(VulnerabilityORM.id)).group_by(VulnerabilityORM.status).all()
+        _tenant_scope(db.query(VulnerabilityORM.status, func.count(VulnerabilityORM.id)), api_key)
+        .group_by(VulnerabilityORM.status)
+        .all()
     ):
         by_status[row[0]] = row[1]
     return {"total": total, "by_severity": by_severity, "by_status": by_status}
 
 
 @router.get("/findings/recent")
-def recent_findings(hours: int = 24, limit: int = 50, db: Session = Depends(get_session)):
+def recent_findings(
+    hours: int = 24,
+    limit: int = 50,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:read")),
+):
     from datetime import datetime, timedelta
 
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     results = (
-        db.query(VulnerabilityORM)
+        _tenant_scope(db.query(VulnerabilityORM), api_key)
         .filter(VulnerabilityORM.created_at >= cutoff)
         .order_by(VulnerabilityORM.created_at.desc())
         .limit(limit)
@@ -114,10 +141,14 @@ def recent_findings(hours: int = 24, limit: int = 50, db: Session = Depends(get_
 
 
 @router.get("/findings/by-rule")
-def findings_by_rule(db: Session = Depends(get_session)):
+def findings_by_rule(db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:read"))):
     from sqlalchemy import func
 
-    rows = db.query(VulnerabilityORM.rule_id, func.count(VulnerabilityORM.id)).group_by(VulnerabilityORM.rule_id).all()
+    rows = (
+        _tenant_scope(db.query(VulnerabilityORM.rule_id, func.count(VulnerabilityORM.id)), api_key)
+        .group_by(VulnerabilityORM.rule_id)
+        .all()
+    )
     return {"rules": [{"rule_id": r[0], "count": r[1]} for r in rows]}
 
 
@@ -127,8 +158,9 @@ def export_vulnerabilities(
     status: str | None = None,
     format: str = "json",
     db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:read")),
 ):
-    q = db.query(VulnerabilityORM)
+    q = _tenant_scope(db.query(VulnerabilityORM), api_key)
     if severity:
         q = q.filter(VulnerabilityORM.severity == severity)
     if status:
@@ -153,18 +185,27 @@ def export_vulnerabilities(
 
 
 @router.get("/{vuln_id}", response_model=VulnResponse)
-def get_vulnerability(vuln_id: str, db: Session = Depends(get_session)):
+def get_vulnerability(
+    vuln_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:read"))
+):
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
+    _check_tenant(o, api_key)
     return _orm_to_response(o)
 
 
 @router.patch("/{vuln_id}", response_model=VulnResponse)
-def update_vulnerability(vuln_id: str, body: VulnUpdate, db: Session = Depends(get_session)):
+def update_vulnerability(
+    vuln_id: str,
+    body: VulnUpdate,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:manage")),
+):
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
+    _check_tenant(o, api_key)
     if body.status:
         o.status = body.status
     db.commit()
@@ -174,13 +215,19 @@ def update_vulnerability(vuln_id: str, body: VulnUpdate, db: Session = Depends(g
 
 
 @router.put("/{vuln_id}/status", response_model=VulnResponse)
-def update_vuln_status(vuln_id: str, body: VulnStatusUpdate, db: Session = Depends(get_session)):
+def update_vuln_status(
+    vuln_id: str,
+    body: VulnStatusUpdate,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:manage")),
+):
     valid = {"open", "fixing", "fixed", "ignored", "false_positive"}
     if body.status not in valid:
         raise HTTPException(status_code=400, detail=f"无效状态，可选: {', '.join(valid)}")
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
+    _check_tenant(o, api_key)
     o.status = body.status
     db.commit()
     db.refresh(o)
@@ -189,7 +236,12 @@ def update_vuln_status(vuln_id: str, body: VulnStatusUpdate, db: Session = Depen
 
 
 @router.post("/{vuln_id}/false-positive", response_model=VulnResponse)
-def mark_false_positive(vuln_id: str, reason: str = "", db: Session = Depends(get_session)):
+def mark_false_positive(
+    vuln_id: str,
+    reason: str = "",
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:manage")),
+):
     # Feature 2: 同时写 FeedbackStore(供 filter_vulnerabilities 误报过滤)与 FeedbackORM(持久化)。
     import uuid as _uuid
 
@@ -199,6 +251,7 @@ def mark_false_positive(vuln_id: str, reason: str = "", db: Session = Depends(ge
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
+    _check_tenant(o, api_key)
     o.status = "false_positive"
     entry = FeedbackEntry(
         vuln_id=vuln_id,
@@ -209,15 +262,15 @@ def mark_false_positive(vuln_id: str, reason: str = "", db: Session = Depends(ge
         reason=reason,
     )
     FeedbackStore().add_feedback(entry)
-    db.add(
-        FeedbackORM(
-            id=_uuid.uuid4().hex[:16],
-            vuln_id=vuln_id,
-            scan_id=o.scan_id or "",
-            flag="false_positive",
-            note=reason,
-        )
+    fb = FeedbackORM(
+        id=_uuid.uuid4().hex[:16],
+        vuln_id=vuln_id,
+        scan_id=o.scan_id or "",
+        flag="false_positive",
+        note=reason,
+        created_by=getattr(api_key, "tenant_id", "") or "",
     )
+    db.add(fb)
     db.commit()
     db.refresh(o)
     logger.info(f"标记误报: {vuln_id}, 原因: {reason}")

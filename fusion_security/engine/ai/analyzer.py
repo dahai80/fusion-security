@@ -25,6 +25,16 @@ def _resolve_mlx_url() -> str:
     return "http://localhost:11432/v1"
 
 
+def _resolve_mlx_api_key() -> str:
+    # fusion-mlx 启用鉴权时要求 Authorization: Bearer <key>;未传则 401,AI 静默降级。
+    # 从环境读取(Monorepo CLAUDE.md 约定 FUSION_MLX_API_KEY),不入日志(脱敏过滤器兜底)。
+    for var in ("FUSION_MLX_API_KEY", "MLX_API_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return val
+    return ""
+
+
 _MLX_DEFAULT_URL = _resolve_mlx_url()
 
 
@@ -33,6 +43,7 @@ class AIAnalyzer:
         self.model = model
         self.mlx_url = (mlx_url or _MLX_DEFAULT_URL).rstrip("/")
         self._client = None
+        self._api_key = _resolve_mlx_api_key()
         # 单 MLX 实例并发上限:无 semaphore 时 N 漏洞串行调用,但对抗/补丁阶段可能多 pipeline 并发。
         # 限制并发请求数避免 MLX OOM,配合 with_retry 退避形成背压。
         self._semaphore = asyncio.Semaphore(max_concurrency)
@@ -51,7 +62,8 @@ class AIAnalyzer:
     @property
     def client(self):
         if self._client is None:
-            self._client = get_async_client(self.mlx_url, timeout=120.0)
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            self._client = get_async_client(self.mlx_url, timeout=120.0, headers=headers)
             logger.debug("[AIAnalyzer] pooled httpx.AsyncClient via fusion_core, base=%s", self.mlx_url)
         return self._client
 
@@ -84,12 +96,16 @@ class AIAnalyzer:
                 "temperature": 0.1,
                 "max_tokens": 2048,
             }
-            resp = await with_retry(lambda: self.client.post("/chat/completions", json=payload))
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            return await self._do_chat_request(payload)
         finally:
             self._semaphore.release()
+
+    async def _do_chat_request(self, payload: dict) -> str:
+        # 拆出 HTTP 调用:便于背压基准在此处插桩(在 semaphore 持有期内),量化真实在飞并发。
+        resp = await with_retry(lambda: self.client.post("/chat/completions", json=payload))
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
 
     async def verify_findings(
         self,
@@ -245,7 +261,9 @@ CWE编号: {vuln.cwe_id}
                 ]
             )
         except Exception as e:
-            return f"// 修复生成失败: {e}"
+            # P3-2: 不把异常文本写进补丁代码(可能泄露内部信息到源码),日志保留明细。
+            logger.warning(f"generate_fix 失败: {e}")
+            return "// 修复生成失败"
 
     def _parse_json(self, text: str, as_array: bool = False) -> Any:
         text = text.strip()

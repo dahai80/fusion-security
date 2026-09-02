@@ -9,12 +9,38 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import BaseHandler, Request, build_opener
 
-from ._url_guard import validate_outbound_url
+from ._url_guard import pin_url
 
 logger = logging.getLogger(__name__)
+
+
+class _NullResolver:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+class _NoRedirectHandler(BaseHandler):
+    # P0-2: 阻止 3xx 自动跟随,逐跳校验 Location,防止重定向绕过 SSRF。
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        return None
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        return None
+
+    def http_error_307(self, req, fp, code, msg, headers):
+        return None
+
+    def http_error_308(self, req, fp, code, msg, headers):
+        return None
 
 
 def _host_of(url: str) -> str:
@@ -42,25 +68,50 @@ class DingTalkConfig:
 
 
 def _urllib_post(url: str, data: bytes, headers: dict[str, str], timeout: int = 10) -> bool:
-    guard = validate_outbound_url(url)
+    guard, resolver = pin_url(url)
     if not guard.ok:
         logger.warning(f"[Notifier] SSRF 校验拒绝 host={_host_of(url)}: {guard.reason}")
         return False
-    try:
-        req = Request(guard.safe_url, data=data, headers=headers, method="POST")
-        with urlopen(req, timeout=timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            if body.get("code", body.get("errcode", 0)) != 0:
-                logger.warning(f"[Notifier] 响应错误 host={_host_of(url)}: {body}")
+    opener = build_opener(_NoRedirectHandler())
+    target_url = guard.safe_url
+    active_resolver = resolver
+    max_redirects = 3
+    for hop in range(max_redirects + 1):
+        with active_resolver or _NullResolver():
+            try:
+                req = Request(target_url, data=data, headers=headers, method="POST")
+                with opener.open(req, timeout=timeout) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                    if body.get("code", body.get("errcode", 0)) != 0:
+                        logger.warning(f"[Notifier] 响应错误 host={_host_of(target_url)}: {body}")
+                        return False
+                    logger.info(f"[Notifier] 发送成功 host={_host_of(target_url)} status={resp.status}")
+                    return True
+            except HTTPError as e:
+                if e.code in (301, 302, 307, 308) and hop < max_redirects:
+                    loc = e.headers.get("Location") or ""
+                    if not loc:
+                        logger.warning(f"[Notifier] {e.code} 无 Location,放弃 host={_host_of(target_url)}")
+                        return False
+                    loc = urllib.parse.urljoin(target_url, loc)
+                    guard2, resolver2 = pin_url(loc)
+                    if not guard2.ok:
+                        logger.warning(f"[Notifier] 重定向目标被 SSRF 拒绝: {loc} ({guard2.reason})")
+                        return False
+                    logger.info(f"[Notifier] 跟随重定向 {e.code} -> {loc} (已校验)")
+                    target_url = guard2.safe_url
+                    active_resolver = resolver2
+                    continue
+                logger.warning(f"[Notifier] HTTP错误 host={_host_of(target_url)}: {e.code} {e.reason}")
                 return False
-            logger.info(f"[Notifier] 发送成功 host={_host_of(url)} status={resp.status}")
-            return True
-    except URLError as e:
-        logger.warning(f"[Notifier] URL错误 host={_host_of(url)}: {e}")
-        return False
-    except Exception as e:
-        logger.warning(f"[Notifier] 发送异常 host={_host_of(url)}: {e}")
-        return False
+            except URLError as e:
+                logger.warning(f"[Notifier] URL错误 host={_host_of(target_url)}: {e}")
+                return False
+            except Exception as e:
+                logger.warning(f"[Notifier] 发送异常 host={_host_of(target_url)}: {e}")
+                return False
+    logger.warning(f"[Notifier] 超过最大重定向次数 {max_redirects} host={_host_of(url)}")
+    return False
 
 
 class FeishuNotifier:

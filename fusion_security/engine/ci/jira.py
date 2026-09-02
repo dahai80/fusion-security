@@ -42,6 +42,10 @@ class JiraClient:
     def __init__(self, config: JiraConfig):
         self.config = config
         self._client: httpx.Client | None = None
+        # P0-3: 校验 base_url 防 SSRF(防御纵深,API 路由也会校验)。
+        from ._url_guard import validate_outbound_url
+
+        validate_outbound_url(config.base_url)
 
     @property
     def client(self) -> httpx.Client:
@@ -91,6 +95,10 @@ class JiraClient:
         return issues
 
     def get_issue(self, issue_key: str) -> JiraIssue | None:
+        # P0-3: issue_key 用户可控,拒绝路径/查询/锚点字符以防注入任意 API 路径。
+        if not issue_key or any(c in issue_key for c in "/?# \t\r\n"):
+            logger.warning(f"[Jira] 非法 issue_key 被拒绝: {issue_key!r}")
+            return None
         try:
             resp = self.client.get(f"/issue/{issue_key}", params={"fields": "summary,status"})
             if resp.status_code == 200:

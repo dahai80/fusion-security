@@ -120,14 +120,26 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    cors_origins = os.environ.get("FUSION_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+    cors_origins = [
+        o.strip()
+        for o in os.environ.get("FUSION_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+        if o.strip()
+    ]
+    # P1-3: allow_credentials=True 时通配源非法且危险(任意源可携 cookie),显式拒绝。
+    if "*" in cors_origins:
+        raise RuntimeError("FUSION_CORS_ORIGINS=* not allowed with allow_credentials=True")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in cors_origins if o.strip()],
+        allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        allow_headers=["X-API-Key", "Content-Type"],
     )
+
+    # P0-6: 限流中间件注册(最外层,先于路由执行)。add_middleware 后注册先执行。
+    from .middleware import rate_limit_middleware
+
+    app.middleware("http")(rate_limit_middleware)
 
     app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"], dependencies=_AUTH)
     app.include_router(system.public_router, prefix="/api/v1/system", tags=["System"])
