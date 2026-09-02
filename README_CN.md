@@ -144,7 +144,7 @@ cd frontend && npm install && npm run dev
 
 | 控制项 | 作用 |
 |--------|------|
-| **SSRF 防护** | Webhook/通知外发 URL 校验私网/环回/链路本地/元数据 IP，防 DNS 重绑定（`engine/ci/_url_guard.py`） |
+| **SSRF 防护** | Webhook/通知外发 URL 校验私网/环回/链路本地/元数据 IP，防 DNS 重绑定；跟随重定向但每个 `Location` 跳转重新校验、DNS 按请求钉定，302 无法重绑定内网 IP（`engine/ci/_url_guard.py`） |
 | **日志脱敏** | 日志过滤器在落盘前清洗 `password`/`api_key`/`token`/`Bearer`/`Authorization` 值（`utils/logger.py`） |
 | **离线优先 SCA** | 依赖扫描默认本地已知漏洞库；OSV.dev 云查询经 `--osv` 显式开启并告警 |
 | **AI 补丁审核** | AI 生成修复经校验并标记 `needs_review=True`；失败标记串与空输出被拒绝 |
@@ -158,6 +158,11 @@ cd frontend && npm install && npm run dev
 | **孤儿扫描回收** | API 启动时将上次崩溃遗留的 `running` 扫描标 `failed`，`queued` 扫描重入队 — 重启后无扫描永久挂起 |
 | **AI 背压** | MLX 调用受并发信号量限制（默认 4），并发扫描不会压垮单一推理实例导致 OOM |
 | **缓存批量写入** | `ProjectScanCache` 每阶段统一 flush 而非逐文件 commit，消除大库的 N 次 fsync 风暴 |
+| **API 限流** | 按 `(client_ip, api_key)` 滑动窗口限流（`FUSION_RATE_LIMIT_PER_MINUTE`，默认 120/分钟 → `429` + `Retry-After`），覆盖除公开健康探针外所有 `/api/v1/` 路由 |
+| **每租户扫描配额** | 每租户并发活跃扫描（running/queued/pending）上限 `FUSION_MAX_CONCURRENT_SCANS`（默认 4 → `409`），单租户无法耗尽工作池 |
+| **端点级 RBAC** | 每个路由强制具体权限（`scan:run`/`vuln:manage`/`system:manage`…）经 `require_permission`，非"任意有效 key" — 默认最小权限 |
+| **租户 IDOR 闭合** | 扫描/漏洞/补丁查询按 `tenant_id` 过滤；跨租户请求返回 `404`，不泄露记录存在性 |
+| **Webhook 触发时 HMAC** | Webhook secret 以 Fernet 加密（密钥由 `FUSION_SECURITY_MASTER_KEY` 派生），事件触发时可回算 `X-Fusion-Security-Signature` HMAC，绝不存明文 secret |
 
 ### 漏洞覆盖（37 规则）
 
@@ -503,13 +508,15 @@ pytest tests/ -v
 - **符合国内法规** — 无跨境数据传输
 - **合规映射** — 等保2.0 / ISO 27001 / PCI DSS
 - **CVSS 3.1 评分** — 标准化漏洞严重度评估
-- **RBAC 权限** — admin/operator/viewer 三级角色
+- **RBAC 权限** — admin/operator/viewer 三级角色；每个 API 端点经 `require_permission(...)` 强制具体权限（如 `scan:run`/`vuln:manage`/`system:manage`），而非仅"已认证"
 - **DB 落库哈希密钥** — API key 以 `sha256` 哈希存入 `api_keys` 表（绝不存明文）；master 管理密钥经 `FUSION_SECURITY_MASTER_KEY` 稳定，重启不丢失，明文**仅在创建响应中返回一次**，绝不写入日志
-- **Webhook 密钥安全** — Webhook secret 只存哈希；`secret_hash` 绝不出现在 API 响应中
+- **Webhook 密钥安全** — Webhook secret 用 Fernet 对称加密存储（密钥由 `FUSION_SECURITY_MASTER_KEY` 经 PBKDF2-HMAC-SHA256 派生），既能在触发时回算 HMAC 签名、又不落明文；`secret_hash` 绝不出现在 API 响应中
 - **审计溯源** — 完整操作审计日志（JSONL）
-- **多租户隔离** — 每租户独立数据目录 + `tenant_id` 贯穿扫描路由；租户从 API key 行解析
+- **多租户隔离** — 每租户独立数据目录 + `tenant_id` 贯穿扫描/漏洞/补丁路由；跨租户访问记录返回 `404`（不泄露存在性 — 关闭租户 IDOR）
 - **API Key 认证** — `X-API-Key` 请求头；密钥以 `sha256` 哈希存入 DB，明文仅创建时返回一次
-- **Webhook 签名** — 飞书/钉钉 HMAC-SHA256 签名验证
+- **Webhook 签名** — 飞书/钉钉 HMAC-SHA256 签名验证；配置 secret 时发送 `X-Fusion-Security-Signature` 头
+- **SSRF 重定向守卫** — Webhook/通知外发 HTTP 跟随重定向，但每个 `Location` 跳转都重新过 SSRF 守卫、DNS 按请求钉定，302 无法重绑定到内网 IP
+- **API 限流** — 按 `(client_ip, api_key)` 滑动窗口限流（`FUSION_RATE_LIMIT_PER_MINUTE`，默认 120/分钟，超限 `429` + `Retry-After`），另加每租户并发扫描配额（`FUSION_MAX_CONCURRENT_SCANS`，默认 4，超限 `409`）
 
 ## 🔧 配置（环境变量）
 
@@ -523,6 +530,9 @@ pytest tests/ -v
 | `FUSION_SECURITY_DB_URL` | _空_ | 共享库完整 SQLAlchemy URL（见数据库章节） |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite 文件路径（单机） |
 | `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | 允许的 CORS 来源（逗号分隔；`*` 被拒 — 带凭据时非法） |
+| `FUSION_RATE_LIMIT` | `1` | 设为 `0` 关闭限流中间件（如测试 / 单机离线）。生产默认开启。 |
+| `FUSION_RATE_LIMIT_PER_MINUTE` | `120` | 每 60 秒滑动窗口最大请求数，桶 key 为 `(client_ip, sha256(api_key))`。超限返回 `429` 并带 `Retry-After`。 |
+| `FUSION_MAX_CONCURRENT_SCANS` | `4` | 每租户并发活跃扫描上限（running/queued/pending）。超限创建扫描返回 `409`。 |
 
 ## ✨ 已打通特性（v0.1.8）
 

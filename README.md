@@ -51,7 +51,7 @@
 
 | Control | What it does |
 |---------|--------------|
-| **SSRF guard** | Webhook / notification outbound URLs validated against private/loopback/link-local/metadata IPs; DNS-rebinding safe (`engine/ci/_url_guard.py`) |
+| **SSRF guard** | Webhook / notification outbound URLs validated against private/loopback/link-local/metadata IPs; DNS-rebinding safe. Redirects are followed but every `Location` hop is re-validated and DNS is pinned per request — a 302 cannot rebind to an internal IP (`engine/ci/_url_guard.py`) |
 | **Secret redaction** | Log filter scrubs `password`/`api_key`/`token`/`Bearer`/`Authorization` values before they reach stdout or log files (`utils/logger.py`) |
 | **Offline-first SCA** | Dependency scan defaults to local known-vuln DB; OSV.dev cloud lookup is opt-in via `--osv` and warns when enabled |
 | **AI patch review** | AI-generated fixes are validated and flagged `needs_review=True`; failure markers and no-op output are rejected |
@@ -65,6 +65,11 @@
 | **Orphan-scan recovery** | On API startup, scans left `running` by a prior crash are marked `failed`, and `queued` scans are re-enqueued — no scan hangs forever after a restart |
 | **AI backpressure** | MLX calls are gated by a concurrency semaphore (default 4) so concurrent scans cannot OOM the single inference instance |
 | **Batched cache writes** | `ProjectScanCache` flushes once per stage instead of committing per file, eliminating N fsync storms on large repos |
+| **API rate limiting** | Per-`(client_ip, api_key)` sliding-window limiter (`FUSION_RATE_LIMIT_PER_MINUTE`, default 120/min → `429` + `Retry-After`) protects every `/api/v1/` route except the public health probe |
+| **Per-tenant scan quota** | Concurrent active scans (running/queued/pending) per tenant are capped (`FUSION_MAX_CONCURRENT_SCANS`, default 4 → `409`), preventing one tenant from exhausting the worker pool |
+| **Per-endpoint RBAC** | Every route enforces a specific permission (`scan:run`, `vuln:manage`, `system:manage`, …) via `require_permission`, not just "any valid key" — least-privilege by default |
+| **Tenant IDOR closure** | Scan/vulnerability/patch lookups scope by `tenant_id`; a cross-tenant request returns `404`, leaking no record existence |
+| **Webhook HMAC at fire time** | Webhook secrets are Fernet-encrypted (key derived from `FUSION_SECURITY_MASTER_KEY`) so the `X-Fusion-Security-Signature` HMAC can be recomputed when an event fires, without ever storing the plaintext secret |
 
 ---
 
@@ -566,13 +571,15 @@ pytest tests/ -v
 - **Regulation Compliant** — No cross-border data transfer
 - **Compliance Mapping** — ISO 27001 / PCI DSS
 - **CVSS 3.1 Scoring** — Standardized vulnerability severity assessment
-- **RBAC** — admin/operator/viewer role-based access control
+- **RBAC** — admin/operator/viewer role-based access control; every API endpoint enforces a specific permission via `require_permission(...)` (e.g. `scan:run`, `vuln:manage`, `system:manage`), not just "authenticated"
 - **DB-Backed Hashed Keys** — API keys are persisted as `sha256` hashes in the `api_keys` table (never plaintext); the master admin key is stabilized via `FUSION_SECURITY_MASTER_KEY` so it survives restarts, and the raw key is shown **once** in the create response — never in logs
-- **Webhook Secret Safety** — Webhook secrets are stored as hashes; `secret_hash` is never returned in API responses
+- **Webhook Secret Safety** — Webhook secrets are encrypted at rest with a Fernet token derived from `FUSION_SECURITY_MASTER_KEY` (PBKDF2-HMAC-SHA256), so the plaintext can be re-derived at fire time for HMAC signing without ever persisting it; `secret_hash` is never returned in API responses
 - **Audit Trail** — Complete operation audit logs (JSONL)
-- **Multi-Tenant Isolation** — Per-tenant data dirs + `tenant_id` threaded through scan routes; tenant resolved from the API key's row
+- **Multi-Tenant Isolation** — Per-tenant data dirs + `tenant_id` threaded through scan/vulnerability/patch routes; cross-tenant record access returns `404` (no existence leak — closes tenant IDOR)
 - **API Key Auth** — `X-API-Key` header; keys stored as `sha256` hashes in DB, plaintext returned once at creation
-- **Webhook Signing** — HMAC-SHA256 for Feishu/DingTalk notifications
+- **Webhook Signing** — HMAC-SHA256 for Feishu/DingTalk notifications; the `X-Fusion-Security-Signature` header is sent when a webhook secret is configured
+- **SSRF Redirect Guard** — Outbound webhook/notification HTTP follows redirects but re-validates each `Location` hop through the SSRF guard (no-redirect-to-internal bypass); DNS is pinned per request so a 302 cannot rebind to a private IP
+- **Rate Limiting** — Per-`(client_ip, api_key)` sliding-window limiter (`FUSION_RATE_LIMIT_PER_MINUTE`, default 120/min, `429` + `Retry-After`) plus a per-tenant concurrent-scan quota (`FUSION_MAX_CONCURRENT_SCANS`, default 4, `409` on exceed)
 
 ## 🔧 Configuration (Environment Variables)
 
@@ -586,6 +593,9 @@ pytest tests/ -v
 | `FUSION_SECURITY_DB_URL` | _empty_ | Full SQLAlchemy URL for a shared DB (see Database section) |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite file path (single-node) |
 | `FUSION_CORS_ORIGINS` | `localhost:3000,8080` | Comma-separated allowed CORS origins (`*` rejected — invalid with credentials) |
+| `FUSION_RATE_LIMIT` | `1` | Set to `0` to disable the per-IP/per-key API rate limiter (e.g. tests / single-node offline). On by default in production. |
+| `FUSION_RATE_LIMIT_PER_MINUTE` | `120` | Max API requests per 60s sliding window, keyed by `(client_ip, sha256(api_key))`. Exceeding returns `429` with `Retry-After`. |
+| `FUSION_MAX_CONCURRENT_SCANS` | `4` | Per-tenant concurrent active-scan quota (running/queued/pending). Creating a scan beyond this returns `409`. |
 
 ## ✨ Wired Features (v0.1.8)
 
