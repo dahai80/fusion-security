@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ...api.auth import APIKey, require_permission
 from ...db.session import get_session
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,17 @@ def _orm_to_dict(o) -> dict:
 
 
 @router.get("", summary="列出所有定时扫描计划")
-async def list_schedules(db: Session = Depends(get_session)):
+async def list_schedules(
+    db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
+):
     from ...db.models import ScheduledScanORM
 
-    rows = db.query(ScheduledScanORM).all()
+    q = db.query(ScheduledScanORM)
+    # P1-1 IDOR: 按调用方 tenant_id 过滤,跨租户不可见。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id:
+        q = q.filter(ScheduledScanORM.tenant_id == tenant_id)
+    rows = q.all()
     return {"schedules": [_orm_to_dict(r) for r in rows]}
 
 
@@ -126,6 +133,10 @@ async def update_schedule(
     row = db.query(ScheduledScanORM).filter(ScheduledScanORM.id == schedule_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="计划不存在")
+    # P1-1 IDOR: 校验租户归属,跨租户不可改。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (row.tenant_id or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="计划不存在")
     if body.frequency is not None and body.frequency not in _VALID_FREQ:
         raise HTTPException(status_code=400, detail=f"非法 frequency: {body.frequency}")
     if body.name is not None:
@@ -158,6 +169,10 @@ async def delete_schedule(
 
     row = db.query(ScheduledScanORM).filter(ScheduledScanORM.id == schedule_id).first()
     if not row:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    # P1-1 IDOR: 校验租户归属,跨租户不可删。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (row.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="计划不存在")
     db.delete(row)
     db.commit()

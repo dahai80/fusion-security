@@ -460,13 +460,15 @@ class TestNewAPIEndpoints:
     @pytest.fixture(autouse=True)
     def setup(self):
         from fusion_security.api.app import create_app
-        from fusion_security.api.auth import get_current_key
+        from fusion_security.api.auth import APIKey, get_current_key
         from fusion_security.db import get_session
 
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
-        self.app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+        self.app.dependency_overrides[get_current_key] = lambda: APIKey(
+            key_hash="t", name="t", roles=["admin"], tenant_id=""
+        )
         self.client = TestClient(self.app)
 
     def test_put_project_update(self):
@@ -577,13 +579,15 @@ class TestJiraAPIEndpoints:
     @pytest.fixture(autouse=True)
     def setup(self):
         from fusion_security.api.app import create_app
-        from fusion_security.api.auth import get_current_key
+        from fusion_security.api.auth import APIKey, get_current_key
         from fusion_security.db import get_session
 
         self.mock_db = _make_mock_db()
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
-        self.app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+        self.app.dependency_overrides[get_current_key] = lambda: APIKey(
+            key_hash="t", name="t", roles=["admin"], tenant_id=""
+        )
         self.client = TestClient(self.app)
 
     def test_jira_config(self):

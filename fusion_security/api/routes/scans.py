@@ -7,10 +7,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ...api.auth import APIKey, get_current_key
 from ...db import get_session
 from ...db.convert import scan_to_orm
 from ...db.models import ScanORM
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -84,6 +84,21 @@ def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
         summary=o.summary,
         created_at=o.created_at.isoformat() if o.created_at else "",
     )
+
+
+def _scan_tenant_scope(query, api_key: APIKey):
+    # P1-1 IDOR: 扫描列表按调用方 tenant_id 过滤。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id:
+        return query.filter(ScanORM.tenant_id == tenant_id)
+    return query
+
+
+def _check_scan_tenant(o: ScanORM, api_key: APIKey) -> None:
+    # P1-1 IDOR: 单条扫描校验租户归属,跨租户访问返回 404。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (o.tenant_id or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="Scan not found")
 
 
 async def _run_scan(
@@ -178,10 +193,12 @@ async def _run_scan(
 
 
 async def _notify_webhooks(scan_orm, ctx) -> None:
-    # Feature 5: 从 DB 加载启用的 webhook,过滤 scan.completed 事件后通知。secret 不出库(签名回退为空)。
+    # Feature 5: 从 DB 加载启用的 webhook,过滤 scan.completed 事件后通知。
+    # P0-5: secret 从 Fernet 密文解密,传入 WebhookConfig 供 _send 计算 HMAC 签名。
     import json
 
     from ...db.models import WebhookORM
+    from ...engine.ci._crypto import decrypt_secret
     from ...engine.ci.webhook import WebhookConfig, WebhookNotifier
 
     db = get_session()
@@ -192,7 +209,7 @@ async def _notify_webhooks(scan_orm, ctx) -> None:
             events = json.loads(row.events_json or "[]")
             if "scan.completed" not in events:
                 continue
-            configs.append(WebhookConfig(url=row.url, events=events))
+            configs.append(WebhookConfig(url=row.url, secret=decrypt_secret(row.secret_hash or ""), events=events))
         if not configs:
             return
         notifier = WebhookNotifier(configs)
@@ -214,12 +231,20 @@ async def _notify_webhooks(scan_orm, ctx) -> None:
 
 
 @router.post("", response_model=ScanResponse)
-def create_scan(
+async def create_scan(
     body: ScanCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
-    api_key: APIKey = Depends(get_current_key),
+    api_key: APIKey = Depends(require_permission("scan:run")),
 ):
+    # P0-6: 路由前先做租户并发配额校验,超限 409。
+    from ..middleware import enforce_scan_quota
+
+    try:
+        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+    except Exception:
+        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+
+    from ...engine.queue import ScanTask, TaskPriority
     from ...models.project import Scan
 
     s = Scan(
@@ -232,25 +257,32 @@ def create_scan(
         branch=body.branch,
     )
     orm = scan_to_orm(s)
-    orm.status = "pending"
+    orm.status = "queued"
     orm.path = body.path
     orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
 
+    # P0-6: 不再用自由 BackgroundTasks 协程(绕过 WorkerPool 并发控制),
+    # 改为入队由 WorkerPool 统一调度,与 /queue 路径共用同一并发池。
     if body.path:
-        background_tasks.add_task(
-            _run_scan,
-            orm.id,
-            body.path,
-            body.scan_type,
-            body.severity_threshold,
-            body.use_ai,
-            body.model,
-            body.changed_files,
-            orm.tenant_id,
+        task = ScanTask(
+            priority=TaskPriority.NORMAL,
+            project_path=body.path,
+            config={
+                "scan_id": orm.id,
+                "scan_type": body.scan_type,
+                "severity_threshold": body.severity_threshold,
+                "use_ai": body.use_ai,
+                "model": body.model,
+                "changed_files": body.changed_files,
+                "tenant_id": orm.tenant_id,
+            },
         )
+        queue = _get_queue()
+        await queue.enqueue(task)
+        logger.info(f"扫描已入队(直连路径): scan={orm.id} tenant={orm.tenant_id}")
 
     return _scan_orm_to_response(orm)
 
@@ -316,8 +348,16 @@ class QueueScanCreate(BaseModel):
 async def enqueue_scan(
     body: QueueScanCreate,
     db: Session = Depends(get_session),
-    api_key: APIKey = Depends(get_current_key),
+    api_key: APIKey = Depends(require_permission("scan:run")),
 ):
+    # P0-6: 租户并发配额校验,超限 409。
+    from ..middleware import enforce_scan_quota
+
+    try:
+        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+    except Exception:
+        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+
     from ...engine.queue import ScanTask, TaskPriority
     from ...models.project import Scan
 
@@ -358,7 +398,7 @@ async def enqueue_scan(
 
 
 @router.get("/queue/status", summary="查询队列状态")
-async def queue_status():
+async def queue_status(_=Depends(require_permission("scan:read"))):
     queue = _get_queue()
     pool = _get_pool()
     tasks = await queue.list_tasks()
@@ -376,7 +416,7 @@ async def queue_status():
 
 
 @router.get("/queue/tasks", summary="列出队列任务")
-async def list_queue_tasks(status: str | None = None):
+async def list_queue_tasks(status: str | None = None, _=Depends(require_permission("scan:read"))):
     queue = _get_queue()
     tasks = await queue.list_tasks(status=status)
     return {
@@ -395,7 +435,9 @@ async def list_queue_tasks(status: str | None = None):
 
 
 @router.post("/queue/{task_id}/cancel", summary="取消队列任务")
-async def cancel_queue_task(task_id: str, db: Session = Depends(get_session)):
+async def cancel_queue_task(
+    task_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:run"))
+):
     # A-P0: 此前仅标队列任务 CANCELLED,不更新 ScanORM.status,运行中任务也不中断。
     queue = _get_queue()
     pool = _get_pool()
@@ -410,6 +452,8 @@ async def cancel_queue_task(task_id: str, db: Session = Depends(get_session)):
     if scan_id:
         scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
         if scan_orm and scan_orm.status not in ("completed", "failed"):
+            # P1-1: 跨租户不可取消他人扫描。
+            _check_scan_tenant(scan_orm, api_key)
             scan_orm.status = "cancelled"
             scan_orm.summary = "用户取消"
             db.commit()
@@ -418,14 +462,14 @@ async def cancel_queue_task(task_id: str, db: Session = Depends(get_session)):
 
 
 @router.post("/queue/pool/start", summary="启动工作池")
-async def start_pool():
+async def start_pool(_=Depends(require_permission("system:manage"))):
     pool = _get_pool()
     await pool.start()
     return {"status": "started", "workers": pool._workers}
 
 
 @router.post("/queue/pool/stop", summary="停止工作池")
-async def stop_pool():
+async def stop_pool(_=Depends(require_permission("system:manage"))):
     pool = _get_pool()
     await pool.stop()
     return {"status": "stopped"}
@@ -476,7 +520,7 @@ async def startup_reconcile_scans() -> dict:
 
 
 @router.get("/checkpoints", summary="列出所有断点")
-def list_checkpoints():
+def list_checkpoints(_=Depends(require_permission("system:manage"))):
     from ...engine.resume import CheckpointManager
 
     mgr = CheckpointManager()
@@ -506,8 +550,16 @@ def resume_scan(
     body: ResumeRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
-    api_key: APIKey = Depends(get_current_key),
+    api_key: APIKey = Depends(require_permission("scan:run")),
 ):
+    # P0-6: 续扫也占用并发槽位,先做配额校验。
+    from ..middleware import enforce_scan_quota
+
+    try:
+        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+    except Exception:
+        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+
     from ...engine.resume import CheckpointManager
 
     mgr = CheckpointManager()
@@ -518,6 +570,8 @@ def resume_scan(
     scan_orm = db.query(ScanORM).filter(ScanORM.id == body.scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
+    # P1-1 IDOR: 跨租户不可续扫他人扫描。
+    _check_scan_tenant(scan_orm, api_key)
     scan_orm.status = "running"
     scan_orm.path = body.path
     if not scan_orm.tenant_id:
@@ -597,8 +651,13 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
 
 
 @router.get("", response_model=list[ScanResponse])
-def list_scans(project_id: str | None = None, status: str | None = None, db: Session = Depends(get_session)):
-    q = db.query(ScanORM)
+def list_scans(
+    project_id: str | None = None,
+    status: str | None = None,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("scan:read")),
+):
+    q = _scan_tenant_scope(db.query(ScanORM), api_key)
     if project_id:
         q = q.filter(ScanORM.project_id == project_id)
     if status:
@@ -608,18 +667,24 @@ def list_scans(project_id: str | None = None, status: str | None = None, db: Ses
 
 
 @router.get("/{scan_id}", response_model=ScanResponse)
-def get_scan(scan_id: str, db: Session = Depends(get_session)):
+def get_scan(
+    scan_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
+):
     o = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Scan not found")
+    _check_scan_tenant(o, api_key)
     return _scan_orm_to_response(o)
 
 
 @router.delete("/{scan_id}")
-def delete_scan(scan_id: str, db: Session = Depends(get_session)):
+def delete_scan(
+    scan_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:run"))
+):
     o = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Scan not found")
+    _check_scan_tenant(o, api_key)
     db.delete(o)
     db.commit()
     return {"status": "deleted"}
@@ -630,8 +695,16 @@ def create_incremental_scan(
     body: IncrementalScanCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
-    api_key: APIKey = Depends(get_current_key),
+    api_key: APIKey = Depends(require_permission("scan:run")),
 ):
+    # P0-6: 增量扫描同样占用并发槽位,先做配额校验。
+    from ..middleware import enforce_scan_quota
+
+    try:
+        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+    except Exception:
+        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+
     try:
         from ...engine.vcs.git import GitHelper
 

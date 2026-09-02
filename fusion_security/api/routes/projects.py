@@ -10,6 +10,7 @@ from ...db import get_session
 from ...db.convert import project_to_orm
 from ...db.models import ProjectORM, ScanCacheORM, ScanORM
 from ...models.project import Project
+from ..auth import require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,7 +47,9 @@ class ProjectUpdate(BaseModel):
 
 
 @router.post("", response_model=ProjectResponse)
-def create_project(body: ProjectCreate, db: Session = Depends(get_session)):
+def create_project(
+    body: ProjectCreate, db: Session = Depends(get_session), _=Depends(require_permission("project:manage"))
+):
     p = Project(
         name=body.name,
         repo_url=body.repo_url,
@@ -73,7 +76,13 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_session)):
 
 
 @router.get("", response_model=list[ProjectResponse])
-def list_projects(status: str | None = None, limit: int = 100, offset: int = 0, db: Session = Depends(get_session)):
+def list_projects(
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_session),
+    _=Depends(require_permission("scan:read")),
+):
     limit = min(limit, 500)
     offset = max(offset, 0)
     q = db.query(ProjectORM)
@@ -96,7 +105,9 @@ def list_projects(status: str | None = None, limit: int = 100, offset: int = 0, 
 
 
 @router.get("/{project_id}/scan-summary")
-def project_scan_summary(project_id: str, db: Session = Depends(get_session)):
+def project_scan_summary(
+    project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("scan:read"))
+):
     from sqlalchemy import func
 
     proj = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
@@ -175,7 +186,7 @@ def project_scan_summary(project_id: str, db: Session = Depends(get_session)):
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: str, db: Session = Depends(get_session)):
+def get_project(project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("scan:read"))):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -192,7 +203,12 @@ def get_project(project_id: str, db: Session = Depends(get_session)):
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(get_session)):
+def update_project(
+    project_id: str,
+    body: ProjectUpdate,
+    db: Session = Depends(get_session),
+    _=Depends(require_permission("project:manage")),
+):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -226,7 +242,9 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
 
 
 @router.delete("/{project_id}")
-def delete_project(project_id: str, db: Session = Depends(get_session)):
+def delete_project(
+    project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("project:manage"))
+):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")

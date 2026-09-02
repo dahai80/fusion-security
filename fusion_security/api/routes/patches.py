@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...db import get_session
 from ...db.convert import patch_to_orm
 from ...db.models import PatchORM, ScanORM, VulnerabilityORM
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,14 +51,35 @@ def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
     )
 
 
+def _patch_tenant_scope(query, db: Session, api_key: APIKey):
+    # P1-1 IDOR: PatchORM 无 tenant_id,通过 scan_id 关联 ScanORM.tenant_id 过滤。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if not tenant_id:
+        return query
+    scan_ids = [s.id for s in db.query(ScanORM.id).filter(ScanORM.tenant_id == tenant_id).all()]
+    if not scan_ids:
+        return query.filter(PatchORM.scan_id == "__none__")
+    return query.filter(PatchORM.scan_id.in_(scan_ids))
+
+
+def _check_patch_tenant(o: PatchORM, db: Session, api_key: APIKey) -> None:
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if not tenant_id or not o.scan_id:
+        return
+    scan = db.query(ScanORM).filter(ScanORM.id == o.scan_id).first()
+    if scan and (scan.tenant_id or "") != tenant_id:
+        raise HTTPException(status_code=404, detail="Patch not found")
+
+
 @router.get("", response_model=list[PatchResponse])
 def list_patches(
     vuln_id: str | None = None,
     scan_id: str | None = None,
     status: str | None = None,
     db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:read")),
 ):
-    q = db.query(PatchORM)
+    q = _patch_tenant_scope(db.query(PatchORM), db, api_key)
     if vuln_id:
         q = q.filter(PatchORM.vuln_id == vuln_id)
     if scan_id:
@@ -68,18 +90,27 @@ def list_patches(
 
 
 @router.get("/{patch_id}", response_model=PatchResponse)
-def get_patch(patch_id: str, db: Session = Depends(get_session)):
+def get_patch(
+    patch_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:read"))
+):
     o = db.query(PatchORM).filter(PatchORM.id == patch_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Patch not found")
+    _check_patch_tenant(o, db, api_key)
     return _patch_orm_to_response(o)
 
 
 @router.patch("/{patch_id}", response_model=PatchResponse)
-def update_patch(patch_id: str, body: PatchUpdate, db: Session = Depends(get_session)):
+def update_patch(
+    patch_id: str,
+    body: PatchUpdate,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:manage")),
+):
     o = db.query(PatchORM).filter(PatchORM.id == patch_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Patch not found")
+    _check_patch_tenant(o, db, api_key)
     if body.status is not None:
         o.status = body.status
     if body.verified is not None:
@@ -92,10 +123,13 @@ def update_patch(patch_id: str, body: PatchUpdate, db: Session = Depends(get_ses
 
 
 @router.post("/{patch_id}/apply", response_model=PatchResponse)
-def apply_patch(patch_id: str, db: Session = Depends(get_session)):
+def apply_patch(
+    patch_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:manage"))
+):
     o = db.query(PatchORM).filter(PatchORM.id == patch_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Patch not found")
+    _check_patch_tenant(o, db, api_key)
     o.status = "applied"
     db.commit()
     db.refresh(o)
@@ -109,10 +143,16 @@ class PatchVerifyRequest(BaseModel):
 
 
 @router.post("/{patch_id}/verify", response_model=PatchResponse)
-def verify_patch(patch_id: str, body: PatchVerifyRequest, db: Session = Depends(get_session)):
+def verify_patch(
+    patch_id: str,
+    body: PatchVerifyRequest,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("vuln:manage")),
+):
     o = db.query(PatchORM).filter(PatchORM.id == patch_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Patch not found")
+    _check_patch_tenant(o, db, api_key)
     o.verified = body.test_result == "passed"
     o.status = "verified" if o.verified else "failed"
     db.commit()
@@ -122,9 +162,15 @@ def verify_patch(patch_id: str, body: PatchVerifyRequest, db: Session = Depends(
 
 
 @router.post("/generate/{vuln_id}")
-def generate_patch(vuln_id: str, db: Session = Depends(get_session)):
+def generate_patch(
+    vuln_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("vuln:manage"))
+):
     vuln_orm = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not vuln_orm:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+    # P1-1: 生成补丁前校验漏洞租户归属。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (vuln_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
 
     from ...db.convert import orm_to_vuln

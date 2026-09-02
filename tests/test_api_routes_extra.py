@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fusion_security.api.app import create_app
-from fusion_security.api.auth import get_current_key
+from fusion_security.api.auth import APIKey, get_current_key
 from fusion_security.db import get_session
 
 
@@ -108,7 +108,7 @@ def _make_patch_orm(**overrides):
 @pytest.fixture
 def client():
     app = create_app()
-    app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+    app.dependency_overrides[get_current_key] = lambda: APIKey(key_hash="t", name="t", roles=["admin"], tenant_id="")
     return TestClient(app)
 
 
@@ -136,7 +136,7 @@ def mock_db():
 def override_client(mock_db):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: mock_db
-    app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"])
+    app.dependency_overrides[get_current_key] = lambda: APIKey(key_hash="t", name="t", roles=["admin"], tenant_id="")
     tc = TestClient(app)
     tc._app = app
     return tc

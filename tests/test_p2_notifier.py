@@ -105,37 +105,41 @@ class TestNotificationDispatcher:
 
 
 class TestUrllibPost:
-    @patch("fusion_security.engine.ci.notifier.validate_outbound_url")
-    @patch("fusion_security.engine.ci.notifier.urlopen")
-    def test_success_response(self, mock_urlopen, mock_guard):
+    @patch("fusion_security.engine.ci.notifier.build_opener")
+    @patch("fusion_security.engine.ci.notifier.pin_url")
+    def test_success_response(self, mock_pin, mock_build):
         from fusion_security.engine.ci._url_guard import URLGuardResult
 
-        mock_guard.return_value = URLGuardResult(ok=True, safe_url="https://example.com")
+        mock_pin.return_value = (URLGuardResult(ok=True, safe_url="https://example.com"), None)
         mock_resp = MagicMock()
         mock_resp.status = 200
         mock_resp.read.return_value = b'{"code":0}'
         mock_resp.__enter__ = lambda s: mock_resp
         mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+        mock_build.return_value = mock_opener
         assert _urllib_post("https://example.com", b"{}", {"Content-Type": "application/json"}) is True
 
-    @patch("fusion_security.engine.ci.notifier.validate_outbound_url")
-    @patch("fusion_security.engine.ci.notifier.urlopen")
-    def test_error_response_code(self, mock_urlopen, mock_guard):
+    @patch("fusion_security.engine.ci.notifier.build_opener")
+    @patch("fusion_security.engine.ci.notifier.pin_url")
+    def test_error_response_code(self, mock_pin, mock_build):
         from fusion_security.engine.ci._url_guard import URLGuardResult
 
-        mock_guard.return_value = URLGuardResult(ok=True, safe_url="https://example.com")
+        mock_pin.return_value = (URLGuardResult(ok=True, safe_url="https://example.com"), None)
         mock_resp = MagicMock()
         mock_resp.status = 200
         mock_resp.read.return_value = b'{"errcode":40001}'
         mock_resp.__enter__ = lambda s: mock_resp
         mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+        mock_build.return_value = mock_opener
         assert _urllib_post("https://example.com", b"{}", {"Content-Type": "application/json"}) is False
 
-    @patch("fusion_security.engine.ci.notifier.validate_outbound_url")
-    def test_ssrf_rejected(self, mock_guard):
+    @patch("fusion_security.engine.ci.notifier.pin_url")
+    def test_ssrf_rejected(self, mock_pin):
         from fusion_security.engine.ci._url_guard import URLGuardResult
 
-        mock_guard.return_value = URLGuardResult(ok=False, reason="目标地址禁止外发")
+        mock_pin.return_value = (URLGuardResult(ok=False, reason="目标地址禁止外发"), None)
         assert _urllib_post("http://169.254.169.254/", b"{}", {"Content-Type": "application/json"}) is False

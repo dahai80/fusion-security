@@ -12,6 +12,7 @@ from ...db.convert import orm_to_vuln
 from ...db.models import ScanORM
 from ...report.report import ReportGenerator
 from ...report.sarif import vulnerabilities_to_sarif
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,9 +24,15 @@ class ReportRequest(BaseModel):
 
 
 @router.post("/generate")
-def generate_report(body: ReportRequest, db: Session = Depends(get_session)):
+def generate_report(
+    body: ReportRequest, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
+):
     scan_orm = db.query(ScanORM).filter(ScanORM.id == body.scan_id).first()
     if not scan_orm:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    # P1-1 IDOR: 跨租户访问他人扫描报告。
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (scan_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
 
     from ...engine.scanner import ScanResult, ScanTarget
@@ -66,9 +73,14 @@ def generate_report(body: ReportRequest, db: Session = Depends(get_session)):
 
 
 @router.get("/scans/{scan_id}/sarif")
-def scan_sarif(scan_id: str, db: Session = Depends(get_session)):
+def scan_sarif(
+    scan_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
+):
     scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not scan_orm:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    if tenant_id and (scan_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
     seen_vuln_ids: set[str] = set()
     vulns = []

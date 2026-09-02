@@ -204,14 +204,15 @@ class ApiKeyORM(Base):
 
 
 class WebhookORM(Base):
-    # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢);secret 只存哈希。
+    # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢)。
+    # P0-5: secret_hash 现存 Fernet 可逆密文(签名需回放),不再是单向 sha256。
     __tablename__ = "webhooks"
     __table_args__ = (Index("ix_webhooks_enabled", "enabled"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     url: Mapped[str] = mapped_column(String(500), default="")
     events_json: Mapped[str] = mapped_column(Text, default="[]")
-    secret_hash: Mapped[str] = mapped_column(String(64), default="")
+    secret_hash: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 

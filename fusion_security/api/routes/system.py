@@ -4,10 +4,11 @@ import logging
 import os
 import platform
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ... import __version__
+from ..auth import require_permission
 
 
 def _resolve_mlx_url() -> str:
@@ -28,7 +29,7 @@ public_router = APIRouter()
 
 
 @router.get("/info")
-def system_info():
+def system_info(_=Depends(require_permission("scan:read"))):
     return {
         "name": "Fusion-Security",
         "version": __version__,
@@ -44,7 +45,7 @@ def health_check():
 
 
 @router.get("/health/detailed")
-def health_detailed():
+def health_detailed(_=Depends(require_permission("system:manage"))):
     # S-P1: 此前挂在 public_router(无鉴权),泄露 DB/AI/CPU/磁盘状态。移到鉴权 router。
     # 修复 next(get_session()) 误用 + s.execute("SELECT 1") 在 SA 2.x 报错(需 text())。
     import httpx
@@ -89,7 +90,7 @@ def health_detailed():
 
 
 @router.get("/model/config")
-def model_config():
+def model_config(_=Depends(require_permission("system:manage"))):
     import httpx
 
     try:
@@ -106,7 +107,7 @@ def model_config():
 
 
 @router.get("/rules")
-def list_rules():
+def list_rules(_=Depends(require_permission("scan:read"))):
     from ...engine.rules.engine import RuleEngine
 
     engine = RuleEngine()
@@ -128,7 +129,7 @@ def list_rules():
 
 
 @router.get("/rulesets")
-def list_rulesets():
+def list_rulesets(_=Depends(require_permission("scan:read"))):
     from ...engine.rules.engine import RuleEngine
 
     engine = RuleEngine()
@@ -145,7 +146,7 @@ class ModelConfigUpdate(BaseModel):
 
 
 @router.put("/models")
-def update_model_config(body: ModelConfigUpdate):
+def update_model_config(body: ModelConfigUpdate, _=Depends(require_permission("system:manage"))):
     if not body.default_model:
         raise HTTPException(status_code=400, detail="default_model 不能为空")
     import httpx
