@@ -634,7 +634,7 @@ pytest tests/ -v
 | `FUSION_RATE_LIMIT_PER_MINUTE` | `120` | Max API requests per 60s sliding window, keyed by `(client_ip, sha256(api_key))`. Exceeding returns `429` with `Retry-After`. |
 | `FUSION_MAX_CONCURRENT_SCANS` | `4` | Per-tenant concurrent active-scan quota (running/queued/pending). Creating a scan beyond this returns `409`. |
 
-## ✨ Wired Features (v0.2.0rc0)
+## ✨ Wired Features (v0.2.0rc1)
 
 Five features previously declared in code but never connected are now fully wired into production paths and **persisted to DB** (survive restart):
 
