@@ -404,7 +404,7 @@ def schedules_app(monkeypatch):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"], tenant_id="t_sched")
-    yield TestClient(app), db
+    yield TestClient(app, headers={"X-Tenant-Id": "t_sched"}), db
     db.close()
     app.dependency_overrides.clear()
 
@@ -1837,8 +1837,8 @@ class TestPathOnlyScanNoProject:
                 db.close()
 
         app.dependency_overrides[get_session] = _override
-        app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"], tenant_id="")
-        return TestClient(app)
+        app.dependency_overrides[get_current_key] = lambda: MagicMock(roles=["admin"], tenant_id="t_test")
+        return TestClient(app, headers={"X-Tenant-Id": "t_test"})
 
     def test_post_scan_no_project_returns_null(self):
         client = self._client()

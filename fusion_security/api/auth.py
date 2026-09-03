@@ -7,7 +7,7 @@ import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request, Security
@@ -221,17 +221,48 @@ class AuthManager:
 auth_manager = AuthManager()
 
 
-async def get_current_key(request: Request, api_key: str = Security(API_KEY_HEADER)) -> APIKey:
-    if not api_key:
-        raise HTTPException(status_code=401, detail="缺少 API Key (X-API-Key header)")
-    key_obj = auth_manager.validate_key(api_key)
-    if not key_obj:
-        raise HTTPException(status_code=401, detail="无效或过期的 API Key")
-    return key_obj
+def _tenant_context():
+    # 延迟导入:fusion_core.tenant 由 TenantMiddleware 在请求生命周期内 set_context。
+    try:
+        from fusion_core.tenant import current
+
+        return current()
+    except Exception:
+        return None
+
+
+async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER)) -> APIKey:
+    # Issue #32: 双模式鉴权。TenantMiddleware 已强制 X-Tenant-Id 存在 + (若带 Bearer) JWT↔header 匹配。
+    # 这里做 fail-closed 租户校验:空租户 key → 401(红线 1);key 租户 ≠ header → 401(红线 2)。
+    ctx = _tenant_context()
+    header_tid = ctx.tenant_id if ctx else ""
+    if api_key:
+        key_obj = auth_manager.validate_key(api_key)
+        if not key_obj:
+            raise HTTPException(status_code=401, detail="无效或过期的 API Key")
+        if not key_obj.tenant_id:
+            logger.warning(f"[Auth] API Key 无租户分配(name={key_obj.name}),fail-closed 401")
+            raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
+        if header_tid and key_obj.tenant_id != header_tid:
+            logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+            raise HTTPException(status_code=401, detail="租户不匹配")
+        # 带 Bearer 时 JWT 角色优先(身份层权威)。
+        if ctx and ctx.role:
+            key_obj = replace(key_obj, roles=[ctx.role])
+        return key_obj
+    # 无 API Key —— 纯 JWT 路径:从 TenantContext 构造 principal。
+    if ctx and ctx.tenant_id:
+        role = ctx.role or "viewer"
+        return APIKey(key_hash="", name="jwt", roles=[role], tenant_id=ctx.tenant_id)
+    raise HTTPException(status_code=401, detail="缺少凭证(X-API-Key 或 Bearer token)")
+
+
+# 保留 get_current_key 作为别名,兼容现有 dependency_overrides 测试夹具。
+get_current_key = get_principal
 
 
 def require_permission(permission: str):
-    async def _check(key: APIKey = Depends(get_current_key)) -> APIKey:
+    async def _check(key: APIKey = Depends(get_principal)) -> APIKey:
         if not auth_manager.has_permission(key, permission):
             raise HTTPException(status_code=403, detail=f"权限不足: 需要 {permission}")
         return key

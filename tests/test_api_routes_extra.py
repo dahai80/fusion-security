@@ -20,6 +20,7 @@ def _make_project_orm(**overrides):
         "ruleset_id": "",
         "local_path": "",
         "status": "active",
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -52,6 +53,7 @@ def _make_scan_orm(**overrides):
         "medium": 0,
         "low": 0,
         "summary": "",
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -77,6 +79,7 @@ def _make_vuln_orm(**overrides):
         "verified": False,
         "status": "open",
         "data_flow_path": "",
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -97,6 +100,7 @@ def _make_patch_orm(**overrides):
         "status": "pending",
         "strategy": "template",
         "verified": False,
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -108,13 +112,18 @@ def _make_patch_orm(**overrides):
 @pytest.fixture
 def client():
     app = create_app()
-    app.dependency_overrides[get_current_key] = lambda: APIKey(key_hash="t", name="t", roles=["admin"], tenant_id="")
-    return TestClient(app)
+    app.dependency_overrides[get_current_key] = lambda: APIKey(
+        key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
+    )
+    return TestClient(app, headers={"X-Tenant-Id": "t_test"})
 
 
 @pytest.fixture
 def mock_db():
     session = MagicMock()
+    # Issue #32: tenant scope 在 list 查询链路多加一层 .filter(),让 filter 链自指以兼容多次过滤。
+    session.query.return_value.filter.return_value = session.query.return_value
+    session.query.return_value.first.return_value = None
     session.query.return_value.filter.return_value.first.return_value = None
     session.query.return_value.filter.return_value.all.return_value = []
     session.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
@@ -136,8 +145,10 @@ def mock_db():
 def override_client(mock_db):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: mock_db
-    app.dependency_overrides[get_current_key] = lambda: APIKey(key_hash="t", name="t", roles=["admin"], tenant_id="")
-    tc = TestClient(app)
+    app.dependency_overrides[get_current_key] = lambda: APIKey(
+        key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
+    )
+    tc = TestClient(app, headers={"X-Tenant-Id": "t_test"})
     tc._app = app
     return tc
 
@@ -448,6 +459,7 @@ class TestScansCheckpointsAndResume:
             MockCP.return_value.load.return_value = mock_cp
             mock_scan_orm = MagicMock()
             mock_scan_orm.status = "pending"
+            mock_scan_orm.tenant_id = "t_test"
             mock_db.query.return_value.filter.return_value.first.return_value = mock_scan_orm
             resp = override_client.post(
                 "/api/v1/scans/resume",

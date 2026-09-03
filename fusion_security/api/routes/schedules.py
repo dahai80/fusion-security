@@ -70,10 +70,9 @@ async def list_schedules(
     from ...db.models import ScheduledScanORM
 
     q = db.query(ScheduledScanORM)
-    # P1-1 IDOR: 按调用方 tenant_id 过滤,跨租户不可见。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id:
-        q = q.filter(ScheduledScanORM.tenant_id == tenant_id)
+    # Issue #32: fail-closed。按调用方 tenant_id 过滤,始终生效。
+    tenant_id = api_key.tenant_id or ""
+    q = q.filter(ScheduledScanORM.tenant_id == tenant_id)
     rows = q.all()
     return {"schedules": [_orm_to_dict(r) for r in rows]}
 
@@ -92,7 +91,7 @@ async def create_schedule(
     if not body.project_path:
         raise HTTPException(status_code=400, detail="project_path 不能为空")
 
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
+    tenant_id = api_key.tenant_id or ""
     sid = uuid.uuid4().hex[:16]
     sched = ScheduledScan(
         id=sid,
@@ -134,8 +133,8 @@ async def update_schedule(
     if not row:
         raise HTTPException(status_code=404, detail="计划不存在")
     # P1-1 IDOR: 校验租户归属,跨租户不可改。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (row.tenant_id or "") != tenant_id:
+    tenant_id = api_key.tenant_id or ""
+    if (row.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="计划不存在")
     if body.frequency is not None and body.frequency not in _VALID_FREQ:
         raise HTTPException(status_code=400, detail=f"非法 frequency: {body.frequency}")
@@ -171,8 +170,8 @@ async def delete_schedule(
     if not row:
         raise HTTPException(status_code=404, detail="计划不存在")
     # P1-1 IDOR: 校验租户归属,跨租户不可删。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (row.tenant_id or "") != tenant_id:
+    tenant_id = api_key.tenant_id or ""
+    if (row.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="计划不存在")
     db.delete(row)
     db.commit()

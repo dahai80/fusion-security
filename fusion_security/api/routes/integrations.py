@@ -14,7 +14,7 @@ from ...engine.feedback.loop import FeedbackEntry, FeedbackStore
 from ...engine.rules.custom import CustomRule, CustomRuleStore
 from ...engine.scoring.compliance import ComplianceMapper
 from ...engine.scoring.cvss import CVSS31Scorer
-from ..auth import require_permission
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,12 @@ router = APIRouter()
 feedback_store = FeedbackStore()
 custom_rule_store = CustomRuleStore()
 dashboard = DashboardAggregator()
+
+
+def _check_webhook_tenant(row, api_key: APIKey) -> None:
+    # Issue #32: fail-closed。Webhook 跨租户 404。
+    if (getattr(row, "tenant_id", "") or "") != (api_key.tenant_id or ""):
+        raise HTTPException(status_code=404, detail="Webhook不存在")
 
 
 @router.post("/gate", summary="安全质量门禁")
@@ -182,7 +188,10 @@ def _validate_outbound(url: str) -> None:
 
 @router.post("/webhooks", summary="创建Webhook")
 async def create_webhook(
-    url: str, events: list[str] = None, secret: str = "", _=Depends(require_permission("system:manage"))
+    url: str,
+    events: list[str] = None,
+    secret: str = "",
+    api_key: APIKey = Depends(require_permission("system:manage")),
 ):
     # P0-5: secret 用 Fernet 可逆加密存储(签名需回放),明文不落库也不回显。
     import json
@@ -203,6 +212,7 @@ async def create_webhook(
             events_json=json.dumps(events),
             secret_hash=encrypt_secret(secret) if secret else "",
             enabled=True,
+            tenant_id=api_key.tenant_id or "",
         )
         db.add(row)
         db.commit()
@@ -214,20 +224,20 @@ async def create_webhook(
 
 
 @router.get("/webhooks", summary="列出Webhooks")
-async def list_webhooks(_=Depends(require_permission("system:manage"))):
+async def list_webhooks(api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
 
     db = get_session()
     try:
-        rows = db.query(WebhookORM).all()
+        rows = db.query(WebhookORM).filter(WebhookORM.tenant_id == api_key.tenant_id).all()
         return {"webhooks": [_webhook_orm_to_dict(r) for r in rows]}
     finally:
         db.close()
 
 
 @router.get("/webhooks/{webhook_id}", summary="获取Webhook")
-async def get_webhook(webhook_id: str, _=Depends(require_permission("system:manage"))):
+async def get_webhook(webhook_id: str, api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
 
@@ -236,6 +246,7 @@ async def get_webhook(webhook_id: str, _=Depends(require_permission("system:mana
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
             raise HTTPException(status_code=404, detail="Webhook不存在")
+        _check_webhook_tenant(row, api_key)
         return _webhook_orm_to_dict(row)
     finally:
         db.close()
@@ -248,7 +259,9 @@ class WebhookUpdate(BaseModel):
 
 
 @router.patch("/webhooks/{webhook_id}", summary="更新Webhook")
-async def update_webhook(webhook_id: str, body: WebhookUpdate, _=Depends(require_permission("system:manage"))):
+async def update_webhook(
+    webhook_id: str, body: WebhookUpdate, api_key: APIKey = Depends(require_permission("system:manage"))
+):
     import json
 
     from ...db import get_session
@@ -259,6 +272,7 @@ async def update_webhook(webhook_id: str, body: WebhookUpdate, _=Depends(require
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
             raise HTTPException(status_code=404, detail="Webhook不存在")
+        _check_webhook_tenant(row, api_key)
         if body.url is not None:
             _validate_outbound(body.url)
             row.url = body.url
@@ -274,7 +288,7 @@ async def update_webhook(webhook_id: str, body: WebhookUpdate, _=Depends(require
 
 
 @router.delete("/webhooks/{webhook_id}", summary="删除Webhook")
-async def delete_webhook(webhook_id: str, _=Depends(require_permission("system:manage"))):
+async def delete_webhook(webhook_id: str, api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
 
@@ -283,6 +297,7 @@ async def delete_webhook(webhook_id: str, _=Depends(require_permission("system:m
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
             raise HTTPException(status_code=404, detail="Webhook不存在")
+        _check_webhook_tenant(row, api_key)
         db.delete(row)
         db.commit()
         return {"status": "ok"}
@@ -418,7 +433,7 @@ async def configure_jira(body: JiraConfigModel, _=Depends(require_permission("sy
 
 
 @router.post("/jira/sync", summary="同步漏洞到Jira")
-async def sync_to_jira(body: JiraIssueCreate, _=Depends(require_permission("vuln:manage"))):
+async def sync_to_jira(body: JiraIssueCreate, api_key: APIKey = Depends(require_permission("vuln:manage"))):
     global _jira_client
     if _jira_client is None:
         raise HTTPException(status_code=400, detail="未配置Jira连接，请先调用 /jira/config")
@@ -428,6 +443,8 @@ async def sync_to_jira(body: JiraIssueCreate, _=Depends(require_permission("vuln
     from ...db.convert import orm_to_vuln
     from ...db.models import VulnerabilityORM
 
+    tenant_id = api_key.tenant_id or ""
+
     # sync SQLAlchemy + sync HTTP 放线程池,避免阻塞事件循环。
     def _do_sync():
         db = get_session()
@@ -436,10 +453,15 @@ async def sync_to_jira(body: JiraIssueCreate, _=Depends(require_permission("vuln
             if body.vuln_ids:
                 for vid in body.vuln_ids:
                     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vid).first()
-                    if o:
+                    if o and (o.tenant_id or "") == tenant_id:
                         vulns.append(orm_to_vuln(o))
             else:
-                for o in db.query(VulnerabilityORM).filter(VulnerabilityORM.status == "open").limit(50).all():
+                for o in (
+                    db.query(VulnerabilityORM)
+                    .filter(VulnerabilityORM.status == "open", VulnerabilityORM.tenant_id == tenant_id)
+                    .limit(50)
+                    .all()
+                ):
                     vulns.append(orm_to_vuln(o))
             if not vulns:
                 return {"synced": 0, "issues": []}

@@ -10,8 +10,10 @@ from fusion_security.api.auth import APIKey, get_current_key
 @pytest.fixture
 def client():
     app = create_app()
-    app.dependency_overrides[get_current_key] = lambda: APIKey(key_hash="t", name="t", roles=["admin"], tenant_id="")
-    return TestClient(app)
+    app.dependency_overrides[get_current_key] = lambda: APIKey(
+        key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
+    )
+    return TestClient(app, headers={"X-Tenant-Id": "t_test"})
 
 
 # ===== Patches API =====
@@ -217,8 +219,8 @@ class TestAuthEnforcement:
     def test_keys_endpoint_blocked_without_admin(self):
         app = create_app()
         app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["viewer"], tenant_id=""
+            key_hash="t", name="t", roles=["viewer"], tenant_id="t_test"
         )
-        tc = TestClient(app)
+        tc = TestClient(app, headers={"X-Tenant-Id": "t_test"})
         resp = tc.get("/api/v1/keys")
         assert resp.status_code == 403

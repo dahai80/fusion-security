@@ -257,9 +257,9 @@ class TestFastAPIApp:
         from fusion_security.api.auth import APIKey, get_current_key
 
         app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["admin"], tenant_id=""
+            key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
         )
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Tenant-Id": "t_test"})
         resp = client.get("/api/v1/system/info")
         assert resp.status_code == 200
         data = resp.json()
@@ -273,9 +273,9 @@ class TestFastAPIApp:
         from fusion_security.api.auth import APIKey, get_current_key
 
         app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["admin"], tenant_id=""
+            key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
         )
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Tenant-Id": "t_test"})
         resp = client.get("/api/v1/system/rules")
         assert resp.status_code == 200
         data = resp.json()

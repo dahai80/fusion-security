@@ -72,24 +72,40 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 def count_active_scans(tenant_id: str) -> int:
-    # 统计指定租户的活跃扫描数(running/queued/pending)。
+    # Issue #32: fail-closed。始终按 tenant_id 过滤(空 tenant 不会到达,已由 get_principal 拦截)。
     from ..db import get_session
     from ..db.models import ScanORM
 
     db = get_session()
     try:
         q = db.query(ScanORM).filter(ScanORM.status.in_(("running", "queued", "pending")))
-        if tenant_id:
-            q = q.filter(ScanORM.tenant_id == tenant_id)
+        q = q.filter(ScanORM.tenant_id == tenant_id)
         return q.count()
     finally:
         db.close()
 
 
+def _tenant_quota_cap(tenant_id: str) -> int:
+    # Issue #32: JWT 路径 verify_jwt 回调缓存了 fusion-identity 下发的配额;API-key 路径回退环境变量。
+    cap = MAX_CONCURRENT_SCANS_PER_TENANT
+    try:
+        from ..identity.client import get_tenant_quota
+
+        quota = get_tenant_quota(tenant_id)
+        if quota:
+            val = quota.get("max_concurrent_scans")
+            if isinstance(val, (int, float)) and val > 0:
+                return int(val)
+    except Exception as e:
+        logger.debug(f"[Quota] 读取 identity 配额失败,回退默认: tid={tenant_id} err={e}")
+    return cap
+
+
 def enforce_scan_quota(tenant_id: str) -> None:
+    cap = _tenant_quota_cap(tenant_id)
     active = count_active_scans(tenant_id)
-    if active >= MAX_CONCURRENT_SCANS_PER_TENANT:
-        logger.warning(f"[Quota] 租户 {tenant_id or '-'} 活跃扫描 {active} >= {MAX_CONCURRENT_SCANS_PER_TENANT},拒绝")
+    if active >= cap:
+        logger.warning(f"[Quota] 租户 {tenant_id or '-'} 活跃扫描 {active} >= {cap},拒绝")
         raise _QuotaExceeded()
 
 

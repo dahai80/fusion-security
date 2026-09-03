@@ -270,9 +270,9 @@ class TestProjectScanSummaryAPI:
         self.app = create_app()
         self.app.dependency_overrides[get_session] = self._override_session
         self.app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["admin"], tenant_id=""
+            key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
         )
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, headers={"X-Tenant-Id": "t_test"})
 
     def _override_session(self):
         db = self.SessionLocal()
@@ -287,7 +287,7 @@ class TestProjectScanSummaryAPI:
 
     def test_scan_summary_empty(self):
         db = self.SessionLocal()
-        proj = ProjectORM(id="p1", name="TestProj")
+        proj = ProjectORM(id="p1", name="TestProj", tenant_id="t_test")
         db.add(proj)
         db.commit()
         db.close()
@@ -302,12 +302,13 @@ class TestProjectScanSummaryAPI:
 
     def test_scan_summary_with_data(self):
         db = self.SessionLocal()
-        proj = ProjectORM(id="p2", name="TestProj2")
+        proj = ProjectORM(id="p2", name="TestProj2", tenant_id="t_test")
         db.add(proj)
         scan = ScanORM(
             id="s1",
             project_id="p2",
             status="completed",
+            tenant_id="t_test",
             critical=1,
             high=2,
             medium=3,

@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from fusion_security.api.auth import AuthManager
 from fusion_security.engine.ci.gate import GatePolicy, GateResult, SecurityGate
 from fusion_security.engine.ci.webhook import WebhookConfig, WebhookNotifier
@@ -232,28 +234,18 @@ class TestAuth:
 
 # --- Tenant ---
 class TestTenant:
-    def test_create_tenant(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mgr = TenantManager(base_dir=tmpdir)
-            tid, raw_key = mgr.create_tenant("test_org")
-            assert tid.startswith("tenant_")
-            assert raw_key.startswith("fs_tenant_")
+    # Issue #32: TenantManager 已退役,租户鉴权由 fusion-identity 提供。构造即拒。
+    def test_create_tenant_retired(self):
+        with pytest.raises(RuntimeError):
+            TenantManager(base_dir="/tmp")
 
-    def test_authenticate(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mgr = TenantManager(base_dir=tmpdir)
-            tid, raw_key = mgr.create_tenant("test_org")
-            t = mgr.authenticate(raw_key)
-            assert t is not None
-            assert t.name == "test_org"
+    def test_authenticate_retired(self):
+        with pytest.raises(RuntimeError):
+            TenantManager(base_dir="/tmp")
 
-    def test_deactivate(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mgr = TenantManager(base_dir=tmpdir)
-            tid, _ = mgr.create_tenant("test_org")
-            mgr.deactivate(tid)
-            t = mgr.get_tenant(tid)
-            assert t.is_active is False
+    def test_deactivate_retired(self):
+        with pytest.raises(RuntimeError):
+            TenantManager(base_dir="/tmp")
 
 
 # --- Audit ---

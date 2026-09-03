@@ -68,7 +68,7 @@
 | **API rate limiting** | Per-`(client_ip, api_key)` sliding-window limiter (`FUSION_RATE_LIMIT_PER_MINUTE`, default 120/min → `429` + `Retry-After`) protects every `/api/v1/` route except the public health probe |
 | **Per-tenant scan quota** | Concurrent active scans (running/queued/pending) per tenant are capped (`FUSION_MAX_CONCURRENT_SCANS`, default 4 → `409`), preventing one tenant from exhausting the worker pool |
 | **Per-endpoint RBAC** | Every route enforces a specific permission (`scan:run`, `vuln:manage`, `system:manage`, …) via `require_permission`, not just "any valid key" — least-privilege by default |
-| **Tenant IDOR closure** | Scan/vulnerability/patch lookups scope by `tenant_id`; a cross-tenant request returns `404`, leaking no record existence |
+| **Tenant IDOR closure** | Scan/vulnerability/patch/project/webhook/schedule lookups scope by `tenant_id` **fail-closed** (no `if tenant_id:` skip); a cross-tenant request returns `404`, leaking no record existence. Empty-tenant API keys return `401` (no all-data leak). Tenant identity is owned by fusion-identity |
 | **Webhook HMAC at fire time** | Webhook secrets are Fernet-encrypted (key derived from `FUSION_SECURITY_MASTER_KEY`) so the `X-Fusion-Security-Signature` HMAC can be recomputed when an event fires, without ever storing the plaintext secret |
 
 ---
@@ -392,23 +392,60 @@ fusion-security serve --host 127.0.0.1 --port 8080
 
 ### API Example
 
+Every data route requires the `X-Tenant-Id` header (enforced by the fusion-identity tenant middleware) plus either an `X-API-Key` or an `Authorization: Bearer <jwt>` credential. See the next section for details.
+
 ```bash
 # Create project
 curl -X POST http://localhost:11454/api/v1/projects \
+  -H "X-API-Key: $KEY" -H "X-Tenant-Id: t1" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-project", "local_path": "/path/to/project"}'
 
 # Start scan
 curl -X POST http://localhost:11454/api/v1/scans \
+  -H "X-API-Key: $KEY" -H "X-Tenant-Id: t1" \
   -H "Content-Type: application/json" \
   -d '{"project_id": "<id>", "scan_type": "full", "use_ai": true}'
 
 # List vulnerabilities
-curl http://localhost:11454/api/v1/vulnerabilities?severity=critical
+curl -H "X-API-Key: $KEY" -H "X-Tenant-Id: t1" \
+  http://localhost:11454/api/v1/vulnerabilities?severity=critical
 
 # Get stats
-curl http://localhost:11454/api/v1/vulnerabilities/stats/summary
+curl -H "X-API-Key: $KEY" -H "X-Tenant-Id: t1" \
+  http://localhost:11454/api/v1/vulnerabilities/stats/summary
 ```
+
+### Authentication & Multi-Tenancy (fusion-identity)
+
+As of v0.2.0, fusion-security delegates **JWT issuance and tenant registry** to [`fusion-identity`](https://github.com/dahai80/fusion-identity) — the ecosystem's single identity authority. The local tenant registry (`TenantManager`, `fs_tenant_*` keys, `tenants.json`) is **retired**; instantiating `TenantManager` now raises `RuntimeError`.
+
+**Dual-mode auth** — both credentials are accepted on every data route:
+
+| Mode | Credential | Tenant source | Role source |
+|------|------------|---------------|-------------|
+| API key | `X-API-Key: <fs_...>` | key's `tenant_id` (cross-checked against `X-Tenant-Id`) | key's `roles` |
+| JWT | `Authorization: Bearer <jwt>` | JWT `tid` claim (cross-checked against `X-Tenant-Id`) | JWT `role` claim |
+
+The `X-Tenant-Id` header is **mandatory**. The `TenantMiddleware` (from `fusion_core.tenant`) enforces header presence and JWT↔header match; the principal resolver (`get_principal`) then applies **fail-closed** tenant checks:
+
+- API key with empty `tenant_id` → `401` (no all-data leak)
+- API key `tenant_id` ≠ `X-Tenant-Id` header → `401`
+- Cross-tenant scan/vuln/patch/project/webhook/schedule lookup → `404` (existence not leaked)
+- Missing `X-Tenant-Id` → `401`
+- Bearer JWT whose `tid` ≠ `X-Tenant-Id` → `401`
+- Revoked JWT / identity unreachable (bearer path) → `401` (fail-closed; API-key requests proceed since identity is not consulted)
+
+**Per-tenant concurrent-scan quota** is sourced from the fusion-identity `quota.max_concurrent_scans` returned by `/verify` (JWT path), falling back to `FUSION_MAX_CONCURRENT_SCANS` (default 4) for API-key-only requests. Scan completion reports usage back to fusion-identity best-effort.
+
+**Environment variables:**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity base URL |
+| `FUSION_IDENTITY_SERVICE_TOKEN` | _(empty)_ | service token bearer for `/verify`; when unset, JWT verification is unavailable (API-key mode still works) |
+
+Public endpoints exempt from tenant middleware: `/api/v1/system/health`, `/docs`, `/openapi.json`, `/redoc`.
 
 ---
 

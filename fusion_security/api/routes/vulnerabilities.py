@@ -59,17 +59,15 @@ def _orm_to_response(o: VulnerabilityORM) -> VulnResponse:
 
 
 def _tenant_scope(query, api_key: APIKey):
-    # P1-1 IDOR: 列表查询按调用方 tenant_id 过滤,跨租户不可见。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id:
-        return query.filter(VulnerabilityORM.tenant_id == tenant_id)
-    return query
+    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    tenant_id = api_key.tenant_id or ""
+    return query.filter(VulnerabilityORM.tenant_id == tenant_id)
 
 
 def _check_tenant(o: VulnerabilityORM, api_key: APIKey) -> None:
-    # P1-1 IDOR: 单条查询校验租户归属,跨租户访问返回 404(不泄露存在性)。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (o.tenant_id or "") != tenant_id:
+    # Issue #32: fail-closed。跨租户访问一律 404(不泄露存在性)。
+    tenant_id = api_key.tenant_id or ""
+    if (o.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
 
 
@@ -268,7 +266,7 @@ def mark_false_positive(
         scan_id=o.scan_id or "",
         flag="false_positive",
         note=reason,
-        created_by=getattr(api_key, "tenant_id", "") or "",
+        created_by=api_key.tenant_id or "",
     )
     db.add(fb)
     db.commit()

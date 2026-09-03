@@ -19,9 +19,11 @@ def _now() -> datetime:
 
 class ProjectORM(Base):
     __tablename__ = "projects"
+    __table_args__ = (Index("ix_projects_tenant_id", "tenant_id"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(16), default="")
     repo_url: Mapped[str] = mapped_column(String(500), default="")
     tech_stack: Mapped[str] = mapped_column(String(200), default="")
     default_branch: Mapped[str] = mapped_column(String(100), default="main")
@@ -207,10 +209,11 @@ class WebhookORM(Base):
     # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢)。
     # P0-5: secret_hash 现存 Fernet 可逆密文(签名需回放),不再是单向 sha256。
     __tablename__ = "webhooks"
-    __table_args__ = (Index("ix_webhooks_enabled", "enabled"),)
+    __table_args__ = (Index("ix_webhooks_enabled", "enabled"), Index("ix_webhooks_tenant_id", "tenant_id"))
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     url: Mapped[str] = mapped_column(String(500), default="")
+    tenant_id: Mapped[str] = mapped_column(String(16), default="")
     events_json: Mapped[str] = mapped_column(Text, default="[]")
     secret_hash: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

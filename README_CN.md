@@ -161,7 +161,7 @@ cd frontend && npm install && npm run dev
 | **API 限流** | 按 `(client_ip, api_key)` 滑动窗口限流（`FUSION_RATE_LIMIT_PER_MINUTE`，默认 120/分钟 → `429` + `Retry-After`），覆盖除公开健康探针外所有 `/api/v1/` 路由 |
 | **每租户扫描配额** | 每租户并发活跃扫描（running/queued/pending）上限 `FUSION_MAX_CONCURRENT_SCANS`（默认 4 → `409`），单租户无法耗尽工作池 |
 | **端点级 RBAC** | 每个路由强制具体权限（`scan:run`/`vuln:manage`/`system:manage`…）经 `require_permission`，非"任意有效 key" — 默认最小权限 |
-| **租户 IDOR 闭合** | 扫描/漏洞/补丁查询按 `tenant_id` 过滤；跨租户请求返回 `404`，不泄露记录存在性 |
+| **租户 IDOR 闭合** | 扫描/漏洞/补丁/项目/webhook/计划任务查询按 `tenant_id` **fail-closed** 过滤（无 `if tenant_id:` 跳过）；跨租户请求返回 `404`，不泄露记录存在性。空租户 API Key 返回 `401`（不泄露全量数据）。租户身份归 fusion-identity 统一管理 |
 | **Webhook 触发时 HMAC** | Webhook secret 以 Fernet 加密（密钥由 `FUSION_SECURITY_MASTER_KEY` 派生），事件触发时可回算 `X-Fusion-Security-Signature` HMAC，绝不存明文 secret |
 
 ### 漏洞覆盖（37 规则）
@@ -346,6 +346,37 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | GET | `/api/v1/system/info` | 版本与平台信息 |
 | GET | `/api/v1/system/rules` | 内置规则列表 |
 | PUT | `/api/v1/system/models` | 更新默认模型配置 |
+
+### 认证与多租户（fusion-identity）
+
+自 v0.2.0 起，fusion-security 将 **JWT 签发与租户注册**委托给 [`fusion-identity`](https://github.com/dahai80/fusion-identity) —— 生态内统一身份权威。本地租户注册表（`TenantManager`、`fs_tenant_*` 密钥、`tenants.json`）已**退役**；实例化 `TenantManager` 现抛 `RuntimeError`。
+
+**双模式鉴权** —— 所有数据路由同时接受两种凭证：
+
+| 模式 | 凭证 | 租户来源 | 角色来源 |
+|------|------|----------|----------|
+| API Key | `X-API-Key: <fs_...>` | key 的 `tenant_id`（与 `X-Tenant-Id` 头交叉校验） | key 的 `roles` |
+| JWT | `Authorization: Bearer <jwt>` | JWT 的 `tid` 声明（与 `X-Tenant-Id` 头交叉校验） | JWT 的 `role` 声明 |
+
+`X-Tenant-Id` 头为**必填**。`TenantMiddleware`（来自 `fusion_core.tenant`）强制头存在并校验 JWT↔头匹配；随后 principal 解析器（`get_principal`）做 **fail-closed** 租户校验：
+
+- API Key 空租户 → `401`（不泄露全量数据）
+- API Key `tenant_id` ≠ `X-Tenant-Id` 头 → `401`
+- 跨租户扫描/漏洞/补丁/项目/webhook/计划任务查询 → `404`（不泄露存在性）
+- 缺 `X-Tenant-Id` 头 → `401`
+- Bearer JWT 的 `tid` ≠ `X-Tenant-Id` 头 → `401`
+- 已吊销 JWT / identity 不可达（Bearer 路径）→ `401`（fail-closed；纯 API Key 请求不受影响，因不咨询 identity）
+
+**每租户并发扫描配额**取自 fusion-identity `/verify` 返回的 `quota.max_concurrent_scans`（JWT 路径），纯 API Key 路径回退到 `FUSION_MAX_CONCURRENT_SCANS`（默认 4）。扫描完成时 best-effort 回报用量到 fusion-identity。
+
+**环境变量：**
+
+| 变量 | 默认值 | 用途 |
+|------|--------|------|
+| `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity 基址 |
+| `FUSION_IDENTITY_SERVICE_TOKEN` | _（空）_ | 调用 `/verify` 的服务令牌；未设时 JWT 校验不可用（API Key 模式仍可用） |
+
+免租户中间件的公开端点：`/api/v1/system/health`、`/docs`、`/openapi.json`、`/redoc`。
 
 ---
 
@@ -542,7 +573,7 @@ pytest tests/ -v
 |------|------|
 | **自定义规则** | `CustomRuleStore` 注入 `RuleEngine`；经 `/api/v1/integrations/rules` 增删改查 |
 | **反馈闭环** | `FeedbackStore.filter_vulnerabilities()` 在流水线 `_stage_triage` 运行；误报反馈落 `feedbacks` 表并抑制重复发现 |
-| **多租户** | `TenantManager` 在应用启动时初始化；`tenant_id` 从 API key 解析并贯穿扫描/落库路径 |
+| **多租户** | 租户身份由 fusion-identity 统一签发（`TenantMiddleware` 接入，本地 `TenantManager` 已退役）；`tenant_id` 从 API key 或 JWT 解析并 fail-closed 贯穿扫描/落库路径 |
 | **扫描调度器** | `ScanScheduler.start()` 在应用启动时运行；计划落 `scheduled_scans` 表；定时/周期扫描自动派发 |
 | **Webhook** | Webhook 落 `webhooks` 表（替代内存 dict）；两条扫描完成路径均触发 `WebhookNotifier` 的 `scan.completed` 事件 |
 

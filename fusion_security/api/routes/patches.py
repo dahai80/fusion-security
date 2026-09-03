@@ -52,10 +52,8 @@ def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
 
 
 def _patch_tenant_scope(query, db: Session, api_key: APIKey):
-    # P1-1 IDOR: PatchORM 无 tenant_id,通过 scan_id 关联 ScanORM.tenant_id 过滤。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if not tenant_id:
-        return query
+    # Issue #32: fail-closed。PatchORM 无 tenant_id,通过 scan_id 关联 ScanORM.tenant_id 过滤。
+    tenant_id = api_key.tenant_id or ""
     scan_ids = [s.id for s in db.query(ScanORM.id).filter(ScanORM.tenant_id == tenant_id).all()]
     if not scan_ids:
         return query.filter(PatchORM.scan_id == "__none__")
@@ -63,11 +61,12 @@ def _patch_tenant_scope(query, db: Session, api_key: APIKey):
 
 
 def _check_patch_tenant(o: PatchORM, db: Session, api_key: APIKey) -> None:
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if not tenant_id or not o.scan_id:
-        return
+    # Issue #32: fail-closed。校验补丁关联扫描的租户归属,跨租户 404。
+    tenant_id = api_key.tenant_id or ""
+    if not o.scan_id:
+        raise HTTPException(status_code=404, detail="Patch not found")
     scan = db.query(ScanORM).filter(ScanORM.id == o.scan_id).first()
-    if scan and (scan.tenant_id or "") != tenant_id:
+    if not scan or (scan.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Patch not found")
 
 
@@ -168,9 +167,9 @@ def generate_patch(
     vuln_orm = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not vuln_orm:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
-    # P1-1: 生成补丁前校验漏洞租户归属。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (vuln_orm.tenant_id or "") != tenant_id:
+    # Issue #32: fail-closed。生成补丁前校验漏洞租户归属。
+    tenant_id = api_key.tenant_id or ""
+    if (vuln_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
 
     from ...db.convert import orm_to_vuln

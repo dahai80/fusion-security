@@ -1,114 +1,27 @@
-"""Multi-tenant isolation manager."""
+"""本地租户注册已退役 —— 租户/JWT 鉴权归 fusion-identity(Issue #32)。
+
+保留空壳仅为向后兼容导入;实例化或调用一律显式报错,避免静默回退到旧本地实现。
+真实租户数据由 fusion-identity 统一管理,本服务通过 TenantMiddleware + get_principal
+做 fail-closed 租户隔离,不再本地 mint tenant key 或持久化 tenants.json。
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
-import os
-import secrets
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Tenant:
-    id: str = ""
-    name: str = ""
-    api_key_hash: str = ""
-    data_dir: str = ""
-    settings: dict[str, Any] = field(default_factory=dict)
-    is_active: bool = True
-
-    def __post_init__(self):
-        if not self.id:
-            self.id = f"tenant_{secrets.token_hex(6)}"
-
-
 class TenantManager:
-    def __init__(self, base_dir: str = ""):
-        self.base_dir = base_dir or os.path.expanduser("~/.fusion_security/tenants")
-        self.tenants: dict[str, Tenant] = {}
-        self._load()
-
-    def create_tenant(self, name: str, settings: dict[str, Any] | None = None) -> tuple:
-        raw_key = f"fs_tenant_{secrets.token_hex(24)}"
-        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        tenant_id = f"tenant_{secrets.token_hex(6)}"
-        data_dir = str(Path(self.base_dir) / tenant_id / "data")
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-
-        tenant = Tenant(
-            id=tenant_id,
-            name=name,
-            api_key_hash=key_hash,
-            data_dir=data_dir,
-            settings=settings or {},
+    # Issue #32: 已退役。租户注册/鉴权/配额归 fusion-identity。
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "TenantManager 已退役(Issue #32),租户鉴权由 fusion-identity 提供。"
+            " API 鉴权走 X-API-Key + X-Tenant-Id(经 get_principal / TenantMiddleware fail-closed)。"
         )
-        self.tenants[tenant_id] = tenant
-        self._save()
-        logger.info(f"[Tenant] 创建租户: {name} id={tenant_id}")
-        return tenant_id, raw_key
 
-    def get_tenant(self, tenant_id: str) -> Tenant | None:
-        return self.tenants.get(tenant_id)
 
-    def authenticate(self, raw_key: str) -> Tenant | None:
-        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        for t in self.tenants.values():
-            # 常量时间比较避免侧信道泄露 hash 比较信息；isActive 先校验短路非密钥属性不影响安全。
-            if t.is_active and hmac.compare_digest(t.api_key_hash, key_hash):
-                return t
-        return None
-
-    def list_tenants(self) -> list[dict[str, Any]]:
-        return [
-            {"id": t.id, "name": t.name, "active": t.is_active, "data_dir": t.data_dir} for t in self.tenants.values()
-        ]
-
-    def deactivate(self, tenant_id: str) -> bool:
-        t = self.tenants.get(tenant_id)
-        if t:
-            t.is_active = False
-            self._save()
-            logger.info(f"[Tenant] 停用租户: {t.name}")
-            return True
-        return False
-
-    def _save(self) -> None:
-        import json
-
-        try:
-            Path(self.base_dir).mkdir(parents=True, exist_ok=True)
-            data = {}
-            for tid, t in self.tenants.items():
-                data[tid] = {
-                    "id": t.id,
-                    "name": t.name,
-                    "api_key_hash": t.api_key_hash,
-                    "data_dir": t.data_dir,
-                    "settings": t.settings,
-                    "is_active": t.is_active,
-                }
-            with open(Path(self.base_dir) / "tenants.json", "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"[Tenant] 保存失败: {e}")
-
-    def _load(self) -> None:
-        import json
-
-        try:
-            p = Path(self.base_dir) / "tenants.json"
-            if not p.exists():
-                return
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-            for tid, d in data.items():
-                self.tenants[tid] = Tenant(**d)
-            logger.info(f"[Tenant] 加载 {len(self.tenants)} 个租户")
-        except Exception as e:
-            logger.warning(f"[Tenant] 加载失败: {e}")
+class Tenant:
+    # Issue #32: 已退役。仅保留名字兼容旧导入,实例化即报错。
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError("Tenant 已退役(Issue #32),租户模型由 fusion-identity 管理。")
