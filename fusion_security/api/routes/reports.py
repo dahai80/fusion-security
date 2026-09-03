@@ -30,9 +30,9 @@ def generate_report(
     scan_orm = db.query(ScanORM).filter(ScanORM.id == body.scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    # P1-1 IDOR: 跨租户访问他人扫描报告。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (scan_orm.tenant_id or "") != tenant_id:
+    # Issue #32: fail-closed。跨租户访问他人扫描报告一律 404。
+    tenant_id = api_key.tenant_id or ""
+    if (scan_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
 
     from ...engine.scanner import ScanResult, ScanTarget
@@ -79,8 +79,8 @@ def scan_sarif(
     scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (scan_orm.tenant_id or "") != tenant_id:
+    tenant_id = api_key.tenant_id or ""
+    if (scan_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
     seen_vuln_ids: set[str] = set()
     vulns = []

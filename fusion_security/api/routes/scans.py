@@ -87,17 +87,15 @@ def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
 
 
 def _scan_tenant_scope(query, api_key: APIKey):
-    # P1-1 IDOR: 扫描列表按调用方 tenant_id 过滤。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id:
-        return query.filter(ScanORM.tenant_id == tenant_id)
-    return query
+    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    tenant_id = api_key.tenant_id or ""
+    return query.filter(ScanORM.tenant_id == tenant_id)
 
 
 def _check_scan_tenant(o: ScanORM, api_key: APIKey) -> None:
-    # P1-1 IDOR: 单条扫描校验租户归属,跨租户访问返回 404。
-    tenant_id = getattr(api_key, "tenant_id", "") or ""
-    if tenant_id and (o.tenant_id or "") != tenant_id:
+    # Issue #32: fail-closed。tenant_id 必非空,跨租户访问一律 404。
+    tenant_id = api_key.tenant_id or ""
+    if (o.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
 
 
@@ -174,6 +172,20 @@ async def _run_scan(
             f"扫描完成: {scan_id}, vulns={len(result.vulnerabilities)} findings={len(result.findings)} patches={len(result.patches)}"
         )
 
+        # Issue #32: best-effort 用量上报到 fusion-identity(失败仅告警,不影响扫描完成)。
+        with contextlib.suppress(Exception):
+            from ...identity.client import get_identity_client
+
+            await get_identity_client().report_usage(
+                tenant_id,
+                {
+                    "scan_id": scan_id,
+                    "vulns": len(result.vulnerabilities),
+                    "files_scanned": result.files_scanned,
+                    "duration_ms": result.duration_ms,
+                },
+            )
+
         # Feature 5: 扫描完成后触发已启用 webhook(scan.completed 事件)。
         with contextlib.suppress(Exception):
             await _notify_webhooks(scan_orm, ctx)
@@ -203,7 +215,11 @@ async def _notify_webhooks(scan_orm, ctx) -> None:
 
     db = get_session()
     try:
-        rows = db.query(WebhookORM).filter(WebhookORM.enabled.is_(True)).all()
+        rows = (
+            db.query(WebhookORM)
+            .filter(WebhookORM.enabled.is_(True), WebhookORM.tenant_id == (scan_orm.tenant_id or ""))
+            .all()
+        )
         configs = []
         for row in rows:
             events = json.loads(row.events_json or "[]")
@@ -240,7 +256,7 @@ async def create_scan(
     from ..middleware import enforce_scan_quota
 
     try:
-        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+        enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
         raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
 
@@ -259,7 +275,7 @@ async def create_scan(
     orm = scan_to_orm(s)
     orm.status = "queued"
     orm.path = body.path
-    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
+    orm.tenant_id = api_key.tenant_id or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
@@ -354,7 +370,7 @@ async def enqueue_scan(
     from ..middleware import enforce_scan_quota
 
     try:
-        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+        enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
         raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
 
@@ -372,7 +388,7 @@ async def enqueue_scan(
     orm = scan_to_orm(s)
     orm.status = "queued"
     orm.path = body.path
-    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
+    orm.tenant_id = api_key.tenant_id or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
@@ -556,7 +572,7 @@ def resume_scan(
     from ..middleware import enforce_scan_quota
 
     try:
-        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+        enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
         raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
 
@@ -575,7 +591,7 @@ def resume_scan(
     scan_orm.status = "running"
     scan_orm.path = body.path
     if not scan_orm.tenant_id:
-        scan_orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
+        scan_orm.tenant_id = api_key.tenant_id or ""
     db.commit()
 
     background_tasks.add_task(
@@ -635,6 +651,21 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
 
         db.commit()
         logger.info(f"续扫完成: {scan_id}, vulns={len(result.vulnerabilities)}")
+
+        # Issue #32: best-effort 用量上报到 fusion-identity。
+        with contextlib.suppress(Exception):
+            from ...identity.client import get_identity_client
+
+            await get_identity_client().report_usage(
+                scan_orm.tenant_id or "",
+                {
+                    "scan_id": scan_id,
+                    "vulns": len(result.vulnerabilities),
+                    "files_scanned": result.files_scanned,
+                    "duration_ms": result.duration_ms,
+                    "resume": True,
+                },
+            )
     except Exception as e:
         logger.error(f"续扫失败 {scan_id}: {e}")
         try:
@@ -701,7 +732,7 @@ def create_incremental_scan(
     from ..middleware import enforce_scan_quota
 
     try:
-        enforce_scan_quota(getattr(api_key, "tenant_id", "") or "")
+        enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
         raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
 
@@ -729,7 +760,7 @@ def create_incremental_scan(
     orm = scan_to_orm(s)
     orm.status = "pending"
     orm.path = body.path
-    orm.tenant_id = getattr(api_key, "tenant_id", "") or ""
+    orm.tenant_id = api_key.tenant_id or ""
     orm.base_commit = diff.base_commit
     orm.head_commit = diff.head_commit
     db.add(orm)

@@ -68,14 +68,13 @@ async def lifespan(app: FastAPI):
     auth_manager.ensure_master_key()
     logger.info("Fusion-Security API 已启动, master key 已就绪")
 
-    # Feature 3: 初始化多租户管理器单例。
-    try:
-        from ..engine.tenant.manager import TenantManager
+    # Issue #32: 本地 TenantManager 已退役,租户注册归 fusion-identity。检查 identity 就绪。
+    import os as _os
 
-        TenantManager()
-        logger.info("[Startup] TenantManager 已初始化")
-    except Exception as e:
-        logger.warning(f"[Startup] TenantManager 初始化失败(非致命): {e}")
+    if _os.environ.get("FUSION_IDENTITY_SERVICE_TOKEN", "").strip():
+        logger.info("[Startup] fusion-identity 服务令牌已配置,JWT 校验启用")
+    else:
+        logger.warning("[Startup] FUSION_IDENTITY_SERVICE_TOKEN 未设置,JWT 校验不可用(仅 API Key 模式)")
 
     # 自动启动 WorkerPool,否则入队扫描永久 PENDING;回收上次崩溃遗留的孤儿扫描。
     try:
@@ -133,13 +132,28 @@ def create_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-        allow_headers=["X-API-Key", "Content-Type"],
+        allow_headers=["X-API-Key", "X-Tenant-Id", "Content-Type"],
     )
 
     # P0-6: 限流中间件注册(最外层,先于路由执行)。add_middleware 后注册先执行。
     from .middleware import rate_limit_middleware
 
     app.middleware("http")(rate_limit_middleware)
+
+    # Issue #32: 接入 fusion-identity。TenantMiddleware 强制 X-Tenant-Id 存在,
+    # 校验 Bearer JWT(tid↔header 匹配),fail-closed。require_jwt=False = 双模式:
+    # 纯 API Key 请求放行(由 get_principal 再做 fail-closed 租户校验),JWT 请求走 verify_jwt。
+    from fusion_core.tenant import install_tenant_middleware
+
+    from ..identity import make_verify_jwt
+
+    install_tenant_middleware(
+        app,
+        exempt_paths=frozenset({"/api/v1/system/health", "/docs", "/openapi.json", "/redoc"}),
+        verify_jwt=make_verify_jwt(),
+        require_jwt=False,
+    )
+    logger.info("[Startup] TenantMiddleware 已接入 fusion-identity")
 
     app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"], dependencies=_AUTH)
     app.include_router(system.public_router, prefix="/api/v1/system", tags=["System"])

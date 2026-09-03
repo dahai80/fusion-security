@@ -153,6 +153,9 @@ def _migrate_schema(engine) -> None:
     _ensure_column(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
     _ensure_column(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
     _ensure_column(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
+    # Issue #32: 多租户隔离补列。projects/webhooks 旧库缺 tenant_id,补齐后 fail-closed 过滤生效。
+    _ensure_column(engine, "projects", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column(engine, "webhooks", "tenant_id", "VARCHAR(16) DEFAULT ''")
 
 
 def _ensure_column(engine, table: str, column: str, definition: str) -> None:
@@ -179,6 +182,8 @@ def _migrate_schema_portable(engine) -> None:
     _ensure_column_portable(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
     _ensure_column_portable(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
     _ensure_column_portable(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
+    _ensure_column_portable(engine, "projects", "tenant_id", "VARCHAR(16) DEFAULT ''")
+    _ensure_column_portable(engine, "webhooks", "tenant_id", "VARCHAR(16) DEFAULT ''")
     # ID 列拓宽:String(16) → String(32)。Scan.id="scan_"+hex12(17),Project.id="proj_"+hex12(17),
     # SQLite 静默截断,PG 严格校验报 StringDataRightTruncation(POST /scans 500)。旧库需 ALTER 拓宽。
     _widen_column_portable(engine, "scans", "id", "VARCHAR(32)")

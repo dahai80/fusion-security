@@ -10,7 +10,7 @@ from ...db import get_session
 from ...db.convert import project_to_orm
 from ...db.models import ProjectORM, ScanCacheORM, ScanORM
 from ...models.project import Project
-from ..auth import require_permission
+from ..auth import APIKey, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,9 +46,21 @@ class ProjectUpdate(BaseModel):
     status: str | None = None
 
 
+def _project_tenant_scope(query, api_key: APIKey):
+    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    return query.filter(ProjectORM.tenant_id == api_key.tenant_id)
+
+
+def _check_project_tenant(o: ProjectORM, api_key: APIKey) -> None:
+    if (o.tenant_id or "") != (api_key.tenant_id or ""):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+
 @router.post("", response_model=ProjectResponse)
 def create_project(
-    body: ProjectCreate, db: Session = Depends(get_session), _=Depends(require_permission("project:manage"))
+    body: ProjectCreate,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("project:manage")),
 ):
     p = Project(
         name=body.name,
@@ -59,6 +71,7 @@ def create_project(
         local_path=body.local_path,
     )
     orm = project_to_orm(p)
+    orm.tenant_id = api_key.tenant_id or ""
     db.add(orm)
     db.commit()
     db.refresh(orm)
@@ -81,11 +94,11 @@ def list_projects(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_session),
-    _=Depends(require_permission("scan:read")),
+    api_key: APIKey = Depends(require_permission("scan:read")),
 ):
     limit = min(limit, 500)
     offset = max(offset, 0)
-    q = db.query(ProjectORM)
+    q = _project_tenant_scope(db.query(ProjectORM), api_key)
     if status:
         q = q.filter(ProjectORM.status == status)
     results = q.offset(offset).limit(limit).all()
@@ -106,18 +119,22 @@ def list_projects(
 
 @router.get("/{project_id}/scan-summary")
 def project_scan_summary(
-    project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("scan:read"))
+    project_id: str,
+    db: Session = Depends(get_session),
+    api_key: APIKey = Depends(require_permission("scan:read")),
 ):
     from sqlalchemy import func
 
     proj = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
+    _check_project_tenant(proj, api_key)
 
     total_scans = (
         db.query(func.count(ScanORM.id))
         .filter(
             ScanORM.project_id == project_id,
+            ScanORM.tenant_id == api_key.tenant_id,
         )
         .scalar()
     )
@@ -126,6 +143,7 @@ def project_scan_summary(
         db.query(ScanORM)
         .filter(
             ScanORM.project_id == project_id,
+            ScanORM.tenant_id == api_key.tenant_id,
         )
         .order_by(ScanORM.created_at.desc())
         .first()
@@ -155,7 +173,7 @@ def project_scan_summary(
             func.sum(ScanORM.medium),
             func.sum(ScanORM.low),
         )
-        .filter(ScanORM.project_id == project_id)
+        .filter(ScanORM.project_id == project_id, ScanORM.tenant_id == api_key.tenant_id)
         .first()
     )
 
@@ -186,10 +204,13 @@ def project_scan_summary(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("scan:read"))):
+def get_project(
+    project_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
+):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
+    _check_project_tenant(o, api_key)
     return ProjectResponse(
         id=o.id,
         name=o.name,
@@ -207,11 +228,12 @@ def update_project(
     project_id: str,
     body: ProjectUpdate,
     db: Session = Depends(get_session),
-    _=Depends(require_permission("project:manage")),
+    api_key: APIKey = Depends(require_permission("project:manage")),
 ):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
+    _check_project_tenant(o, api_key)
     if body.name is not None:
         o.name = body.name
     if body.repo_url is not None:
@@ -243,11 +265,12 @@ def update_project(
 
 @router.delete("/{project_id}")
 def delete_project(
-    project_id: str, db: Session = Depends(get_session), _=Depends(require_permission("project:manage"))
+    project_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("project:manage"))
 ):
     o = db.query(ProjectORM).filter(ProjectORM.id == project_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Project not found")
+    _check_project_tenant(o, api_key)
     db.delete(o)
     db.commit()
     logger.info(f"删除项目: {project_id}")

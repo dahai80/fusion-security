@@ -404,6 +404,7 @@ def _make_project_orm(**overrides):
         "ruleset_id": "",
         "local_path": "",
         "status": "active",
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -428,6 +429,7 @@ def _make_vuln_orm(**overrides):
         "verified": False,
         "status": "open",
         "data_flow_path": "",
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -448,6 +450,7 @@ def _make_patch_orm(**overrides):
         "status": "generated",
         "strategy": "template",
         "verified": False,
+        "tenant_id": "t_test",
     }
     defaults.update(overrides)
     orm = MagicMock()
@@ -467,9 +470,9 @@ class TestNewAPIEndpoints:
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
         self.app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["admin"], tenant_id=""
+            key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
         )
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, headers={"X-Tenant-Id": "t_test"})
 
     def test_put_project_update(self):
         proj = _make_project_orm()
@@ -551,6 +554,7 @@ class TestNewAPIEndpoints:
         scan_orm.medium = 0
         scan_orm.low = 0
         scan_orm.duration_ms = 100.0
+        scan_orm.tenant_id = "t_test"
         self.mock_db.query.return_value.filter.return_value.first.return_value = scan_orm
         self.mock_db.query.return_value.filter.return_value.all.return_value = []
         resp = self.client.get("/api/v1/reports/scans/scan-sarif-1/sarif")
@@ -586,9 +590,9 @@ class TestJiraAPIEndpoints:
         self.app = create_app()
         self.app.dependency_overrides[get_session] = lambda: self.mock_db
         self.app.dependency_overrides[get_current_key] = lambda: APIKey(
-            key_hash="t", name="t", roles=["admin"], tenant_id=""
+            key_hash="t", name="t", roles=["admin"], tenant_id="t_test"
         )
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, headers={"X-Tenant-Id": "t_test"})
 
     def test_jira_config(self):
         resp = self.client.post(
