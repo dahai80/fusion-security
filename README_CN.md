@@ -565,7 +565,7 @@ pytest tests/ -v
 | `FUSION_RATE_LIMIT_PER_MINUTE` | `120` | 每 60 秒滑动窗口最大请求数，桶 key 为 `(client_ip, sha256(api_key))`。超限返回 `429` 并带 `Retry-After`。 |
 | `FUSION_MAX_CONCURRENT_SCANS` | `4` | 每租户并发活跃扫描上限（running/queued/pending）。超限创建扫描返回 `409`。 |
 
-## ✨ 已打通特性（v0.2.0rc0）
+## ✨ 已打通特性（v0.2.0rc1）
 
 此前代码中声明但从未接通的 5 个特性现已全部接通到生产路径并**落库持久化**（重启不丢）：
 
