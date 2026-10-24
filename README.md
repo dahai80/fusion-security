@@ -233,13 +233,13 @@ cd frontend && npm install && npm run dev
 
 ## 🖥️ Frontend Dashboard
 
-React 18 + Ant Design 5 + Vite 5 + TypeScript web dashboard.
+React 18 + Ant Design 5 + Vite 5 + TypeScript web dashboard. Dual-mode: standalone dev server, or embedded as a union-web (fusion-web-shell) remote module served by the gateway at `/shell/fusion-security/` (Issue #35).
 
 ```bash
 cd frontend
 npm install
-npm run dev        # Development server (http://localhost:5173)
-npm run build      # Production build
+npm run dev        # Standalone dev server (http://localhost:11476, /api proxied to :11454)
+npm run build      # Production build (base=/shell/fusion-security/)
 npm run preview    # Preview production build
 ```
 
@@ -253,6 +253,24 @@ npm run preview    # Preview production build
 | **Projects** | Project CRUD management |
 
 The dashboard connects to the FastAPI backend at `http://localhost:11454/api/v1`.
+
+### Union-web remote module (Issue #35)
+
+The dashboard ships `frontend/manifest.json` (category `domain`, devices `desktop` + `desktop-only` — security controls are desktop-only per PRD §8.1) and self-registers with the gateway shell registry:
+
+```bash
+# Environment-gated — set both to enable registration + heartbeat (15s):
+export FUSION_SHELL_GATEWAY_URL="http://127.0.0.1:11432"
+export FUSION_GATEWAY_ADMIN_KEY="<gateway key allowed on /api/v1/shell/manifests>"
+./start.sh start     # API lifespan registers frontend/manifest.json and the background
+```
+
+Wiring:
+
+- **Embedded**: the shell loads the module in a same-origin iframe at `/shell/fusion-security/?embedded=1` (iframe sandbox per PRD §7.2 — suitable for the security module's sensitivity). Own sidebar is hidden; navigation comes from the shell menu + manifest `pages` deep links. API calls go through the `@fusion/web-sdk` postMessage bridge (host attaches the gateway session token; the gateway `/shell/` proxy then injects the module API key upstream — the UI bundle carries no secrets). The module passes `X-Tenant-Id` through (build-time `VITE_TENANT_ID`, default `default`).
+- **Standalone**: `npm run dev` serves at `:11476` (registered in `architecture/port-registry.yaml`) with `/api` proxied to `:11454`. Dev auth via `VITE_API_KEY` + `VITE_TENANT_ID` in `frontend/.env.local` (dev convenience only).
+- **Gateway side** (upstream, fusion-gateway repo): add `web_shell.modules.fusion-security` with `upstream: http://127.0.0.1:11454` and a tenant-assigned fusion-security API key as `api_key`. The key must have a tenant assigned — empty-tenant keys are rejected fail-closed.
+- **Auth note**: the gateway module proxy sends `Authorization: Bearer <module key>`; non-JWT-shaped bearer tokens are validated as API keys by `get_principal` with the same fail-closed tenant checks as `X-API-Key` (JWT-shaped tokens still go to fusion-identity).
 
 ---
 
@@ -444,6 +462,9 @@ The `X-Tenant-Id` header is **mandatory**. The `TenantMiddleware` (from `fusion_
 |----------|---------|---------|
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity base URL |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _(empty)_ | service token bearer for `/verify`; when unset, JWT verification is unavailable (API-key mode still works) |
+| `FUSION_SHELL_GATEWAY_URL` | _(empty)_ | union-web gateway base URL; enables shell manifest registration + heartbeat when set with `FUSION_GATEWAY_ADMIN_KEY` |
+| `FUSION_GATEWAY_ADMIN_KEY` | _(empty)_ | gateway key authorized for `POST /api/v1/shell/manifests` |
+| `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest path override |
 
 Public endpoints exempt from tenant middleware: `/api/v1/system/health`, `/docs`, `/openapi.json`, `/redoc`.
 

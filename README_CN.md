@@ -200,13 +200,13 @@ cd frontend && npm install && npm run dev
 
 ## 🖥️ Web 仪表盘 (React)
 
-React 18 + Ant Design 5 + Vite 5 + TypeScript 前端仪表盘。
+React 18 + Ant Design 5 + Vite 5 + TypeScript 前端仪表盘。双模式：独立开发服务器，或作为 union-web（fusion-web-shell）远程模块经 gateway 托管于 `/shell/fusion-security/`（Issue #35）。
 
 ```bash
 cd frontend
 npm install
-npm run dev        # 开发服务器 (http://localhost:5173)
-npm run build      # 生产构建
+npm run dev        # 独立开发服务器 (http://localhost:11476，/api 代理到 :11454)
+npm run build      # 生产构建 (base=/shell/fusion-security/)
 npm run preview    # 预览生产构建
 ```
 
@@ -218,6 +218,24 @@ npm run preview    # 预览生产构建
 | **项目管理** | 项目增删改查 |
 
 仪表盘连接后端 FastAPI 服务 `http://localhost:11454/api/v1`。
+
+### Union-web 远程模块（Issue #35）
+
+仪表盘自带 `frontend/manifest.json`（category `domain`，devices `desktop` + `desktop-only` —— 安全管控操作按 PRD §8.1 移动端隐藏），并向 gateway shell 注册中心自注册：
+
+```bash
+# 环境变量门控 —— 同时设置才启用注册 + 心跳（15s）：
+export FUSION_SHELL_GATEWAY_URL="http://127.0.0.1:11432"
+export FUSION_GATEWAY_ADMIN_KEY="<有 /api/v1/shell/manifests 权限的 gateway key>"
+./start.sh start     # API lifespan 会在后台注册 frontend/manifest.json
+```
+
+接线说明：
+
+- **内嵌模式**：shell 以同源 iframe 加载 `/shell/fusion-security/?embedded=1`（按 PRD §7.2 iframe 沙盒 —— 适合安全模块的敏感性）。自有侧边栏隐藏，导航由 shell 菜单 + manifest `pages` 深链承担。API 调用走 `@fusion/web-sdk` postMessage 桥（宿主带 gateway 会话 token，gateway `/shell/` 代理再注入模块 API Key 上游 —— UI 产物不含机密）。`X-Tenant-Id` 由模块透传（构建期 `VITE_TENANT_ID`，默认 `default`）。
+- **独立模式**：`npm run dev` 于 `:11476`（已登记 `architecture/port-registry.yaml`），`/api` 代理到 `:11454`。开发鉴权用 `frontend/.env.local` 里的 `VITE_API_KEY` + `VITE_TENANT_ID`（仅开发便利）。
+- **gateway 侧**（上游，fusion-gateway 仓）：`web_shell.modules.fusion-security` 配 `upstream: http://127.0.0.1:11454`，`api_key` 用已分配租户的 fusion-security API Key。key 必须有租户 —— 空租户 key 按红线 fail-closed 拒绝。
+- **鉴权说明**：gateway 模块代理发 `Authorization: Bearer <模块 key>`；非 JWT 形状的 bearer 由 `get_principal` 按 API Key 校验，与 `X-API-Key` 同样的 fail-closed 租户检查（JWT 形状 token 仍走 fusion-identity）。
 
 ---
 
@@ -375,6 +393,9 @@ fusion-security serve --host 127.0.0.1 --port 8080
 |------|--------|------|
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity 基址 |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _（空）_ | 调用 `/verify` 的服务令牌；未设时 JWT 校验不可用（API Key 模式仍可用） |
+| `FUSION_SHELL_GATEWAY_URL` | _（空）_ | union-web gateway 基址；与 `FUSION_GATEWAY_ADMIN_KEY` 同时设置后启用 shell manifest 注册 + 心跳 |
+| `FUSION_GATEWAY_ADMIN_KEY` | _（空）_ | 有 `POST /api/v1/shell/manifests` 权限的 gateway key |
+| `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest 路径覆盖 |
 
 免租户中间件的公开端点：`/api/v1/system/health`、`/docs`、`/openapi.json`、`/redoc`。
 

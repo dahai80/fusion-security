@@ -250,6 +250,25 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
         if ctx and ctx.role:
             key_obj = replace(key_obj, roles=[ctx.role])
         return key_obj
+    # Issue #35: 无 X-API-Key 但带非 JWT 形状 Bearer —— gateway shell 模块代理
+    # (web_shell.modules)上游注入 Bearer <模块 API Key>,按 key 验证,同 X-API-Key
+    # 一样的 fail-closed 租户校验。
+    bearer = request.headers.get("authorization", "") if request is not None else ""
+    if bearer.lower().startswith("bearer "):
+        token = bearer[7:].strip()
+        from ..identity import looks_like_jwt
+
+        if token and not looks_like_jwt(token):
+            key_obj = auth_manager.validate_key(token)
+            if not key_obj:
+                raise HTTPException(status_code=401, detail="无效或过期的 API Key")
+            if not key_obj.tenant_id:
+                logger.warning(f"[Auth] Bearer Key 无租户分配(name={key_obj.name}),fail-closed 401")
+                raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
+            if header_tid and key_obj.tenant_id != header_tid:
+                logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+                raise HTTPException(status_code=401, detail="租户不匹配")
+            return key_obj
     # 无 API Key —— 纯 JWT 路径:从 TenantContext 构造 principal。
     if ctx and ctx.tenant_id:
         role = ctx.role or "viewer"

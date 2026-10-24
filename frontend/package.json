@@ -14,7 +14,8 @@
     "react-router-dom": "^6.20.0",
     "@ant-design/icons": "^5.2.6",
     "dayjs": "^1.11.10",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "@fusion/web-sdk": "file:vendor/@fusion/web-sdk"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

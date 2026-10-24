@@ -51,3 +51,4 @@ logs/
 *.sqlite
 *.sqlite3
 .fusion-security.pid
+frontend/vendor/**/node_modules/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -99,9 +100,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[Startup] ScanScheduler 启动失败(非致命): {e}")
 
+    # Issue #35: union-web shell 模块注册 + 心跳(环境变量门控,未配置则跳过)。
+    registry_task = None
+    from ..shell_registry import run_shell_registry, shell_registration_enabled
+
+    if shell_registration_enabled():
+        registry_task = asyncio.create_task(run_shell_registry())
+        logger.info("[Startup] shell registry 任务已启动(manifest 注册/心跳)")
+    else:
+        logger.info("[Startup] shell registry 未启用(缺 FUSION_SHELL_GATEWAY_URL/FUSION_GATEWAY_ADMIN_KEY)")
+
     yield
 
-    # 优雅停机:停调度器,停工作池,在途任务带 timeout drain。
+    # 优雅停机:停注册心跳,停调度器,停工作池,在途任务带 timeout drain。
+    if registry_task is not None:
+        registry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await registry_task
     if scheduler is not None:
         with contextlib.suppress(Exception):
             await scheduler.stop()
