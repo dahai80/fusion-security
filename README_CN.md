@@ -210,6 +210,12 @@ npm run build      # 生产构建 (base=/shell/fusion-security/)
 npm run preview    # 预览生产构建
 ```
 
+### 生产 SPA 托管（Issue #40）
+
+`frontend/dist/` 存在时，API 服务自身托管构建产物 —— 根路径 `/` 与 `/shell/fusion-security/`（客户端路由回退 `index.html`；挂载注册在全部 API 路由之后，绝不遮蔽 API）。SPA 路径豁免租户中间件，`/api/*` 命名空间保持完整 fail-closed 租户鉴权。未构建 `dist/` 时静默跳过。
+
+向 gateway 自注册时须设置 `FUSION_SECURITY_SHELL_API_KEY`，注册体携带 `api_key` —— gateway 代理会以该 key 作为上游 Bearer 凭证，而不是签发本服务会拒绝的 `fm-` key。
+
 | 页面 | 说明 |
 |------|------|
 | **仪表盘** | 统计卡片（扫描数、漏洞数、高危、已修复）+ 系统健康 |
@@ -396,8 +402,9 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | `FUSION_SHELL_GATEWAY_URL` | _（空）_ | union-web gateway 基址；与 `FUSION_GATEWAY_ADMIN_KEY` 同时设置后启用 shell manifest 注册 + 心跳 |
 | `FUSION_GATEWAY_ADMIN_KEY` | _（空）_ | 有 `POST /api/v1/shell/manifests` 权限的 gateway key |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest 路径覆盖 |
+| `FUSION_SECURITY_SHELL_API_KEY` | _（空）_ | 模块 API Key，注册体携带 `api_key` 字段，gateway 代理用它注入上游凭证；未设时 gateway 签发 `fm-` key，上游 401 |
 
-免租户中间件的公开端点：`/api/v1/system/health`、`/docs`、`/openapi.json`、`/redoc`。
+免租户中间件的公开端点：`/api/v1/system/health`、`/docs`、`/openapi.json`、`/redoc`，以及 `frontend/dist/` 已构建时的 SPA 静态路径（`/`、仪表盘路由、`/assets/*`、`/shell/fusion-security/*`）。
 
 ---
 

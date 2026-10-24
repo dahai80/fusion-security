@@ -243,6 +243,12 @@ npm run build      # Production build (base=/shell/fusion-security/)
 npm run preview    # Preview production build
 ```
 
+### Production SPA serving (Issue #40)
+
+When `frontend/dist/` exists, the API server serves the built dashboard itself — at `/` and at `/shell/fusion-security/` (client-side routes fall back to `index.html`; mounts are registered after all API routes so they never shadow them). SPA paths are exempt from the tenant middleware; the `/api/*` namespace keeps full fail-closed tenant auth. Without a built `dist/` the server skips SPA serving silently.
+
+When self-registering with the gateway, set `FUSION_SECURITY_SHELL_API_KEY` so the registration body carries `api_key` — the gateway proxy then injects that key as the upstream Bearer credential instead of issuing an `fm-` key that this service would reject.
+
 ### Pages
 
 | Page | Description |
@@ -465,8 +471,9 @@ The `X-Tenant-Id` header is **mandatory**. The `TenantMiddleware` (from `fusion_
 | `FUSION_SHELL_GATEWAY_URL` | _(empty)_ | union-web gateway base URL; enables shell manifest registration + heartbeat when set with `FUSION_GATEWAY_ADMIN_KEY` |
 | `FUSION_GATEWAY_ADMIN_KEY` | _(empty)_ | gateway key authorized for `POST /api/v1/shell/manifests` |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest path override |
+| `FUSION_SECURITY_SHELL_API_KEY` | _(empty)_ | module API key sent as `api_key` in the manifest registration body so the gateway proxy injects a valid upstream credential; without it the gateway issues an `fm-` key and upstream calls get 401 |
 
-Public endpoints exempt from tenant middleware: `/api/v1/system/health`, `/docs`, `/openapi.json`, `/redoc`.
+Public endpoints exempt from tenant middleware: `/api/v1/system/health`, `/docs`, `/openapi.json`, `/redoc`, plus SPA static paths (`/`, dashboard routes, `/assets/*`, `/shell/fusion-security/*`) when `frontend/dist/` is built.
 
 ---
 

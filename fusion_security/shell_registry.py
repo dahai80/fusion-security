@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 GATEWAY_URL_ENV = "FUSION_SHELL_GATEWAY_URL"
 ADMIN_KEY_ENV = "FUSION_GATEWAY_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
+# Issue #40: 模块 api_key —— 设置后在注册体携带 api_key 字段。不设时 gateway 会
+# 签发 fm- key 且代理优先用动态注册凭证,fusion-security 侧 401,自注册必须停用。
+MODULE_KEY_ENV = "FUSION_SECURITY_SHELL_API_KEY"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
 # 心跳每 15s 一次 —— gateway 掉线/拒绝时不能每个 tick 刷一条告警(告警限频)。
@@ -61,13 +64,26 @@ def _load_manifest() -> dict[str, Any]:
 
 async def register_once() -> tuple[bool, str]:
     # 单次注册/心跳往返。gateway 接受返回 (True, ""),否则 (False, 原因)。
+    # Issue #40: FUSION_SECURITY_SHELL_API_KEY 设置时在注册体带 api_key 字段
+    # (manifest.json 的 api_key_env 提示对应此变量),gateway 代理优先使用该
+    # 凭证注入上游;key 绝不落日志。
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
     admin_key = os.environ.get(ADMIN_KEY_ENV, "").strip()
     manifest = _load_manifest()
+    body: dict[str, Any] = dict(manifest)
+    module_key = os.environ.get(MODULE_KEY_ENV, "").strip()
+    if module_key:
+        body["api_key"] = module_key
+    else:
+        logger.warning(
+            "[ShellRegistry] %s 未设置:注册体不带 api_key,gateway 将签发 fm- key 且"
+            "上游会 401 —— 建议停用自注册,改用静态模块配置",
+            MODULE_KEY_ENV,
+        )
     url = f"{gateway}/api/v1/shell/manifests"
     headers = {"Authorization": f"Bearer {admin_key}"}
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-        resp = await client.post(url, json=manifest, headers=headers)
+        resp = await client.post(url, json=body, headers=headers)
     if resp.status_code in (200, 201, 204):
         return True, ""
     return False, f"注册失败 {url} -> {resp.status_code} {resp.text[:200]}"
