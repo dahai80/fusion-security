@@ -1,0 +1,42 @@
+{
+    "id": "fusion-security",
+    "title": "安全审计",
+    "title_en": "Security Audit",
+    "description": "代码安全审计:扫描任务、漏洞管理、补丁建议与项目仪表盘。",
+    "description_en": "Code security audit: scans, vulnerability management, patch suggestions and project dashboard.",
+    "version": "0.2.0",
+    "path": "/security",
+    "icon": "ShieldCheck",
+    "entry": "/shell/fusion-security/",
+    "health": "http://127.0.0.1:11432/shell/fusion-security/api/v1/system/health",
+    "backend": "http://127.0.0.1:11432/shell/fusion-security/",
+    "upstream": "http://127.0.0.1:11454",
+    "api_key_env": "FUSION_SECURITY_SHELL_API_KEY",
+    "devices": [
+        "desktop",
+        "desktop-only"
+    ],
+    "category": "domain",
+    "pages": [
+        {
+            "route": "/dashboard",
+            "title": "仪表盘",
+            "title_en": "Dashboard"
+        },
+        {
+            "route": "/scans",
+            "title": "扫描任务",
+            "title_en": "Scans"
+        },
+        {
+            "route": "/vulnerabilities",
+            "title": "漏洞管理",
+            "title_en": "Vulnerabilities"
+        },
+        {
+            "route": "/projects",
+            "title": "项目管理",
+            "title_en": "Projects"
+        }
+    ]
+}

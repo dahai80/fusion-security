@@ -11,6 +11,7 @@ import Scans from './pages/Scans';
 import Vulnerabilities from './pages/Vulnerabilities';
 import Projects from './pages/Projects';
 import { useState } from 'react';
+import { isEmbedded } from './sdk';
 
 const { Sider, Content } = Layout;
 
@@ -56,9 +57,31 @@ function AppContent() {
 }
 
 export default function App() {
+    // Issue #35: 内嵌模式(union-web shell iframe)隐藏自有侧边导航,
+    // 由 shell 菜单 + manifest pages 深链承担导航;独立模式保留完整布局。
+    // 经 gateway /shell/fusion-security/ 托管时,路由 basename 对齐托管前缀。
+    const shellBase = /^\/shell\/fusion-security\//.test(
+        typeof window !== 'undefined' ? window.location.pathname : '',
+    )
+        ? '/shell/fusion-security'
+        : '/';
     return (
-        <BrowserRouter>
-            <AppContent />
+        <BrowserRouter basename={shellBase}>
+            {isEmbedded() ? (
+                <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
+                    <Content style={{ padding: 16 }}>
+                        <Routes>
+                            <Route path="/dashboard" element={<Dashboard />} />
+                            <Route path="/scans" element={<Scans />} />
+                            <Route path="/vulnerabilities" element={<Vulnerabilities />} />
+                            <Route path="/projects" element={<Projects />} />
+                            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                        </Routes>
+                    </Content>
+                </Layout>
+            ) : (
+                <AppContent />
+            )}
         </BrowserRouter>
     );
 }
