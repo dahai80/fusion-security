@@ -26,7 +26,10 @@ from fusion_security.identity import looks_like_jwt, make_verify_jwt
 
 
 @pytest.fixture
-def app_with_db():
+def app_with_db(monkeypatch, tmp_path):
+    # 指向不存在的 dist:保证测试不依赖仓库是否构建过 frontend/dist
+    # (create_app 内置挂载会先占住 "/",遮蔽测试自己的 tmp dist 挂载)。
+    monkeypatch.setattr("fusion_security.api.app._FRONTEND_DIST", tmp_path / "no-dist")
     init_db(":memory:")
     app = create_app()
     yield app
@@ -82,6 +85,7 @@ def test_load_manifest_missing_id_raises(monkeypatch, tmp_path):
 async def test_register_once_success(monkeypatch):
     monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
     monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.delenv(shell_registry.MODULE_KEY_ENV, raising=False)
 
     class _Resp:
         status_code = 201
@@ -107,7 +111,42 @@ async def test_register_once_success(monkeypatch):
     url, body, headers = _Client.last
     assert url == "http://127.0.0.1:11432/api/v1/shell/manifests"
     assert body["id"] == "fusion-security"
+    assert "api_key" not in body
     assert headers["Authorization"] == "Bearer fg-admin-key"
+
+
+@pytest.mark.asyncio
+async def test_register_once_carries_module_api_key(monkeypatch):
+    # Issue #40: 设置 FUSION_SECURITY_SHELL_API_KEY 时注册体必须带 api_key,
+    # 否则 gateway 签发 fm- key 导致上游 401。
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.setenv(shell_registry.MODULE_KEY_ENV, "fs_module_key_xyz")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            _Client.last = (url, json, headers)
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    ok, reason = await shell_registry.register_once()
+    assert ok is True and reason == ""
+    _, body, _ = _Client.last
+    assert body["api_key"] == "fs_module_key_xyz"
+    assert body["id"] == "fusion-security"
 
 
 @pytest.mark.asyncio
@@ -276,3 +315,59 @@ def test_lifespan_skips_registry_task_when_disabled(monkeypatch, app_with_db, tm
 
     with patch.object(shell_registry, "run_shell_registry", _must_not_run), TestClient(app_with_db) as client:
         assert client.get("/api/v1/system/health").status_code == 200
+
+
+# ---------- E. Issue #40: SPA 静态托管 + 注册携带 api_key ----------
+
+
+def _make_dist(tmp_path):
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>fs-spa</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    return dist
+
+
+def test_spa_exempt_paths_semantics():
+    from fusion_security.api.app import _SPA_EXACT_PATHS, _SPA_PREFIXES, _SpaExemptPaths
+
+    # 与 create_app 相同的构造方式:精确集 = 系统 + SPA,前缀集 = SPA 静态命名空间。
+    exempt = _SpaExemptPaths(
+        frozenset({"/api/v1/system/health", "/docs", "/openapi.json", "/redoc"}) | _SPA_EXACT_PATHS,
+        _SPA_PREFIXES,
+    )
+    assert "/dashboard" in exempt
+    assert "/" in exempt
+    assert "/assets/index-abc.js" in exempt
+    assert "/shell/fusion-security" in exempt
+    assert "/shell/fusion-security/scans" in exempt
+    # API 命名空间绝不豁免 —— fail-closed 租户语义不变。
+    assert "/api/v1/scans" not in exempt
+    assert "/api/v1/system/health" in exempt
+
+
+def test_spa_mount_serves_index_fallback_and_assets(app_with_db, tmp_path):
+    from fusion_security.api.app import _mount_spa
+
+    dist = _make_dist(tmp_path)
+    assert _mount_spa(app_with_db, dist) is True
+    client = TestClient(app_with_db)
+    # 回归:Mount "/" 若先于路由注册会遮蔽全部 API 路由(create_app 内挂载须在最后)。
+    assert client.get("/api/v1/system/health").status_code == 200
+    # 首页 + 客户端路由回退(均无 X-Tenant-Id,验证豁免生效)。
+    assert "fs-spa" in client.get("/").text
+    assert "fs-spa" in client.get("/dashboard").text
+    assert "fs-spa" in client.get("/shell/fusion-security/scans").text
+    assert client.get("/assets/app.js").status_code == 200
+    # API 命名空间不回退 HTML:带租户头后未命中路由返回裸 404(非 index.html)。
+    resp = client.get("/api/v1/no-such-endpoint", headers={"X-Tenant-Id": "t"})
+    assert resp.status_code == 404
+    assert "fs-spa" not in resp.text
+    # API 鉴权不受 SPA 豁免影响:无租户头仍 401。
+    assert client.get("/api/v1/projects").status_code == 401
+
+
+def test_spa_mount_skipped_when_dist_missing(app_with_db, tmp_path):
+    from fusion_security.api.app import _mount_spa
+
+    assert _mount_spa(app_with_db, tmp_path / "empty") is False
