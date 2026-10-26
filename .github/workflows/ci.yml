@@ -47,6 +47,10 @@ jobs:
       - run: pip install -e ".[test]"
       - run: pytest tests/ -v --tb=short -q
       - run: pytest tests/ --cov=fusion_security --cov-fail-under=90
+      - name: README test-count drift guard (Issue #43)
+        run: python scripts/check_test_count.py
+        # Fails when the README badge count drifts >10% from the collected
+        # count. Refresh with: pytest --collect-only -q | tail -1
 
   build:
     runs-on: ubuntu-latest

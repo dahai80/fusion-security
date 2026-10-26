@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/tests-847%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-930%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -34,7 +34,7 @@
 | **Offline capable** | ✅ Fully offline | ❌ Requires internet |
 | **China accessible** | ✅ Yes | ❌ Blocked |
 | **AI model** | fusion-mlx (Apple Silicon) | Claude Opus 4.7 (cloud) |
-| **Vulnerability scan** | ✅ Cross-file data flow | ✅ Cross-file + AST (10 langs) |
+| **Vulnerability scan** | ✅ Cross-file data flow | ✅ Cross-file + AST (9 langs) |
 | **AI semantic analysis** | ✅ Logic flaw detection | ✅ Logic flaw detection |
 | **Auto fix generation** | ✅ Template + AI enhanced | ✅ AI-generated patches |
 | **Low false positives** | ✅ Adversarial verification | ✅ Adversarial validation |
@@ -624,7 +624,9 @@ pip install -e ".[test]"
 pytest tests/ -v
 ```
 
-690 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
+930 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
+
+The test count is verified against reality in CI (`scripts/check_test_count.py`, ±10% drift gate). To refresh the count after adding/removing tests: `pytest --collect-only -q | tail -1`.
 
 ---
 
@@ -670,7 +672,7 @@ Five features previously declared in code but never connected are now fully wire
 |---------|--------|
 | **Custom Rules** | `CustomRuleStore` injected into `RuleEngine`; CRUD via `/api/v1/integrations/rules` |
 | **Feedback Loop** | `FeedbackStore.filter_vulnerabilities()` runs in pipeline `_stage_triage`; false-positive feedback persisted to `feedbacks` table and suppresses repeat findings |
-| **Multi-Tenant** | `TenantManager` initialized at app startup; `tenant_id` resolved from API key and threaded through scan/persist paths |
+| **Multi-Tenant** | Retired local `TenantManager`; `tenant_id` from fusion-identity (dual-mode JWT/API-key, fail-closed) and threaded through scan/persist paths (Issue #32) |
 | **Scan Scheduler** | `ScanScheduler.start()` runs on app startup; schedules persisted to `scheduled_scans` table; cron/periodic scans dispatched automatically |
 | **Webhook** | Webhooks persisted to `webhooks` table (replaces in-memory dict); `scan.completed` events fire `WebhookNotifier` on both scan completion paths |
 
