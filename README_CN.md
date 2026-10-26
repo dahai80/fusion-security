@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/测试-847%20通过-brightgreen" alt="测试">
+  <img src="https://img.shields.io/badge/测试-930%20通过-brightgreen" alt="测试">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -552,7 +552,8 @@ fusion-security scan ~/my-project
 ```bash
 pip install -e ".[test]"
 pytest tests/ -v
-# 847 测试用例，90% 覆盖率（CI 门禁 --cov-fail-under=90）
+# 930 测试用例，90% 覆盖率（CI 门禁 --cov-fail-under=90）
+# 计数由 CI 校验（scripts/check_test_count.py，±10% 漂移门禁）；刷新命令：pytest --collect-only -q | tail -1
 ```
 
 覆盖所有模块：规则引擎（37规则）、扫描器、AI 分析器（8语义规则）、SCA 扫描器（废弃/许可证/过期）、Jira 集成、流水线、断点续扫、熔断器、通知、修复生成器、报告、API 路由、CLI。
