@@ -570,7 +570,7 @@ pytest tests/ -v
 - **CVSS 3.1 评分** — 标准化漏洞严重度评估
 - **RBAC 权限** — admin/operator/viewer 三级角色；每个 API 端点经 `require_permission(...)` 强制具体权限（如 `scan:run`/`vuln:manage`/`system:manage`），而非仅"已认证"
 - **DB 落库哈希密钥** — API key 以 `sha256` 哈希存入 `api_keys` 表（绝不存明文）；master 管理密钥经 `FUSION_SECURITY_MASTER_KEY` 稳定，重启不丢失，明文**仅在创建响应中返回一次**，绝不写入日志
-- **Webhook 密钥安全** — Webhook secret 用 Fernet 对称加密存储（密钥由 `FUSION_SECURITY_MASTER_KEY` 经 PBKDF2-HMAC-SHA256 派生），既能在触发时回算 HMAC 签名、又不落明文；`secret_hash` 绝不出现在 API 响应中
+- **Webhook 密钥安全** — Webhook secret 用 Fernet 对称加密存储（密钥由 `FUSION_SECURITY_MASTER_KEY` 经 PBKDF2-HMAC-SHA256 派生），既能在触发时回算 HMAC 签名、又不落明文；`secret_hash` 绝不出现在 API 响应中。无任何回退密钥字面量：`FUSION_PROFILE=prod` 未设置该变量直接 RuntimeError；dev 回退进程级随机 key 并醒目告警
 - **审计溯源** — 完整操作审计日志（JSONL）
 - **多租户隔离** — 每租户独立数据目录 + `tenant_id` 贯穿扫描/漏洞/补丁路由；跨租户访问记录返回 `404`（不泄露存在性 — 关闭租户 IDOR）
 - **API Key 认证** — `X-API-Key` 请求头；密钥以 `sha256` 哈希存入 DB，明文仅创建时返回一次
