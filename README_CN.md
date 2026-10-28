@@ -402,7 +402,8 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | `FUSION_SHELL_GATEWAY_URL` | _（空）_ | union-web gateway 基址；与 `FUSION_GATEWAY_ADMIN_KEY` 同时设置后启用 shell manifest 注册 + 心跳 |
 | `FUSION_GATEWAY_ADMIN_KEY` | _（空）_ | 有 `POST /api/v1/shell/manifests` 权限的 gateway key |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest 路径覆盖 |
-| `FUSION_SECURITY_SHELL_API_KEY` | _（空）_ | 模块 API Key，注册体携带 `api_key` 字段，gateway 代理用它注入上游凭证；未设时 gateway 签发 `fm-` key，上游 401 |
+| `FUSION_SECURITY_SHELL_API_KEY` | _（空）_ | 模块 API Key，注册体携带 `api_key` 字段，gateway 代理用它注入上游凭证；未设时 gateway 签发 `fm-` key，上游 401。Issue #53：设置后启动时同步落库为 `admin` key（幂等 upsert），经 shell 代理的仪表盘调用可通过 `system:manage` 校验 |
+| `FUSION_SECURITY_SHELL_TENANT` | `default` | 落库的 shell 模块 key 所属租户（Issue #53）；须与前端 `VITE_TENANT_ID`（默认 `default`）一致 |
 
 免租户中间件的公开端点：`/api/v1/system/health`、`/docs`、`/openapi.json`、`/redoc`，以及 `frontend/dist/` 已构建时的 SPA 静态路径（`/`、仪表盘路由、`/assets/*`、`/shell/fusion-security/*`）。
 
@@ -586,6 +587,7 @@ pytest tests/ -v
 | `FUSION_SECURITY_HOST` | `127.0.0.1` | API 服务绑定地址 |
 | `FUSION_SECURITY_MASTER_KEY` | _自动生成_ | 稳定的 master 管理 API key。生产环境请显式设置，保证 admin key 重启不丢失、不在每次启动时重新生成。明文值**绝不记录日志**。 |
 | `MLX_BASE_URL` | `http://localhost:11432/v1` | fusion-mlx OpenAI 兼容 API 地址。回退到 `FUSION_AI_URL` 再 `FUSION_MLX_URL`，兼容现有 Docker/Helm 配置。**请设为实际运行的 fusion-mlx 端口**（monorepo 默认 11434）。 |
+| `FUSION_CLIENT_KEY` | _（空）_ | 分析器调用 fusion-mlx 的 Bearer key（Issue #52，经 `fusion_core.config.client_key` 统一解析）。旧别名 `FUSION_MLX_API_KEY` / `MLX_API_KEY` 仍可用但告警；dev 缺省 = 匿名直连 MLX，prod 缺省 = 启动失败。 |
 | `FUSION_MODEL` | _自动_ | 模型名覆盖（如 `qwen3.5-9b`）。未设时分析器从 `/models` 自动探测首个已加载模型。 |
 | `FUSION_SECURITY_DB_URL` | _空_ | 共享库完整 SQLAlchemy URL（见数据库章节） |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite 文件路径（单机） |

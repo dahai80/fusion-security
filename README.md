@@ -471,7 +471,8 @@ The `X-Tenant-Id` header is **mandatory**. The `TenantMiddleware` (from `fusion_
 | `FUSION_SHELL_GATEWAY_URL` | _(empty)_ | union-web gateway base URL; enables shell manifest registration + heartbeat when set with `FUSION_GATEWAY_ADMIN_KEY` |
 | `FUSION_GATEWAY_ADMIN_KEY` | _(empty)_ | gateway key authorized for `POST /api/v1/shell/manifests` |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest path override |
-| `FUSION_SECURITY_SHELL_API_KEY` | _(empty)_ | module API key sent as `api_key` in the manifest registration body so the gateway proxy injects a valid upstream credential; without it the gateway issues an `fm-` key and upstream calls get 401 |
+| `FUSION_SECURITY_SHELL_API_KEY` | _(empty)_ | module API key sent as `api_key` in the manifest registration body so the gateway proxy injects a valid upstream credential; without it the gateway issues an `fm-` key and upstream calls get 401. Issue #53: when set, the key is also provisioned into the key store as an `admin` key at startup (idempotent upsert), so dashboard calls through the shell proxy pass the `system:manage` check |
+| `FUSION_SECURITY_SHELL_TENANT` | `default` | tenant assigned to the provisioned shell module key (Issue #53); must match the frontend `VITE_TENANT_ID` (default `default`) |
 
 Public endpoints exempt from tenant middleware: `/api/v1/system/health`, `/docs`, `/openapi.json`, `/redoc`, plus SPA static paths (`/`, dashboard routes, `/assets/*`, `/shell/fusion-security/*`) when `frontend/dist/` is built.
 
@@ -656,6 +657,7 @@ The test count is verified against reality in CI (`scripts/check_test_count.py`,
 | `FUSION_SECURITY_HOST` | `127.0.0.1` | API server bind host |
 | `FUSION_SECURITY_MASTER_KEY` | _generated_ | Stable master admin API key. Set it explicitly in production so the admin key survives restarts and is not regenerated each boot. The plaintext value is **never logged**. |
 | `MLX_BASE_URL` | `http://localhost:11432/v1` | fusion-mlx OpenAI-compatible API URL. Falls back to `FUSION_AI_URL` then `FUSION_MLX_URL` for backward compatibility with existing Docker/Helm configs. **Set this to the running fusion-mlx port** (the monorepo default is `11434`). |
+| `FUSION_CLIENT_KEY` | _empty_ | Bearer key the analyzer sends to fusion-mlx (Issue #52; resolved via `fusion_core.config.client_key`). Legacy aliases `FUSION_MLX_API_KEY` / `MLX_API_KEY` still resolve with a deprecation warning; empty in dev = anonymous MLX access, missing in prod = startup failure. |
 | `FUSION_MODEL` | _auto_ | Model name override (e.g. `qwen3.5-9b`). If unset, the analyzer auto-detects the first loaded model from `/models`. |
 | `FUSION_SECURITY_DB_URL` | _empty_ | Full SQLAlchemy URL for a shared DB (see Database section) |
 | `FUSION_DB_PATH` | `~/.fusion-security/fusion_security.db` | SQLite file path (single-node) |

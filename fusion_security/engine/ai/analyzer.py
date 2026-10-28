@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fusion_core.config import client_key
 from fusion_core.http_client import get_async_client, with_retry
 
 from ...models.vulnerability import Vulnerability
@@ -25,16 +26,6 @@ def _resolve_mlx_url() -> str:
     return "http://localhost:11432/v1"
 
 
-def _resolve_mlx_api_key() -> str:
-    # fusion-mlx 启用鉴权时要求 Authorization: Bearer <key>;未传则 401,AI 静默降级。
-    # 从环境读取(Monorepo CLAUDE.md 约定 FUSION_MLX_API_KEY),不入日志(脱敏过滤器兜底)。
-    for var in ("FUSION_MLX_API_KEY", "MLX_API_KEY"):
-        val = os.environ.get(var, "").strip()
-        if val:
-            return val
-    return ""
-
-
 _MLX_DEFAULT_URL = _resolve_mlx_url()
 
 
@@ -43,7 +34,11 @@ class AIAnalyzer:
         self.model = model
         self.mlx_url = (mlx_url or _MLX_DEFAULT_URL).rstrip("/")
         self._client = None
-        self._api_key = _resolve_mlx_api_key()
+        # Issue #52: key 解析统一走 fusion_core.config.client_key(FUSION_CLIENT_KEY 优先,
+        # 兼容 FUSION_MLX_API_KEY / MLX_API_KEY 旧别名并告警),本仓库不再自持解析。
+        # 语义:dev 缺 key = 空 + 一次性告警(匿名 MLX 直连);prod 缺 key =
+        # RuntimeError(fail-fast,config-conventions §3)。
+        self._api_key = client_key().strip()
         # 单 MLX 实例并发上限:无 semaphore 时 N 漏洞串行调用,但对抗/补丁阶段可能多 pipeline 并发。
         # 限制并发请求数避免 MLX OOM,配合 with_retry 退避形成背压。
         self._semaphore = asyncio.Semaphore(max_concurrency)

@@ -9,7 +9,9 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fusion_core.config import service_port
 
 from .auth import ROLES, auth_manager, get_current_key, require_permission
 from .routes import integrations, patches, projects, reports, scans, schedules, system, vulnerabilities
@@ -120,7 +122,9 @@ def set_process_title() -> None:
     try:
         import setproctitle
 
-        port = os.getenv("FUSION_SECURITY_PORT", "11454")
+        # Issue #52: 端口解析走 fusion_core.config.service_port(FUSION_SECURITY_PORT),
+        # 非整数 env 抛 ValueError 由下方 except 记警告,不再静默带错误标题。
+        port = service_port("security", default=11454)
         setproctitle.setproctitle(f"fusion-security serve :{port}")
         logger.info(f"[Startup] 进程标题已设置: fusion-security serve :{port}")
     except Exception as e:
@@ -136,6 +140,21 @@ async def lifespan(app: FastAPI):
     # S-P0-3: 绝不记录 master key 明文,只记录就绪状态。
     auth_manager.ensure_master_key()
     logger.info("Fusion-Security API 已启动, master key 已就绪")
+
+    # Issue #53: gateway /shell 代理注入的模块服务 key 启动时落库为 admin。
+    # 此前无任何落库路径,手工插入默认 viewer,仪表盘 /system/health/detailed
+    # (system:manage)经 shell 代理每次加载 403。租户与前端透传的 X-Tenant-Id
+    # 对齐(VITE_TENANT_ID 默认 default),可用 FUSION_SECURITY_SHELL_TENANT 覆盖。
+    # key 绝不落日志。幂等 upsert,重复启动安全。
+    from ..shell_registry import MODULE_KEY_ENV
+
+    module_key = os.environ.get(MODULE_KEY_ENV, "").strip()
+    if module_key:
+        tenant = os.environ.get("FUSION_SECURITY_SHELL_TENANT", "default").strip() or "default"
+        auth_manager.ensure_module_key(module_key, tenant)
+        logger.info(f"[Startup] shell 模块服务 key 已落库(role=admin, tenant={tenant})")
+    else:
+        logger.info(f"[Startup] {MODULE_KEY_ENV} 未设置,跳过模块 key 落库")
 
     # Issue #32: 本地 TenantManager 已退役,租户注册归 fusion-identity。检查 identity 就绪。
     import os as _os
@@ -222,6 +241,17 @@ def create_app() -> FastAPI:
     from .middleware import rate_limit_middleware
 
     app.middleware("http")(rate_limit_middleware)
+
+    # Issue #53: 401/403 等错误响应补顶层 message 字段 —— web-shell 宿主客户端只读
+    # 顶层 message,缺失时把 RBAC 真实原因(如 权限不足: 需要 system:manage)泛化成
+    # "无权限访问该模块"。保留 detail 兼容既有客户端;接父类才能同时接住
+    # fastapi.HTTPException(SPAStaticFiles 的 404 回退同款约定)。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_envelope(request, exc: StarletteHTTPException):
+        message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "message": message})
 
     # Issue #32: 接入 fusion-identity。TenantMiddleware 强制 X-Tenant-Id 存在,
     # 校验 Bearer JWT(tid↔header 匹配),fail-closed。require_jwt=False = 双模式:
