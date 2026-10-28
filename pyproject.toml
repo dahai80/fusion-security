@@ -23,6 +23,7 @@ dependencies = [
     "tree-sitter-ruby>=0.21.0",
     "tree-sitter-php>=0.21.0",
     "jinja2>=3.1.0",
+    "setproctitle>=1.3.0",
     "fusion-core",
     "fusion-identity",
 ]

@@ -113,10 +113,25 @@ async def _dispatch_scheduled_scan(schedule) -> None:
         db.close()
 
 
+def set_process_title() -> None:
+    # Issue #49: 进程标题带产品名(start.sh 直接拉起 uvicorn 二进制;macOS
+    # homebrew Python 的 Python.app argv 会覆盖 exec -a,setproctitle 是唯一
+    # 可靠手段)。依赖缺失时静默降级,不影响启动。
+    try:
+        import setproctitle
+
+        port = os.getenv("FUSION_SECURITY_PORT", "11454")
+        setproctitle.setproctitle(f"fusion-security serve :{port}")
+        logger.info(f"[Startup] 进程标题已设置: fusion-security serve :{port}")
+    except Exception as e:
+        logger.warning(f"[Startup] setproctitle 设置失败(非致命): {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from ..db import init_db
 
+    set_process_title()
     init_db()
     # S-P0-3: 绝不记录 master key 明文,只记录就绪状态。
     auth_manager.ensure_master_key()
