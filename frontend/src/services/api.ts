@@ -65,7 +65,19 @@ async function request<T = any>(
 
 export const dashboardApi = {
     getStats: () => request('GET', '/integrations/dashboard'),
-    getHealth: () => request('GET', '/system/health/detailed'),
+    // Issue #53: /system/health/detailed 需 system:manage(admin),角色不足的
+    // 服务 key(或权限收紧后)会 403 —— 降级到公开 /system/health,仪表盘仍可
+    // 渲染(仅 status,子系统项显示 unknown)。嵌入桥把 HTTP 错误统一折成
+    // 502 HttpError,无法按状态码精确区分,故任意失败都降级;公开端点也失败
+    // 时向上抛原始错误。
+    getHealth: async () => {
+        try {
+            return await request('GET', '/system/health/detailed');
+        } catch (e) {
+            console.warn('[dashboardApi] health/detailed failed, falling back to /system/health:', e);
+            return await request('GET', '/system/health');
+        }
+    },
     getRulesets: () => request('GET', '/system/rulesets'),
 };
 

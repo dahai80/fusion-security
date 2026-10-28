@@ -217,6 +217,12 @@ class AuthManager:
         logger.warning("[Auth] 未设 FUSION_SECURITY_MASTER_KEY,已生成临时 master key(见本条响应,后续不再显示)")
         return master_key
 
+    def ensure_module_key(self, raw_key: str, tenant_id: str = "default") -> None:
+        # Issue #53: shell 模块服务 key 启动落库。gateway /shell 代理注入该 key 作为
+        # Bearer 调仪表盘接口,但此前无落库路径,手工插入默认 viewer,system:manage
+        # 端点每次加载 403。幂等 upsert(已有同 hash 行则更新角色/租户),绝不记明文。
+        self.create_api_key_from_raw("shell-module", raw_key, ["admin"], tenant_id=tenant_id)
+
 
 auth_manager = AuthManager()
 
@@ -270,9 +276,14 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
                 raise HTTPException(status_code=401, detail="租户不匹配")
             return key_obj
     # 无 API Key —— 纯 JWT 路径:从 TenantContext 构造 principal。
-    if ctx and ctx.tenant_id:
+    # 必须有"JWT 已验证"的证据(role/jti/scopes 仅在 verify_jwt 返回 claims 时填充):
+    # TenantMiddleware require_jwt=False 下,只带 X-Tenant-Id 的匿名请求同样会得到
+    # TenantContext(role=None),若不校验证据则匿名访问直接拿到 viewer —— fail-open。
+    if ctx and ctx.tenant_id and (ctx.role or ctx.jti or ctx.scopes):
         role = ctx.role or "viewer"
         return APIKey(key_hash="", name="jwt", roles=[role], tenant_id=ctx.tenant_id)
+    if ctx and ctx.tenant_id:
+        logger.warning(f"[Auth] 无凭证且无已验证 JWT(tenant={ctx.tenant_id}),fail-closed 401")
     raise HTTPException(status_code=401, detail="缺少凭证(X-API-Key 或 Bearer token)")
 
 
