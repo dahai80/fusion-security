@@ -8,5 +8,5 @@
 - 审计日志与报告
 """
 
-__version__ = "0.2.0rc5"
+__version__ = "0.2.0rc6"
 __app_name__ = "Fusion-Security"
