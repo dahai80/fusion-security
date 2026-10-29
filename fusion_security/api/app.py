@@ -195,7 +195,7 @@ async def lifespan(app: FastAPI):
         registry_task = asyncio.create_task(run_shell_registry())
         logger.info("[Startup] shell registry 任务已启动(manifest 注册/心跳)")
     else:
-        logger.info("[Startup] shell registry 未启用(缺 FUSION_SHELL_GATEWAY_URL/FUSION_GATEWAY_ADMIN_KEY)")
+        logger.info("[Startup] shell registry 未启用(缺 FUSION_SHELL_GATEWAY_URL/FUSION_ADMIN_KEY)")
 
     yield
 
