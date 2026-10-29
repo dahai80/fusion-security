@@ -232,7 +232,7 @@ npm run preview    # 预览生产构建
 ```bash
 # 环境变量门控 —— 同时设置才启用注册 + 心跳（15s）：
 export FUSION_SHELL_GATEWAY_URL="http://127.0.0.1:11432"
-export FUSION_GATEWAY_ADMIN_KEY="<有 /api/v1/shell/manifests 权限的 gateway key>"
+export FUSION_ADMIN_KEY="<有 /api/v1/shell/manifests 权限的 gateway key>"
 ./start.sh start     # API lifespan 会在后台注册 frontend/manifest.json
 ```
 
@@ -399,8 +399,8 @@ fusion-security serve --host 127.0.0.1 --port 8080
 |------|--------|------|
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity 基址 |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _（空）_ | 调用 `/verify` 的服务令牌；未设时 JWT 校验不可用（API Key 模式仍可用） |
-| `FUSION_SHELL_GATEWAY_URL` | _（空）_ | union-web gateway 基址；与 `FUSION_GATEWAY_ADMIN_KEY` 同时设置后启用 shell manifest 注册 + 心跳 |
-| `FUSION_GATEWAY_ADMIN_KEY` | _（空）_ | 有 `POST /api/v1/shell/manifests` 权限的 gateway key |
+| `FUSION_SHELL_GATEWAY_URL` | _（空）_ | union-web gateway 基址；与 `FUSION_ADMIN_KEY` 同时设置后启用 shell manifest 注册 + 心跳 |
+| `FUSION_ADMIN_KEY` | _（空）_ | 有 `POST /api/v1/shell/manifests` 权限的 gateway key |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest 路径覆盖 |
 | `FUSION_SECURITY_SHELL_API_KEY` | _（空）_ | 模块 API Key，注册体携带 `api_key` 字段，gateway 代理用它注入上游凭证；未设时 gateway 签发 `fm-` key，上游 401。Issue #53：设置后启动时同步落库为 `admin` key（幂等 upsert），经 shell 代理的仪表盘调用可通过 `system:manage` 校验 |
 | `FUSION_SECURITY_SHELL_TENANT` | `default` | 落库的 shell 模块 key 所属租户（Issue #53）；须与前端 `VITE_TENANT_ID`（默认 `default`）一致 |

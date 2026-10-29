@@ -267,7 +267,7 @@ The dashboard ships `frontend/manifest.json` (category `domain`, devices `deskto
 ```bash
 # Environment-gated — set both to enable registration + heartbeat (15s):
 export FUSION_SHELL_GATEWAY_URL="http://127.0.0.1:11432"
-export FUSION_GATEWAY_ADMIN_KEY="<gateway key allowed on /api/v1/shell/manifests>"
+export FUSION_ADMIN_KEY="<gateway key allowed on /api/v1/shell/manifests>"
 ./start.sh start     # API lifespan registers frontend/manifest.json and the background
 ```
 
@@ -468,8 +468,8 @@ The `X-Tenant-Id` header is **mandatory**. The `TenantMiddleware` (from `fusion_
 |----------|---------|---------|
 | `FUSION_IDENTITY_URL` | `http://127.0.0.1:11470` | fusion-identity base URL |
 | `FUSION_IDENTITY_SERVICE_TOKEN` | _(empty)_ | service token bearer for `/verify`; when unset, JWT verification is unavailable (API-key mode still works) |
-| `FUSION_SHELL_GATEWAY_URL` | _(empty)_ | union-web gateway base URL; enables shell manifest registration + heartbeat when set with `FUSION_GATEWAY_ADMIN_KEY` |
-| `FUSION_GATEWAY_ADMIN_KEY` | _(empty)_ | gateway key authorized for `POST /api/v1/shell/manifests` |
+| `FUSION_SHELL_GATEWAY_URL` | _(empty)_ | union-web gateway base URL; enables shell manifest registration + heartbeat when set with `FUSION_ADMIN_KEY` |
+| `FUSION_ADMIN_KEY` | _(empty)_ | gateway key authorized for `POST /api/v1/shell/manifests` |
 | `FUSION_SHELL_MANIFEST` | `frontend/manifest.json` | shell manifest path override |
 | `FUSION_SECURITY_SHELL_API_KEY` | _(empty)_ | module API key sent as `api_key` in the manifest registration body so the gateway proxy injects a valid upstream credential; without it the gateway issues an `fm-` key and upstream calls get 401. Issue #53: when set, the key is also provisioned into the key store as an `admin` key at startup (idempotent upsert), so dashboard calls through the shell proxy pass the `system:manage` check |
 | `FUSION_SECURITY_SHELL_TENANT` | `default` | tenant assigned to the provisioned shell module key (Issue #53); must match the frontend `VITE_TENANT_ID` (default `default`) |

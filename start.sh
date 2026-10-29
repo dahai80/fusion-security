@@ -38,12 +38,33 @@ ensure_venv() {
     fi
 }
 
+check_port_registry() {
+    # Issue #57: register-then-start self-check —— 端口必须先登记 port-registry.yaml
+    # 才允许起服务,未登记在启动时即失败而不是等到 CI。FUSION_SKIP_REGISTRY_CHECK=1
+    # 可旁路;registry 文件缺失 = warn + 继续(独立部署场景)。
+    SERVICE="fusion-security"
+    REGISTRY="${FUSION_REGISTRY:-$HOME/fusion/architecture/port-registry.yaml}"
+    if [ ! -f "$REGISTRY" ]; then
+        echo "warn: port-registry.yaml not found at $REGISTRY — registry self-check skipped" >&2
+        return 0
+    fi
+    if ! grep -A3 "^  ${SERVICE}:" "$REGISTRY" 2>/dev/null | grep -q "port: $PORT$"; then
+        if [ "${FUSION_SKIP_REGISTRY_CHECK:-}" != "1" ]; then
+            echo "port $PORT for ${SERVICE} not registered in $REGISTRY — refusing to start" >&2
+            return 1
+        fi
+        echo "warn: registry check bypassed (FUSION_SKIP_REGISTRY_CHECK=1)" >&2
+    fi
+    return 0
+}
+
 do_start() {
     if is_running; then
         log_info "fusion-security already running (pid $(cat "$PID_FILE"))"
         return 0
     fi
     ensure_venv
+    check_port_registry || return 1
     log_info "starting fusion-security API on ${HOST}:${PORT} ..."
     nohup uvicorn fusion_security.api.app:app \
         --host "$HOST" --port "$PORT" \
@@ -90,6 +111,11 @@ do_status() {
     echo "stopped"
     return 1
 }
+
+# 被 source 时不执行入口(测试直接调 check_port_registry,tests/test_start_sh_registry.py)。
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 ACTION="${1:-start}"
 case "$ACTION" in

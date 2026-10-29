@@ -6,7 +6,7 @@
 
 环境变量开关 —— 需同时设置:
 - FUSION_SHELL_GATEWAY_URL: gateway 基址,如 http://127.0.0.1:11432
-- FUSION_GATEWAY_ADMIN_KEY: 有 /api/v1/shell/manifests 权限的 gateway key
+- FUSION_ADMIN_KEY: 有 /api/v1/shell/manifests 权限的 gateway key(经 fusion_core.config.admin_key 解析)
 
 可选:
 - FUSION_SHELL_MANIFEST: manifest 路径覆盖(默认仓内 frontend/manifest.json)
@@ -31,7 +31,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GATEWAY_URL_ENV = "FUSION_SHELL_GATEWAY_URL"
-ADMIN_KEY_ENV = "FUSION_GATEWAY_ADMIN_KEY"
+ADMIN_KEY_ENV = "FUSION_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
 # Issue #40: 模块 api_key —— 设置后在注册体携带 api_key 字段。不设时 gateway 会
 # 签发 fm- key 且代理优先用动态注册凭证,fusion-security 侧 401,自注册必须停用。
@@ -46,10 +46,27 @@ def _default_manifest_path() -> Path:
     return Path(__file__).resolve().parent.parent / "frontend" / "manifest.json"
 
 
+def _gateway_admin_key() -> str:
+    # Issue #57: admin key 单点解析走 fusion_core.config.admin_key(规范名
+    # FUSION_ADMIN_KEY,prod 缺失 RuntimeError 在 fusion-core 内收敛)。裸装无
+    # fusion-core 时回退只认规范名,不在本仓重复别名链(模式:fusion-cowork #204)。
+    try:
+        from fusion_core.config import admin_key
+
+        return admin_key()
+    except ImportError:
+        key = os.environ.get(ADMIN_KEY_ENV, "")
+        if not key:
+            logger.warning(f"{ADMIN_KEY_ENV} 未设置: shell 网关注册不可用(向 fusion-gateway admin API 索取)")
+        return key
+
+
 def shell_registration_enabled() -> bool:
-    gateway = os.environ.get(GATEWAY_URL_ENV, "").strip()
-    admin_key = os.environ.get(ADMIN_KEY_ENV, "").strip()
-    return bool(gateway and admin_key)
+    # URL 未配置时短路,不触发 admin key 解析(prod 缺 key 的 RuntimeError 只在
+    # 明确要注册时才是配置错误)。
+    if not os.environ.get(GATEWAY_URL_ENV, "").strip():
+        return False
+    return bool(_gateway_admin_key().strip())
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -68,7 +85,7 @@ async def register_once() -> tuple[bool, str]:
     # (manifest.json 的 api_key_env 提示对应此变量),gateway 代理优先使用该
     # 凭证注入上游;key 绝不落日志。
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
-    admin_key = os.environ.get(ADMIN_KEY_ENV, "").strip()
+    gw_key = _gateway_admin_key().strip()
     manifest = _load_manifest()
     body: dict[str, Any] = dict(manifest)
     module_key = os.environ.get(MODULE_KEY_ENV, "").strip()
@@ -81,7 +98,7 @@ async def register_once() -> tuple[bool, str]:
             MODULE_KEY_ENV,
         )
     url = f"{gateway}/api/v1/shell/manifests"
-    headers = {"Authorization": f"Bearer {admin_key}"}
+    headers = {"Authorization": f"Bearer {gw_key}"}
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         resp = await client.post(url, json=body, headers=headers)
     if resp.status_code in (200, 201, 204):

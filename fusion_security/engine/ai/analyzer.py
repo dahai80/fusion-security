@@ -34,8 +34,8 @@ class AIAnalyzer:
         self.model = model
         self.mlx_url = (mlx_url or _MLX_DEFAULT_URL).rstrip("/")
         self._client = None
-        # Issue #52: key 解析统一走 fusion_core.config.client_key(FUSION_CLIENT_KEY 优先,
-        # 兼容 FUSION_MLX_API_KEY / MLX_API_KEY 旧别名并告警),本仓库不再自持解析。
+        # Issue #52: key 解析统一走 fusion_core.config.client_key(FUSION_CLIENT_KEY 规范名,
+        # 旧别名由 fusion-core 别名链兼容并告警),本仓库不再自持解析。
         # 语义:dev 缺 key = 空 + 一次性告警(匿名 MLX 直连);prod 缺 key =
         # RuntimeError(fail-fast,config-conventions §3)。
         self._api_key = client_key().strip()
