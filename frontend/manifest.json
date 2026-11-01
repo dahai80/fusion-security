@@ -19,6 +19,21 @@
     "category": "domain",
     "pages": [
         {
+            "route": "/console",
+            "title": "管理控制台",
+            "title_en": "Admin Console"
+        },
+        {
+            "route": "/audit",
+            "title": "审计工作台",
+            "title_en": "Audit Workbench"
+        },
+        {
+            "route": "/keys",
+            "title": "密钥与策略",
+            "title_en": "Keys & Policies"
+        },
+        {
             "route": "/dashboard",
             "title": "仪表盘",
             "title_en": "Dashboard"
@@ -37,6 +52,15 @@
             "route": "/projects",
             "title": "项目管理",
             "title_en": "Projects"
+        }
+    ],
+    "notifications": [
+        {
+            "id": "security-alerts",
+            "label": "安全告警",
+            "label_en": "Security Alerts",
+            "endpoint": "/shell/fusion-security/api/v1/console/notifications",
+            "kind": "engine"
         }
     ]
 }

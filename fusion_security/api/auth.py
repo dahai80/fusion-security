@@ -237,6 +237,25 @@ def _tenant_context():
         return None
 
 
+def _audit_deny(request: Request, tenant_id: str, action: str, detail: str) -> None:
+    # Issue #60: 鉴权拒绝事件进审计流(高风险) —— 首页高风险速览/审计工作台数据源。
+    # 审计失败绝不影响拒绝路径(fail-closed 优先),只记警告。
+    try:
+        from ..engine.tenant.audit import get_audit_logger
+
+        get_audit_logger(tenant_id or "system").log(
+            action=action,
+            actor="anonymous",
+            resource_type="auth",
+            resource_id=request.url.path if request is not None else "",
+            details={"detail": detail, "method": request.method if request is not None else ""},
+            ip_address=request.client.host if request is not None and request.client else "",
+            risk_level="high",
+        )
+    except Exception as e:
+        logger.warning(f"[Auth] 审计记录失败(不影响拒绝): {e}")
+
+
 async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER)) -> APIKey:
     # Issue #32: 双模式鉴权。TenantMiddleware 已强制 X-Tenant-Id 存在 + (若带 Bearer) JWT↔header 匹配。
     # 这里做 fail-closed 租户校验:空租户 key → 401(红线 1);key 租户 ≠ header → 401(红线 2)。
@@ -245,12 +264,20 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
     if api_key:
         key_obj = auth_manager.validate_key(api_key)
         if not key_obj:
+            _audit_deny(request, header_tid, "auth.invalid_key", "API Key 无效或过期")
             raise HTTPException(status_code=401, detail="无效或过期的 API Key")
         if not key_obj.tenant_id:
             logger.warning(f"[Auth] API Key 无租户分配(name={key_obj.name}),fail-closed 401")
+            _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} 未分配租户")
             raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
         if header_tid and key_obj.tenant_id != header_tid:
             logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+            _audit_deny(
+                request,
+                header_tid,
+                "auth.tenant_mismatch",
+                f"key_tenant={key_obj.tenant_id} header_tenant={header_tid}",
+            )
             raise HTTPException(status_code=401, detail="租户不匹配")
         # 带 Bearer 时 JWT 角色优先(身份层权威)。
         if ctx and ctx.role:
@@ -267,12 +294,20 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
         if token and not looks_like_jwt(token):
             key_obj = auth_manager.validate_key(token)
             if not key_obj:
+                _audit_deny(request, header_tid, "auth.invalid_key", "Bearer 模块 key 无效或过期")
                 raise HTTPException(status_code=401, detail="无效或过期的 API Key")
             if not key_obj.tenant_id:
                 logger.warning(f"[Auth] Bearer Key 无租户分配(name={key_obj.name}),fail-closed 401")
+                _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} 未分配租户")
                 raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
             if header_tid and key_obj.tenant_id != header_tid:
                 logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+                _audit_deny(
+                    request,
+                    header_tid,
+                    "auth.tenant_mismatch",
+                    f"key_tenant={key_obj.tenant_id} header_tenant={header_tid}",
+                )
                 raise HTTPException(status_code=401, detail="租户不匹配")
             return key_obj
     # 无 API Key —— 纯 JWT 路径:从 TenantContext 构造 principal。
@@ -284,6 +319,7 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
         return APIKey(key_hash="", name="jwt", roles=[role], tenant_id=ctx.tenant_id)
     if ctx and ctx.tenant_id:
         logger.warning(f"[Auth] 无凭证且无已验证 JWT(tenant={ctx.tenant_id}),fail-closed 401")
+        _audit_deny(request, header_tid, "auth.no_credential", "无凭证且无已验证 JWT")
     raise HTTPException(status_code=401, detail="缺少凭证(X-API-Key 或 Bearer token)")
 
 
@@ -294,6 +330,20 @@ get_current_key = get_principal
 def require_permission(permission: str):
     async def _check(key: APIKey = Depends(get_principal)) -> APIKey:
         if not auth_manager.has_permission(key, permission):
+            # Issue #60: 越权尝试进审计流(高风险) —— 首页高风险速览数据源。
+            try:
+                from ..engine.tenant.audit import get_audit_logger
+
+                get_audit_logger(key.tenant_id or "system").log(
+                    action="auth.permission_denied",
+                    actor=key.name,
+                    resource_type="permission",
+                    resource_id=permission,
+                    details={"roles": list(key.roles)},
+                    risk_level="high",
+                )
+            except Exception as e:
+                logger.warning(f"[Auth] 审计记录失败(不影响拒绝): {e}")
             raise HTTPException(status_code=403, detail=f"权限不足: 需要 {permission}")
         return key
 

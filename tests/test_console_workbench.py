@@ -1,0 +1,347 @@
+"""Issue #61/#62 acceptance tests: audit workbench (search/CSV/saved queries/alerts/notifications) + key console."""
+
+import csv
+import io
+import json
+
+from fastapi.testclient import TestClient
+
+from fusion_security.api.app import create_app
+from fusion_security.api.auth import auth_manager
+from fusion_security.db import init_db
+from fusion_security.engine.tenant import audit as audit_mod
+from fusion_security.engine.tenant.audit import AuditLogger
+
+
+def _reset_audit(monkeypatch, tmp_path):
+    monkeypatch.setattr(audit_mod, "_audit_default_dir", str(tmp_path / "audit"))
+    monkeypatch.setattr(audit_mod, "_audit_loggers", {})
+    return str(tmp_path / "audit")
+
+
+def _client():
+    init_db(":memory:")
+    app = create_app()
+    return TestClient(app)
+
+
+def _admin_headers(tenant="default"):
+    raw = auth_manager.create_api_key("admin-key", ["admin"], tenant_id=tenant)
+    return {"X-API-Key": raw, "X-Tenant-Id": tenant}
+
+
+class TestAuditEvents:
+    def test_search_filter_and_saved_query_replay(self, monkeypatch, tmp_path):
+        # 验收:保存查询重放结果集 == 定义的手输过滤结果集。
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        al = AuditLogger(log_dir=audit_dir, tenant_id="default")
+        al.log("auth.invalid_key", actor="anonymous", risk_level="high")
+        al.log("auth.tenant_mismatch", actor="anonymous", risk_level="high")
+        al.log("key.create", actor="admin", risk_level="medium")
+        client = _client()
+        h = _admin_headers()
+
+        manual = client.get(
+            "/api/v1/console/audit/events",
+            params={"search": "anonymous", "risk": "high"},
+            headers=h,
+        )
+        assert manual.status_code == 200
+        assert manual.json()["total"] == 2
+
+        created = client.post(
+            "/api/v1/console/audit/saved-queries",
+            json={"name": "高风险匿名事件", "search": "anonymous", "risk": "high"},
+            headers=h,
+        )
+        assert created.status_code == 200
+        qid = created.json()["id"]
+
+        replay = client.get(
+            "/api/v1/console/audit/events",
+            params={"saved_query_id": qid},
+            headers=h,
+        )
+        assert replay.status_code == 200
+        assert replay.json()["total"] == manual.json()["total"]
+        assert {e["action"] for e in replay.json()["items"]} == {e["action"] for e in manual.json()["items"]}
+
+        listed = client.get("/api/v1/console/audit/saved-queries", headers=h)
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["name"] == "高风险匿名事件"
+
+        deleted = client.delete(f"/api/v1/console/audit/saved-queries/{qid}", headers=h)
+        assert deleted.status_code == 200
+        replay404 = client.get(
+            "/api/v1/console/audit/events",
+            params={"saved_query_id": qid},
+            headers=h,
+        )
+        assert replay404.status_code == 404
+
+    def test_csv_export_exact_filtered_rows_with_header(self, monkeypatch, tmp_path):
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        al = AuditLogger(log_dir=audit_dir, tenant_id="default")
+        al.log("auth.invalid_key", actor="anonymous", risk_level="high")
+        al.log("key.create", actor="admin", risk_level="medium", trace_id="tr-1")
+        client = _client()
+        h = _admin_headers()
+
+        resp = client.get(
+            "/api/v1/console/audit/export",
+            params={"risk": "high"},
+            headers=h,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv")
+        text = resp.text
+        assert text.startswith("﻿")  # BOM:Excel 中文兼容
+        rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+        assert len(rows) == 1  # 恰好 = 过滤后的行数
+        assert rows[0]["action"] == "auth.invalid_key"
+        assert rows[0]["risk_level"] == "high"
+
+    def test_invalid_risk_rejected(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.get(
+            "/api/v1/console/audit/events",
+            params={"risk": "extreme"},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 400
+
+
+class TestAlertSubscriptions:
+    def test_subscription_fires_into_notifications_with_dedup(self, monkeypatch, tmp_path):
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        al = AuditLogger(log_dir=audit_dir, tenant_id="default")
+        client = _client()
+        h = _admin_headers()
+
+        created = client.post(
+            "/api/v1/console/alerts/subscriptions",
+            json={"name": "越权告警", "event_class": "auth.", "risk_levels": "high,critical"},
+            headers=h,
+        )
+        assert created.status_code == 200
+
+        # 订阅创建后新事件到达 → 轮询即触发,条目进 shell 🔔 契约形状。
+        al.log("auth.permission_denied", actor="viewer-only", risk_level="high")
+        first = client.get("/api/v1/console/notifications", headers=h)
+        assert first.status_code == 200
+        body = first.json()
+        assert body["count"] >= 1
+        item = body["items"][0]
+        assert item["title"]
+        assert item["level"] in ("info", "warning", "error")
+        assert item["route"] == "/audit"
+        assert "auth.permission_denied" in item["title"] or "安全告警" in item["title"]
+
+        # 第二次轮询不重复(dedup + 游标)。
+        second = client.get("/api/v1/console/notifications", headers=h)
+        titles = [i["title"] for i in second.json()["items"]]
+        assert titles.count(item["title"]) == 1
+
+        # 低风险事件不触发该订阅。
+        al.log("auth.note", actor="x", risk_level="info")
+        third = client.get("/api/v1/console/notifications", headers=h)
+        assert third.json()["count"] == second.json()["count"]
+
+    def test_subscription_requires_class_or_query(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.post(
+            "/api/v1/console/alerts/subscriptions",
+            json={"name": "空订阅"},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 400
+
+    def test_key_expiry_alert_reaches_notifications(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        init_db(":memory:")
+        client = _client()
+        h = _admin_headers()
+        from datetime import datetime, timedelta
+
+        from fusion_security.db.models import ApiKeyORM
+        from fusion_security.db.session import get_session
+
+        db = get_session()
+        try:
+            db.add(
+                ApiKeyORM(
+                    key_hash="h" * 64,
+                    name="expiring-key",
+                    role="viewer",
+                    tenant_id="default",
+                    enabled=True,
+                    expires_at=datetime.utcnow() + timedelta(days=3),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/api/v1/console/notifications", headers=h)
+        titles = [i["title"] for i in resp.json()["items"]]
+        assert any("expiring-key" in t for t in titles)
+        assert any(i["level"] == "warning" and i["route"] == "/keys" for i in resp.json()["items"])
+
+
+class TestKeyConsole:
+    def _fake_identity(self, monkeypatch, rotate=None, revoke=None, inventory=None, idp=None):
+        from fusion_security.api.routes import console as console_mod
+
+        class FakeClient:
+            def __init__(self):
+                self.rotate_result = rotate or {"ok": False, "reason": "identity 不可达"}
+                self.revoke_result = revoke or {
+                    "ok": False,
+                    "reason": "identity 未提供 revoke 端点(fusion-identity#35)",
+                }
+                self.inventory = inventory or {"available": False, "reason": "upstream pending", "apps": []}
+                self.idp = idp or {"available": False, "reason": "upstream pending", "configured": False}
+
+            def app_secret_inventory(self):
+                return dict(self.inventory)
+
+            def rotate_app_secret(self, app_id, grace_seconds=3600):
+                return dict(self.rotate_result)
+
+            def revoke_app_secret(self, app_id, version):
+                return dict(self.revoke_result)
+
+            def idp_summary(self, tenant_id):
+                return dict(self.idp)
+
+        fake = FakeClient()
+        monkeypatch.setattr(console_mod, "get_identity_admin_client", lambda: fake)
+        return fake
+
+    def test_inventory_lists_local_keys_tenant_scoped(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        self._fake_identity(monkeypatch)
+        client = _client()
+        _admin_headers("default")
+        auth_manager.create_api_key("other-tenant-key", ["admin"], tenant_id="other")
+        resp = client.get("/api/v1/console/keys", headers=_admin_headers())
+        assert resp.status_code == 200
+        names = [k["name"] for k in resp.json()["local"]]
+        assert "other-tenant-key" not in names
+
+    def test_rotate_success_and_audit(self, monkeypatch, tmp_path):
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        self._fake_identity(
+            monkeypatch, rotate={"ok": True, "secret": "fms_new_secret", "version": 3, "previous_version": 2}
+        )
+        client = _client()
+        h = _admin_headers()
+        resp = client.post(
+            "/api/v1/console/keys/rotate", json={"app_id": "fusion-mlx", "grace_seconds": 3600}, headers=h
+        )
+        assert resp.status_code == 200
+        assert resp.json()["secret"] == "fms_new_secret"
+        assert resp.json()["version"] == 3
+        # 轮换本身进审计流(密钥绝不落审计)。
+        from fusion_security.engine.console.audit_store import AuditStore
+
+        entries, total = AuditStore(audit_dir).query("default", action="key.rotate")
+        assert total == 1
+        assert "fms_new_secret" not in json.dumps(entries[0]["details"])
+
+    def test_rotate_failure_502_with_reason(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        self._fake_identity(monkeypatch, rotate={"ok": False, "reason": "identity 未提供轮换"})
+        client = _client()
+        resp = client.post("/api/v1/console/keys/rotate", json={"app_id": "fusion-mlx"}, headers=_admin_headers())
+        assert resp.status_code == 502
+        assert "identity" in resp.json()["detail"]
+
+    def test_revoke_upstream_pending_is_502_not_fake_success(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        self._fake_identity(
+            monkeypatch, revoke={"ok": False, "reason": "identity 未提供 revoke 端点(fusion-identity#35)"}
+        )
+        client = _client()
+        resp = client.post(
+            "/api/v1/console/keys/revoke", json={"app_id": "fusion-mlx", "version": 2}, headers=_admin_headers()
+        )
+        assert resp.status_code == 502
+        assert "fusion-identity#35" in resp.json()["detail"]
+
+    def test_local_key_expiry_patch(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        self._fake_identity(monkeypatch)
+        client = _client()
+        h = _admin_headers()
+        raw = auth_manager.create_api_key("patch-target", ["viewer"], tenant_id="default")
+        from fusion_security.db.models import ApiKeyORM
+        from fusion_security.db.session import get_session
+
+        db = get_session()
+        try:
+            row = db.query(ApiKeyORM).filter(ApiKeyORM.name == "patch-target").first()
+            key_id = row.id
+        finally:
+            db.close()
+        resp = client.patch(
+            f"/api/v1/console/keys/local/{key_id}",
+            json={"expires_at": "2027-01-01T00:00:00"},
+            headers=h,
+        )
+        assert resp.status_code == 200
+        db = get_session()
+        try:
+            row = db.query(ApiKeyORM).filter(ApiKeyORM.id == key_id).first()
+            assert row.expires_at is not None
+        finally:
+            db.close()
+        assert raw  # key 明文仅创建时可见,patch 不返回
+
+    def test_sso_states(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        h = _admin_headers()
+
+        self._fake_identity(monkeypatch, idp={"available": False, "reason": "upstream pending", "configured": False})
+        resp = client.get("/api/v1/console/sso", headers=h)
+        assert resp.json()["state"] == "unavailable"
+        assert "fusion-identity#35" in resp.json()["detail"]
+
+        self._fake_identity(monkeypatch, idp={"available": True, "configured": False})
+        resp = client.get("/api/v1/console/sso", headers=h)
+        assert resp.json()["state"] == "not_configured"
+
+        self._fake_identity(
+            monkeypatch,
+            idp={"available": True, "configured": True, "count": 1, "types": ["oidc"], "auto_provision": True},
+        )
+        resp = client.get("/api/v1/console/sso", headers=h)
+        assert resp.json()["state"] == "configured"
+        assert resp.json()["types"] == ["oidc"]
+
+
+class TestWorkbenchRBAC:
+    def test_viewer_403_on_all_console_endpoints(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        raw = auth_manager.create_api_key("viewer-only", ["viewer"], tenant_id="default")
+        h = {"X-API-Key": raw, "X-Tenant-Id": "default"}
+        for method, path in [
+            ("GET", "/api/v1/console/audit/events"),
+            ("GET", "/api/v1/console/audit/export"),
+            ("GET", "/api/v1/console/audit/saved-queries"),
+            ("POST", "/api/v1/console/audit/saved-queries"),
+            ("GET", "/api/v1/console/alerts/subscriptions"),
+            ("POST", "/api/v1/console/alerts/subscriptions"),
+            ("GET", "/api/v1/console/notifications"),
+            ("GET", "/api/v1/console/keys"),
+            ("POST", "/api/v1/console/keys/rotate"),
+            ("GET", "/api/v1/console/sso"),
+        ]:
+            resp = client.request(
+                method, path, json={"name": "x", "app_id": "a"} if method == "POST" else None, headers=h
+            )
+            assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"

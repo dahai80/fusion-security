@@ -38,6 +38,10 @@ class AuditEntry:
     details: dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
     ip_address: str = ""
+    # Issue #61: 风险分级(info/low/medium/high/critical)供审计工作台过滤与首页
+    # 高风险速览;trace_id 串跨服务链路。旧 jsonl 行缺字段时读取侧按默认值兜底。
+    risk_level: str = "info"
+    trace_id: str = ""
 
     def __post_init__(self):
         if not self.timestamp:
@@ -53,6 +57,8 @@ class AuditEntry:
             "details": self.details,
             "timestamp": self.timestamp,
             "ip_address": self.ip_address,
+            "risk_level": self.risk_level,
+            "trace_id": self.trace_id,
         }
 
 
@@ -71,6 +77,8 @@ class AuditLogger:
         resource_id: str = "",
         details: dict[str, Any] | None = None,
         ip_address: str = "",
+        risk_level: str = "info",
+        trace_id: str = "",
     ) -> AuditEntry:
         entry = AuditEntry(
             action=action,
@@ -80,6 +88,8 @@ class AuditLogger:
             resource_id=resource_id,
             details=details or {},
             ip_address=ip_address,
+            risk_level=risk_level,
+            trace_id=trace_id,
         )
         self.entries.append(entry)
         if len(self.entries) > self.max_entries:
@@ -108,3 +118,20 @@ class AuditLogger:
                 f.write(json.dumps(entry.to_dict(), ensure_ascii=False, default=str) + "\n")
         except Exception as e:
             logger.warning(f"[Audit] 写入失败: {e}")
+
+
+# Issue #60: per-tenant 单例工厂 —— API 层各调用点按请求租户取 logger,
+# 共享同一 log_dir(默认 ~/.fusion_security/audit),条目按 tenant 分文件落盘。
+_audit_loggers: dict[str, AuditLogger] = {}
+_audit_default_dir = str(Path.home() / ".fusion_security" / "audit")
+
+
+def get_audit_logger(tenant_id: str = "", log_dir: str = "") -> AuditLogger:
+    key = tenant_id or "system"
+    if key not in _audit_loggers:
+        _audit_loggers[key] = AuditLogger(log_dir=log_dir or _audit_default_dir, tenant_id=key)
+    return _audit_loggers[key]
+
+
+def audit_log_dir() -> str:
+    return _audit_default_dir

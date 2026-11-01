@@ -256,3 +256,53 @@ class FeedbackORM(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class SavedQueryORM(Base):
+    # Issue #61: 审计工作台保存查询 —— 定义 JSON(search/action/risk/start/end),
+    # 重放时与手输过滤同一代码路径,保证结果集一致。
+    __tablename__ = "saved_queries"
+    __table_args__ = (Index("ix_saved_query_tenant", "tenant_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(16), default="")
+    name: Mapped[str] = mapped_column(String(100), default="")
+    definition: Mapped[str] = mapped_column(Text, default="{}")
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class AlertSubscriptionORM(Base):
+    # Issue #61: 告警订阅 —— event_class(action 前缀)或 saved_query 引用;
+    # last_matched_ts 游标支撑增量匹配(不重放历史)。
+    __tablename__ = "alert_subscriptions"
+    __table_args__ = (Index("ix_alert_sub_tenant", "tenant_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(16), default="")
+    name: Mapped[str] = mapped_column(String(100), default="")
+    event_class: Mapped[str] = mapped_column(String(100), default="")
+    saved_query_id: Mapped[str] = mapped_column(String(32), default="")
+    risk_levels: Mapped[str] = mapped_column(String(100), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_matched_ts: Mapped[float] = mapped_column(Float, default=0.0)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class AlertRecordORM(Base):
+    # Issue #61: 已触发告警 —— shell 🔔 通知轮询数据源;dedup_key 幂等
+    # (同事件重扫不重复插入),created_at 支撑保留清理。
+    __tablename__ = "alert_records"
+    __table_args__ = (Index("ix_alert_record_tenant", "tenant_id"), Index("uq_alert_dedup", "dedup_key", unique=True))
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(16), default="")
+    subscription_id: Mapped[str] = mapped_column(String(32), default="")
+    dedup_key: Mapped[str] = mapped_column(String(120), default="")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    level: Mapped[str] = mapped_column(String(20), default="info")
+    route: Mapped[str] = mapped_column(String(200), default="")
+    event_action: Mapped[str] = mapped_column(String(100), default="")
+    trace_id: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

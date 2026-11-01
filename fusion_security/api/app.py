@@ -13,8 +13,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fusion_core.config import service_port
 
-from .auth import ROLES, auth_manager, get_current_key, require_permission
-from .routes import integrations, patches, projects, reports, scans, schedules, system, vulnerabilities
+from .auth import ROLES, APIKey, auth_manager, get_current_key, require_permission
+from .routes import console, integrations, patches, projects, reports, scans, schedules, system, vulnerabilities
 
 try:
     from .. import __version__ as _PKG_VERSION
@@ -282,14 +282,33 @@ def create_app() -> FastAPI:
     app.include_router(patches.router, prefix="/api/v1/patches", tags=["Patches"], dependencies=_AUTH)
     app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"], dependencies=_AUTH)
     app.include_router(schedules.router, prefix="/api/v1/schedules", tags=["Schedules"], dependencies=_AUTH)
+    # Issue #60: Admin Console 聚合面 —— system:manage 门禁在 route 内(require_permission),
+    # 挂 _AUTH 仅做 principal 解析,避免双重 403 语义。
+    app.include_router(console.router, prefix="/api/v1/console", tags=["Console"])
 
-    @app.post("/api/v1/keys", tags=["Auth"], dependencies=[Depends(require_permission("api_key:manage"))])
-    async def create_api_key(name: str = "default", roles: str = "viewer"):
+    @app.post("/api/v1/keys", tags=["Auth"])
+    async def create_api_key(
+        name: str = "default", roles: str = "viewer", principal: APIKey = Depends(require_permission("api_key:manage"))
+    ):
         role_list = [r.strip() for r in roles.split(",") if r.strip()]
         invalid = [r for r in role_list if r not in ROLES]
         if invalid:
             raise HTTPException(status_code=400, detail=f"未知角色: {invalid}")
         key = auth_manager.create_api_key(name, role_list)
+        # Issue #60: key 管理操作进审计流(中风险,工作台可见)。
+        try:
+            from ..engine.tenant.audit import get_audit_logger
+
+            get_audit_logger(principal.tenant_id or "system").log(
+                action="key.create",
+                actor=principal.name,
+                resource_type="api_key",
+                resource_id=name,
+                details={"roles": role_list},
+                risk_level="medium",
+            )
+        except Exception as e:
+            logger.warning(f"[Startup] key.create 审计失败: {e}")
         return {"api_key": key, "name": name, "roles": role_list}
 
     @app.get("/api/v1/keys", tags=["Auth"], dependencies=[Depends(require_permission("api_key:manage"))])
