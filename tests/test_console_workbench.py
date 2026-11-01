@@ -345,3 +345,124 @@ class TestWorkbenchRBAC:
                 method, path, json={"name": "x", "app_id": "a"} if method == "POST" else None, headers=h
             )
             assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"
+
+
+class TestConsoleEdgePaths:
+    # 边缘路径补测:非法时间参数、损坏保存查询、空导出、订阅列表/删除、
+    # 本地 key 404/非法 ISO、吊销成功路径、保存查询订阅的 search/action 回退。
+
+    def test_bad_time_param_400(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.get("/api/v1/console/audit/events", params={"start": "abc"}, headers=_admin_headers())
+        assert resp.status_code == 400 and "epoch" in resp.json()["detail"]
+
+    def test_corrupt_saved_query_definition_400(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        from fusion_security.db.models import SavedQueryORM
+        from fusion_security.db.session import get_session
+
+        db = get_session()
+        row = SavedQueryORM(tenant_id="default", name="损坏", definition="{bad json", created_by="t")
+        db.add(row)
+        db.commit()
+        qid = row.id
+        db.close()
+        resp = client.get("/api/v1/console/audit/events", params={"saved_query_id": qid}, headers=_admin_headers())
+        assert resp.status_code == 400
+
+    def test_export_zero_rows_header_only(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.get(
+            "/api/v1/console/audit/export",
+            params={"search": "nothing-matches"},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200
+        text = resp.text.lstrip("﻿")
+        assert text.splitlines()[0].startswith("timestamp")
+        assert len(text.strip().splitlines()) == 1
+
+    def test_saved_query_delete_404(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.delete("/api/v1/console/audit/saved-queries/nope", headers=_admin_headers())
+        assert resp.status_code == 404
+
+    def test_subscriptions_list_delete_and_404(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        h = _admin_headers()
+        created = client.post(
+            "/api/v1/console/alerts/subscriptions",
+            json={"name": "s1", "event_class": "auth.", "risk_levels": "high,critical"},
+            headers=h,
+        )
+        assert created.status_code == 200
+        sid = created.json()["id"]
+        listed = client.get("/api/v1/console/alerts/subscriptions", headers=h)
+        assert listed.status_code == 200
+        assert [s["id"] for s in listed.json()["items"]] == [sid]
+        assert listed.json()["items"][0]["event_class"] == "auth."
+        assert client.delete(f"/api/v1/console/alerts/subscriptions/{sid}", headers=h).status_code == 200
+        assert client.delete("/api/v1/console/alerts/subscriptions/nope", headers=h).status_code == 404
+
+    def test_saved_query_subscription_search_fallback(self, monkeypatch, tmp_path):
+        # 订阅绑定保存查询(无 event_class)—— 按定义里的 search/action 过滤。
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        al = AuditLogger(log_dir=audit_dir, tenant_id="default")
+        al.log("auth.invalid_key", actor="anonymous", risk_level="high")
+        al.log("key.create", actor="cron", risk_level="medium")
+        client = _client()
+        h = _admin_headers()
+        q = client.post(
+            "/api/v1/console/audit/saved-queries",
+            json={"name": "匿名高危", "search": "anonymous", "risk": "high"},
+            headers=h,
+        )
+        qid = q.json()["id"]
+        created = client.post(
+            "/api/v1/console/alerts/subscriptions",
+            json={"name": "绑定查询", "saved_query_id": qid},
+            headers=h,
+        )
+        assert created.status_code == 200
+        resp = client.get("/api/v1/console/notifications", headers=h)
+        items = resp.json()["items"]
+        assert any("auth.invalid_key" in i["title"] for i in items)
+        assert not any("key.create" in i["title"] for i in items)
+        # 保存查询被删后,订阅按空过滤兜底 —— 轮询不 500。
+        client.delete(f"/api/v1/console/audit/saved-queries/{qid}", headers=h)
+        resp2 = client.get("/api/v1/console/notifications", headers=h)
+        assert resp2.status_code == 200
+
+    def test_local_key_patch_404_and_bad_iso(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        h = _admin_headers()
+        assert client.patch("/api/v1/console/keys/local/nope", json={"enabled": False}, headers=h).status_code == 404
+        from fusion_security.db.models import ApiKeyORM
+        from fusion_security.db.session import get_session
+
+        db = get_session()
+        key_id = db.query(ApiKeyORM).filter(ApiKeyORM.name == "admin-key").first().id
+        db.close()
+        assert (
+            client.patch(
+                f"/api/v1/console/keys/local/{key_id}", json={"expires_at": "not-a-date"}, headers=h
+            ).status_code
+            == 400
+        )
+
+    def test_revoke_success(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        TestKeyConsole._fake_identity(self, monkeypatch, revoke={"ok": True})
+        client = _client()
+        resp = client.post(
+            "/api/v1/console/keys/revoke",
+            json={"app_id": "fusion-mlx", "version": 2},
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 200 and resp.json()["ok"] is True
