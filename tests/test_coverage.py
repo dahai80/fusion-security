@@ -32,7 +32,9 @@ class TestAIAnalyzer:
     async def test_verify_findings_with_vuln(self):
         from fusion_security.engine.ai.analyzer import AIAnalyzer
 
-        analyzer = AIAnalyzer()
+        # 确定性降级路径:封闭端口 → AI 不可用 → fail-closed 保留原漏洞。
+        # 活实例可能判 is_real=false 过滤掉漏洞,导致断言随机挂。
+        analyzer = AIAnalyzer(mlx_url="http://127.0.0.1:9")
         vuln = Vulnerability(
             id="V1",
             title="SQL注入",
@@ -61,7 +63,9 @@ class TestAIAnalyzer:
     async def test_generate_fix(self):
         from fusion_security.engine.ai.analyzer import AIAnalyzer
 
-        analyzer = AIAnalyzer()
+        # 确定性降级路径:指向封闭端口,AI 不可用必须返回固定降级文案,
+        # 不依赖本机 fusion-mlx 是否在跑(活实例返回内容不定,曾致随机挂)。
+        analyzer = AIAnalyzer(mlx_url="http://127.0.0.1:9")
         vuln = Vulnerability(
             id="V1",
             title="Test",
@@ -73,8 +77,7 @@ class TestAIAnalyzer:
             code_snippet="old code",
         )
         result = await analyzer.generate_fix(vuln)
-        # fusion-mlx 不可用时返回错误信息
-        assert "修复" in result or "error" in result
+        assert result == "// 修复生成失败"
 
     def test_parse_json_valid(self):
         from fusion_security.engine.ai.analyzer import AIAnalyzer

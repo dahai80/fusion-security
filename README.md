@@ -253,10 +253,25 @@ When self-registering with the gateway, set `FUSION_SECURITY_SHELL_API_KEY` so t
 
 | Page | Description |
 |------|-------------|
+| **Admin Console** (`/console`, default landing) | Four-zone aggregation: members (fusion-identity), audit activity, key inventory, security posture checklist + latest high-risk events |
+| **Audit Workbench** (`/audit`) | Full-text search + time/risk/event-class filters over the auth audit trail, saved queries (exact replay), streaming CSV export, alert subscriptions |
+| **Keys & Policies** (`/keys`) | Local service keys (expiry, enable/disable) + fusion-identity module key ledger (rotate with grace window) + SSO state |
 | **Dashboard** | Stats cards (scans, vulns, high severity, fixed) + system health |
 | **Scans** | Scan list, create new scan, delete, status tracking |
 | **Vulnerabilities** | Vuln table with filters, detail modal, mark false positive, generate patch |
 | **Projects** | Project CRUD management |
+
+### Admin Console (Issues #60 / #61 / #62)
+
+The console surfaces are the admin aggregation layer of the module — fusion-security renders, fusion-identity is the data backbone (members, SSO, module keys):
+
+- **Console home** (`/console`, CS-1): four-zone summary (members / audit / keys / posture) with tenant selector, high-risk event strip, and deep links into the workbench and key console. Zones whose upstream data is not readable degrade honestly — the card shows the reason, never fabricated numbers.
+- **Audit workbench** (`/audit`, CS-2): search/filter over the append-only audit trail (`~/.fusion_security/audit/audit_<tenant>.jsonl`, every auth denial and key operation is recorded with risk level + trace id), saved queries that replay the identical result set, streaming CSV export (BOM, Excel-friendly), and alert subscriptions — matched events surface both on the console home and in the union-web shell notification center (manifest `notifications` entry, shell polls `/api/v1/console/notifications`).
+- **Key console** (`/keys`, CS-3): local service key lifecycle (expiry dates, enable/disable) plus the fusion-identity module key ledger with rotation (old version gets a grace window; the new secret is displayed exactly once, never logged). SSO state is read-only from identity.
+
+Identity aggregation depends on upstream fusion-identity#35 (service-token-readable member/IdP/app-secret inventory + secret revoke endpoints). Until that ships, member summaries, the full key inventory, SSO state and secret revocation degrade gracefully with an explicit reason — the module never fakes data. Key rotation and tenant listing work against the existing identity endpoints.
+
+Environment: `FUSION_IDENTITY_URL` (default `http://127.0.0.1:11470`), `FUSION_IDENTITY_SERVICE_TOKEN` (unset = identity aggregation degraded, API-key-only mode), `FUSION_AUDIT_RETENTION_DAYS` (posture checklist hint). Console read endpoints require the `system:manage` role; key rotation/revocation/local-key edits require `api_key:manage`.
 
 The dashboard connects to the FastAPI backend at `http://localhost:11454/api/v1`.
 
@@ -408,6 +423,19 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | **Auth** | | |
 | POST | `/api/v1/keys` | Create API key |
 | GET | `/api/v1/keys` | List API keys |
+| **Console** | | |
+| GET | `/api/v1/console/summary` | Four-zone console home summary |
+| GET | `/api/v1/console/tenants` | Tenant selector (via fusion-identity) |
+| GET | `/api/v1/console/audit/events` | Audit trail search/filter (search, action, risk, time window) |
+| GET | `/api/v1/console/audit/export` | Streaming CSV export of the filtered audit trail |
+| GET/POST/DELETE | `/api/v1/console/audit/saved-queries` | Saved query CRUD (replay = same filters) |
+| GET/POST/DELETE | `/api/v1/console/alerts/subscriptions` | Alert subscription CRUD |
+| GET | `/api/v1/console/notifications` | Shell notification poll: matched alerts + key-expiry warnings |
+| GET | `/api/v1/console/keys` | Local key inventory + identity module key ledger |
+| POST | `/api/v1/console/keys/rotate` | Rotate a module key via fusion-identity (grace window) |
+| POST | `/api/v1/console/keys/revoke` | Revoke a module key version (needs fusion-identity#35) |
+| PATCH | `/api/v1/console/keys/local/{key_id}` | Local key expiry / enable toggle |
+| GET | `/api/v1/console/sso` | SSO state for the tenant (read-only) |
 | **System** | | |
 | GET | `/api/v1/system/health` | Health check |
 | GET | `/api/v1/system/info` | Version & platform info |

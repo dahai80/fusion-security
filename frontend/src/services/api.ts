@@ -121,4 +121,22 @@ export const reportApi = {
     generate: (data: object) => request('POST', '/reports/generate', data),
 };
 
+// Issue #60/#61/#62: Admin Console 聚合面(全部 system:manage)。
+export const consoleApi = {
+    getSummary: () => request('GET', '/console/summary'),
+    getTenants: () => request('GET', '/console/tenants'),
+    getAuditEvents: (params?: object) => request('GET', '/console/audit/events', undefined, params),
+    getSavedQueries: () => request('GET', '/console/audit/saved-queries'),
+    createSavedQuery: (data: object) => request('POST', '/console/audit/saved-queries', data),
+    deleteSavedQuery: (id: string) => request('DELETE', `/console/audit/saved-queries/${id}`),
+    getSubscriptions: () => request('GET', '/console/alerts/subscriptions'),
+    createSubscription: (data: object) => request('POST', '/console/alerts/subscriptions', data),
+    deleteSubscription: (id: string) => request('DELETE', `/console/alerts/subscriptions/${id}`),
+    getKeys: () => request('GET', '/console/keys'),
+    rotateKey: (data: object) => request('POST', '/console/keys/rotate', data),
+    revokeKey: (data: object) => request('POST', '/console/keys/revoke', data),
+    patchLocalKey: (id: string, data: object) => request('PATCH', `/console/keys/local/${id}`, data),
+    getSso: () => request('GET', '/console/sso'),
+};
+
 export default request;

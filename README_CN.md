@@ -218,12 +218,27 @@ npm run preview    # 预览生产构建
 
 | 页面 | 说明 |
 |------|------|
+| **管理控制台**（`/console`，默认首页） | 四分区聚合：成员（fusion-identity）、审计动态、密钥盘点、安全态势检查清单 + 最新高危事件 |
+| **审计工作台**（`/audit`） | 审计日志全文检索 + 时间/风险/事件类型过滤、保存查询（同结果集重放）、流式 CSV 导出、告警订阅 |
+| **密钥与策略**（`/keys`） | 本地服务 key（过期/启停）+ fusion-identity 模块 key 台账（带宽限期轮换）+ SSO 状态 |
 | **仪表盘** | 统计卡片（扫描数、漏洞数、高危、已修复）+ 系统健康 |
 | **扫描管理** | 扫描列表、创建扫描、删除、状态跟踪 |
 | **漏洞管理** | 漏洞表格（筛选）、详情弹窗、标记误报、生成补丁 |
 | **项目管理** | 项目增删改查 |
 
 仪表盘连接后端 FastAPI 服务 `http://localhost:11454/api/v1`。
+
+### 管理控制台（Issue #60 / #61 / #62）
+
+控制台三页是模块的管理聚合面 —— fusion-security 负责呈现，fusion-identity 是数据底座（成员/SSO/模块 key）：
+
+- **控制台首页**（`/console`，CS-1）：四分区汇总（成员/审计/密钥/态势）+ 租户选择器 + 高危事件条，深链到工作台与密钥台。上游数据不可读的分区如实降级 —— 卡片显示原因，绝不伪造数字。
+- **审计工作台**（`/audit`，CS-2）：对只追加审计日志（`~/.fusion_security/audit/audit_<租户>.jsonl`，所有鉴权拒绝与 key 操作均带风险等级 + trace-id 落盘）做检索/过滤，保存查询重放同一结果集，流式 CSV 导出（带 BOM，Excel 友好），告警订阅 —— 命中事件同时呈现在控制台首页与 union-web shell 通知中心（manifest `notifications` 声明，shell 轮询 `/api/v1/console/notifications`）。
+- **密钥台**（`/keys`，CS-3）：本地服务 key 生命周期（过期时间、启停）+ fusion-identity 模块 key 台账轮换（旧版本进宽限期；新 secret 仅显示一次，绝不落日志）。SSO 状态只读自 identity。
+
+identity 聚合依赖上游 fusion-identity#35（service-token 可读的成员/IdP/app-secret 台账 + secret 吊销端点）。上游落地前，成员汇总、全量 key 台账、SSO 状态与吊销均优雅降级并附明确原因 —— 模块绝不伪造数据。key 轮换与租户列表走 identity 既有端点，当前可用。
+
+环境变量：`FUSION_IDENTITY_URL`（默认 `http://127.0.0.1:11470`）、`FUSION_IDENTITY_SERVICE_TOKEN`（未设置 = identity 聚合降级，API-key-only 形态）、`FUSION_AUDIT_RETENTION_DAYS`（态势检查清单提示项）。控制台读端点要求 `system:manage` 角色；key 轮换/吊销/本地 key 编辑要求 `api_key:manage`。
 
 ### Union-web 远程模块（Issue #35）
 
@@ -366,6 +381,18 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | GET | `/api/v1/integrations/jira/issue/{key}` | 获取 Jira 工单 |
 | POST | `/api/v1/keys` | 创建 API Key |
 | GET | `/api/v1/keys` | API Key 列表 |
+| GET | `/api/v1/console/summary` | 控制台首页四分区汇总 |
+| GET | `/api/v1/console/tenants` | 租户选择器（经 fusion-identity） |
+| GET | `/api/v1/console/audit/events` | 审计日志检索/过滤（search、action、risk、时间窗） |
+| GET | `/api/v1/console/audit/export` | 流式 CSV 导出（按当前过滤） |
+| GET/POST/DELETE | `/api/v1/console/audit/saved-queries` | 保存查询增删查（重放 = 同过滤） |
+| GET/POST/DELETE | `/api/v1/console/alerts/subscriptions` | 告警订阅增删查 |
+| GET | `/api/v1/console/notifications` | shell 通知轮询：命中告警 + key 过期提醒 |
+| GET | `/api/v1/console/keys` | 本地 key 清单 + identity 模块 key 台账 |
+| POST | `/api/v1/console/keys/rotate` | 经 fusion-identity 轮换模块 key（宽限期） |
+| POST | `/api/v1/console/keys/revoke` | 吊销模块 key 版本（待 fusion-identity#35） |
+| PATCH | `/api/v1/console/keys/local/{key_id}` | 本地 key 过期/启停 |
+| GET | `/api/v1/console/sso` | 租户 SSO 状态（只读） |
 | GET | `/api/v1/system/health` | 健康检查 |
 | GET | `/api/v1/system/info` | 版本与平台信息 |
 | GET | `/api/v1/system/rules` | 内置规则列表 |
