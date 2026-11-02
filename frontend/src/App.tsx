@@ -108,6 +108,17 @@ export default function App() {
         }
     }, []);
 
+    // 主题画布:iframe body/html 默认透明白,深色下组件外的空隙露出白底。
+    // 按当前算法取 token 画布色并同步 colorScheme(滚动条/原生控件)。
+    useEffect(() => {
+        const canvas = antdTheme.getDesignToken({
+            algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        }).colorBgLayout;
+        document.documentElement.style.background = canvas;
+        document.body.style.background = canvas;
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    }, [dark]);
+
     // Issue #35: 内嵌模式(union-web shell iframe)隐藏自有侧边导航,
     // 由 shell 菜单 + manifest pages 深链承担导航;独立模式保留完整布局。
     // 经 gateway /shell/fusion-security/ 托管时,路由 basename 对齐托管前缀。
