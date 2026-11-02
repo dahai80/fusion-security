@@ -21,6 +21,11 @@ export function createThemeState(initial: ThemeMode) {
         },
         subscribe(listener: (mode: ThemeMode) => void): () => void {
             listeners.add(listener);
+            // Notify immediately with the current mode: the host's initial
+            // push/pull can land before a consumer subscribes, and the
+            // same-value dedupe in set() would then swallow every later
+            // matching push, leaving the consumer stuck on its initial value.
+            listener(current);
             return () => listeners.delete(listener);
         },
     };
