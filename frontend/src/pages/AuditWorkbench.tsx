@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Table, Input, Select, DatePicker, Button, Space, Modal, message, Tag, Typography, Popconfirm, Descriptions, Checkbox,
+    Table, Input, Select, DatePicker, Button, Space, Modal, message, Tag, Typography, Popconfirm, Descriptions, Checkbox, theme as antdTheme,
 } from 'antd';
 import {
     SearchOutlined, DownloadOutlined, SaveOutlined, BellOutlined, DeleteOutlined, StarOutlined, StarFilled,
@@ -9,7 +9,8 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { consoleApi } from '../services/api';
-import { sdk } from '../sdk';
+import { useT } from '../i18n';
+import { severityTagColor } from '../severity';
 
 // Issue #61(CS-2):审计工作台 —— 全文搜索 + 时间窗/类型/风险过滤 + 保存查询
 // (重放同结果集) + CSV 导出(流式) + 告警订阅(shell 🔔) + 事件详情(trace-id)。
@@ -17,16 +18,6 @@ import { sdk } from '../sdk';
 // 缺省回退 resource_id,命中行高亮)。
 
 const { RangePicker } = DatePicker;
-
-const t = (zh: string, en: string) => sdk.i18n.t(zh, en);
-
-const RISK_COLORS: Record<string, string> = {
-    critical: '#cf1322',
-    high: '#fa541c',
-    medium: '#faad14',
-    low: '#52c41a',
-    info: '#8c8c8c',
-};
 
 interface AuditEvent {
     action: string;
@@ -68,6 +59,9 @@ export default function AuditWorkbench() {
     const [resourceId, setResourceId] = useState('');
     const [highlightKey, setHighlightKey] = useState('');
     const navigate = useNavigate();
+    const t = useT();
+    // 规范 S1:标记星色走 theme token,暗色自适应。
+    const { token } = antdTheme.useToken();
 
     const currentFilters = () => {
         const params: Record<string, string> = {};
@@ -212,7 +206,7 @@ export default function AuditWorkbench() {
             title: t('风险', 'Risk'),
             dataIndex: 'risk_level',
             width: 90,
-            render: (r: string) => <Tag color={RISK_COLORS[r] || 'default'}>{r}</Tag>,
+            render: (r: string) => <Tag color={severityTagColor(r)}>{r}</Tag>,
         },
         { title: t('事件', 'Event'), dataIndex: 'action' },
         { title: t('操作者', 'Actor'), dataIndex: 'actor', width: 140 },
@@ -234,7 +228,7 @@ export default function AuditWorkbench() {
                     size="small"
                     type="text"
                     aria-label={e.marked ? 'unmark' : 'mark'}
-                    icon={e.marked ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+                    icon={e.marked ? <StarFilled style={{ color: token.colorWarning }} /> : <StarOutlined />}
                     onClick={() => toggleMark(e)}
                 />
             ),

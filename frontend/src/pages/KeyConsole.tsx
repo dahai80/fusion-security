@@ -5,13 +5,11 @@ import {
 import { SyncOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { consoleApi } from '../services/api';
-import { sdk } from '../sdk';
+import { useT } from '../i18n';
 
 // Issue #62(CS-3):密钥集中管理台 —— 本地服务 key(过期/启停) + identity
 // 模块 key 台账(轮换带 grace 窗,吊销依赖上游 fusion-identity#35) + SSO 面
 // (按 identity 真实能力渲染,不可读 = 明确 disabled + roadmap 说明)。
-
-const t = (zh: string, en: string) => sdk.i18n.t(zh, en);
 
 interface LocalKey {
     id: string;
@@ -51,6 +49,7 @@ export default function KeyConsole() {
     const [rotatedSecret, setRotatedSecret] = useState('');
     const [expiryKey, setExpiryKey] = useState<LocalKey | null>(null);
     const [expiryDate, setExpiryDate] = useState<any>(null);
+    const t = useT();
 
     const load = async () => {
         setLoading(true);

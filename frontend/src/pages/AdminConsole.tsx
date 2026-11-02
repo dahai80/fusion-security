@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Row, Col, Card, Statistic, Tag, Spin, Alert, Select, List, Button, Typography } from 'antd';
+import { Row, Col, Card, Statistic, Tag, Spin, Alert, Select, List, Button, Typography, theme as antdTheme } from 'antd';
 import {
     TeamOutlined,
     FileSearchOutlined,
@@ -10,7 +10,7 @@ import {
     RightOutlined,
 } from '@ant-design/icons';
 import { consoleApi } from '../services/api';
-import { sdk } from '../sdk';
+import { useT } from '../i18n';
 
 // Issue #60(CS-1):Admin Console 首页 —— 四分区聚合(成员/审计/密钥/姿态)
 // + 高风险事件速览 + 租户选择器。identity 数据可降级:降级分区显示原因,
@@ -31,8 +31,6 @@ interface ConsoleSummary {
     high_risk_events: Array<{ action: string; actor: string; risk_level: string; timestamp: number; trace_id: string }>;
 }
 
-const t = (zh: string, en: string) => sdk.i18n.t(zh, en);
-
 const POSTURE_TITLES: Record<string, [string, string]> = {
     sso: ['SSO 单点登录', 'SSO'],
     retention: ['审计保留策略', 'Audit retention'],
@@ -49,6 +47,9 @@ export default function AdminConsole() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const navigate = useNavigate();
+    const t = useT();
+    // 规范 S1:状态色走 theme token,随暗色算法自适应。
+    const { token } = antdTheme.useToken();
 
     useEffect(() => {
         loadTenants();
@@ -160,7 +161,7 @@ export default function AdminConsole() {
                         <Statistic value={summary.audit.today_total} title={t('今日事件', 'Events today')} />,
                         <span>
                             {t('高风险', 'High risk')}{' '}
-                            <b style={{ color: summary.audit.today_high_risk ? '#fa541c' : undefined }}>
+                            <b style={{ color: summary.audit.today_high_risk ? token.colorError : undefined }}>
                                 {summary.audit.today_high_risk}
                             </b>
                         </span>,
@@ -175,7 +176,7 @@ export default function AdminConsole() {
                         <Statistic value={summary.keys.local_active} title={t('活跃服务 key', 'Active keys')} />,
                         <span>
                             {t('即将过期', 'Expiring soon')}{' '}
-                            <b style={{ color: summary.keys.local_expiring_soon ? '#faad14' : undefined }}>
+                            <b style={{ color: summary.keys.local_expiring_soon ? token.colorWarning : undefined }}>
                                 {summary.keys.local_expiring_soon}
                             </b>
                         </span>,
@@ -199,7 +200,7 @@ export default function AdminConsole() {
             <Card
                 title={
                     <span>
-                        <WarningOutlined style={{ color: '#fa541c' }} /> {t('高风险事件', 'High-risk events')}
+                        <WarningOutlined style={{ color: token.colorWarning }} /> {t('高风险事件', 'High-risk events')}
                     </span>
                 }
                 extra={
@@ -225,7 +226,7 @@ export default function AdminConsole() {
                                 <List.Item.Meta
                                     title={
                                         <span>
-                                            <Tag color={e.risk_level === 'critical' ? '#cf1322' : '#fa541c'}>
+                                            <Tag color={e.risk_level === 'critical' ? 'red' : 'volcano'}>
                                                 {e.risk_level}
                                             </Tag>
                                             {e.action} · {e.actor}

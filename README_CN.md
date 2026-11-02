@@ -226,6 +226,8 @@ npm run preview    # 预览生产构建
 | **漏洞管理** | 漏洞表格（筛选）、详情弹窗、标记误报、生成补丁 |
 | **项目管理** | 项目增删改查 |
 
+全部页面遵循 union-web 前端规范（`architecture/fusion-web-ui-spec-1015.md`）：文案双语并实时跟随 shell 语言（经 `@fusion/web-sdk` 的 `i18n` 订阅 —— 宿主切换语言后已挂载页面免刷新即时切换，覆盖菜单/页头/按钮/四态；AntD 内置文案经 `ConfigProvider` locale 同步）；主题跟随 shell 暗色/浅色切换，状态色全部走 AntD theme token（无硬编码 hex —— 严重度映射为随主题自适应的预设色：critical=red、high=volcano、medium=gold、low=green、info=blue）。
+
 仪表盘连接后端 FastAPI 服务 `http://localhost:11454/api/v1`。
 
 ### 管理控制台（Issue #60 / #61 / #62）
