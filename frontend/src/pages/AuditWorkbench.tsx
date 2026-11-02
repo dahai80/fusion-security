@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Table, Input, Select, DatePicker, Button, Space, Modal, message, Tag, Typography, Popconfirm, Descriptions,
+    Table, Input, Select, DatePicker, Button, Space, Modal, message, Tag, Typography, Popconfirm, Descriptions, Checkbox,
 } from 'antd';
-import { SearchOutlined, DownloadOutlined, SaveOutlined, BellOutlined, DeleteOutlined } from '@ant-design/icons';
+import {
+    SearchOutlined, DownloadOutlined, SaveOutlined, BellOutlined, DeleteOutlined, StarOutlined, StarFilled,
+    LinkOutlined,
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { consoleApi } from '../services/api';
 import { sdk } from '../sdk';
 
 // Issue #61(CS-2):审计工作台 —— 全文搜索 + 时间窗/类型/风险过滤 + 保存查询
 // (重放同结果集) + CSV 导出(流式) + 告警订阅(shell 🔔) + 事件详情(trace-id)。
+// Issue #65:标记复核(持久化分诊态 + 仅看已标记)+ 关联事件跳转(同 trace_id,
+// 缺省回退 resource_id,命中行高亮)。
 
 const { RangePicker } = DatePicker;
 
@@ -33,6 +38,8 @@ interface AuditEvent {
     ip_address: string;
     timestamp: number;
     details: Record<string, any>;
+    event_key: string;
+    marked: boolean;
 }
 
 interface SavedQuery {
@@ -56,6 +63,10 @@ export default function AuditWorkbench() {
     const [subOpen, setSubOpen] = useState(false);
     const [subName, setSubName] = useState('');
     const [subRisk, setSubRisk] = useState('high,critical');
+    const [markedOnly, setMarkedOnly] = useState(false);
+    const [traceId, setTraceId] = useState('');
+    const [resourceId, setResourceId] = useState('');
+    const [highlightKey, setHighlightKey] = useState('');
     const navigate = useNavigate();
 
     const currentFilters = () => {
@@ -63,15 +74,23 @@ export default function AuditWorkbench() {
         if (search) params.search = search;
         if (action) params.action = action;
         if (risk) params.risk = risk;
+        if (traceId) params.trace_id = traceId;
+        if (resourceId) params.resource_id = resourceId;
+        if (markedOnly) params.marked_only = 'true';
         if (range && range[0]) params.start = String(Math.floor(range[0].valueOf() / 1000));
         if (range && range[1]) params.end = String(Math.floor(range[1].valueOf() / 1000));
         return params;
     };
 
-    const load = async (p = page) => {
+    const load = async (p = page, overrides: Record<string, string> = {}) => {
         setLoading(true);
         try {
-            const res = await consoleApi.getAuditEvents({ ...currentFilters(), limit: 50, offset: (p - 1) * 50 });
+            const res = await consoleApi.getAuditEvents({
+                ...currentFilters(),
+                ...overrides,
+                limit: 50,
+                offset: (p - 1) * 50,
+            });
             setEvents(res.data.items || []);
             setTotal(res.data.total || 0);
         } catch (e: any) {
@@ -125,6 +144,9 @@ export default function AuditWorkbench() {
         setAction(q.definition.action || '');
         setRisk(q.definition.risk || '');
         setRange(null);
+        setTraceId('');
+        setResourceId('');
+        setHighlightKey('');
         try {
             const res = await consoleApi.getAuditEvents({ saved_query_id: q.id, limit: 50, offset: 0 });
             setEvents(res.data.items || []);
@@ -145,6 +167,37 @@ export default function AuditWorkbench() {
             setSubName('');
         } catch (e: any) {
             message.error(e.message || t('订阅失败', 'Subscribe failed'));
+        }
+    };
+
+    const toggleMark = async (e: AuditEvent) => {
+        // Issue #65:标记/取消复核 —— 后端幂等,(tenant, event_key) 唯一。
+        try {
+            await consoleApi.setAuditMark({ event_key: e.event_key, marked: !e.marked });
+            message.success(e.marked ? t('已取消标记', 'Mark removed') : t('已标记复核', 'Marked for review'));
+            load(page);
+        } catch (err: any) {
+            message.error(err.message || t('标记失败', 'Mark failed'));
+        }
+    };
+
+    const openRelated = (e: AuditEvent) => {
+        // Issue #65:同 trace_id 关联事件;缺 trace_id 时回退 resource_id。
+        // state 更新异步,查询用 overrides 立即生效,避免读到旧过滤。
+        if (e.trace_id) {
+            setTraceId(e.trace_id);
+            setResourceId('');
+            setHighlightKey(e.event_key);
+            setPage(1);
+            load(1, { trace_id: e.trace_id, resource_id: '' });
+        } else if (e.resource_id) {
+            setResourceId(e.resource_id);
+            setTraceId('');
+            setHighlightKey(e.event_key);
+            setPage(1);
+            load(1, { resource_id: e.resource_id, trace_id: '' });
+        } else {
+            message.info(t('该事件无 trace_id / resource_id 可关联', 'No trace_id / resource_id to relate'));
         }
     };
 
@@ -171,6 +224,19 @@ export default function AuditWorkbench() {
                     {e.resource_type}
                     {e.resource_id ? `/${e.resource_id}` : ''}
                 </span>
+            ),
+        },
+        {
+            title: t('复核', 'Review'),
+            width: 70,
+            render: (_: any, e: AuditEvent) => (
+                <Button
+                    size="small"
+                    type="text"
+                    aria-label={e.marked ? 'unmark' : 'mark'}
+                    icon={e.marked ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+                    onClick={() => toggleMark(e)}
+                />
             ),
         },
     ];
@@ -217,6 +283,42 @@ export default function AuditWorkbench() {
                 <Button icon={<BellOutlined />} onClick={() => setSubOpen(true)}>
                     {t('订阅告警', 'Subscribe')}
                 </Button>
+                <Checkbox
+                    checked={markedOnly}
+                    onChange={(ev) => {
+                        setMarkedOnly(ev.target.checked);
+                        setPage(1);
+                        load(1, { marked_only: ev.target.checked ? 'true' : '' });
+                    }}
+                >
+                    {t('仅看已标记', 'Marked only')}
+                </Checkbox>
+                {traceId && (
+                    <Tag
+                        color="blue"
+                        closable
+                        onClose={() => {
+                            setTraceId('');
+                            setHighlightKey('');
+                            load(1, { trace_id: '' });
+                        }}
+                    >
+                        trace: {traceId}
+                    </Tag>
+                )}
+                {resourceId && (
+                    <Tag
+                        color="purple"
+                        closable
+                        onClose={() => {
+                            setResourceId('');
+                            setHighlightKey('');
+                            load(1, { resource_id: '' });
+                        }}
+                    >
+                        resource: {resourceId}
+                    </Tag>
+                )}
             </Space>
 
             {savedQueries.length > 0 && (
@@ -240,12 +342,14 @@ export default function AuditWorkbench() {
             </Space>
             )}
 
+            <style>{`.fs-row-hl > td { background: rgba(250, 173, 20, 0.16) !important; }`}</style>
             <Table<AuditEvent>
                 rowKey={(e) => `${e.timestamp}-${e.action}-${e.actor}`}
                 size="middle"
                 loading={loading}
                 dataSource={events}
                 columns={columns}
+                rowClassName={(e) => (e.event_key && e.event_key === highlightKey ? 'fs-row-hl' : '')}
                 pagination={{
                     current: page,
                     pageSize: 50,
@@ -273,6 +377,19 @@ export default function AuditWorkbench() {
                                 <Typography.Text code style={{ whiteSpace: 'pre-wrap' }}>
                                     {JSON.stringify(e.details, null, 2)}
                                 </Typography.Text>
+                            </Descriptions.Item>
+                            <Descriptions.Item span={2}>
+                                <Space>
+                                    <Button size="small" icon={<LinkOutlined />} onClick={() => openRelated(e)}>
+                                        {t('关联事件', 'Related events')}
+                                    </Button>
+                                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                        {t(
+                                            '按同一 trace_id(缺省回退 resource_id)过滤并高亮本源事件',
+                                            'Filter by the same trace_id (fallback resource_id) and highlight the source row',
+                                        )}
+                                    </Typography.Text>
+                                </Space>
                             </Descriptions.Item>
                         </Descriptions>
                     ),

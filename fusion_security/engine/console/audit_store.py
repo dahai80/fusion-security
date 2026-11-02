@@ -20,6 +20,12 @@ RISK_LEVELS = ("info", "low", "medium", "high", "critical")
 HIGH_RISK_LEVELS = ("high", "critical")
 
 
+def event_key(rec: dict[str, Any]) -> str:
+    # Issue #65: 事件无落盘 ID,用 ts:action:actor 组合键定位(jsonl append-only,
+    # 标记复核存独立表引用该键;同秒同action同actor视为同一事件,工作台场景够用)。
+    return f"{rec['timestamp']:.3f}:{rec['action']}:{rec['actor']}"
+
+
 def _entry_from_line(line: str) -> dict[str, Any] | None:
     try:
         rec = json.loads(line)
@@ -74,6 +80,10 @@ class AuditStore:
         risk_levels: tuple[str, ...],
         start_ts: float,
         end_ts: float,
+        trace_id: str = "",
+        resource_id: str = "",
+        marked_keys: frozenset[str] | None = None,
+        marked_only: bool = False,
     ) -> bool:
         if start_ts and rec["timestamp"] < start_ts:
             return False
@@ -82,6 +92,12 @@ class AuditStore:
         if action and not rec["action"].startswith(action):
             return False
         if risk_levels and rec["risk_level"] not in risk_levels:
+            return False
+        if trace_id and rec["trace_id"] != trace_id:
+            return False
+        if resource_id and rec["resource_id"] != resource_id:
+            return False
+        if marked_only and (marked_keys is None or event_key(rec) not in marked_keys):
             return False
         if search:
             haystack = f"{rec['action']} {rec['actor']} {rec['resource_type']} {rec['resource_id']}"
@@ -99,10 +115,31 @@ class AuditStore:
         end_ts: float = 0.0,
         limit: int = 100,
         offset: int = 0,
+        trace_id: str = "",
+        resource_id: str = "",
+        marked_keys: frozenset[str] | None = None,
+        marked_only: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         # 返回 (entries, total):total 为过滤后总数(分页用),entries 为当前页。
+        # Issue #65: trace_id/resource_id 精确匹配(关联事件跳转);marked_keys +
+        # marked_only 支撑"仅看已标记"(total 含标记过滤,分页数一致)。
         entries = self._load(tenant_id)
-        matched = [r for r in entries if self._match(r, search.strip(), action.strip(), risk_levels, start_ts, end_ts)]
+        matched = [
+            r
+            for r in entries
+            if self._match(
+                r,
+                search.strip(),
+                action.strip(),
+                risk_levels,
+                start_ts,
+                end_ts,
+                trace_id.strip(),
+                resource_id.strip(),
+                marked_keys,
+                marked_only,
+            )
+        ]
         matched.sort(key=lambda r: r["timestamp"], reverse=True)
         total = len(matched)
         return matched[offset : offset + limit], total
