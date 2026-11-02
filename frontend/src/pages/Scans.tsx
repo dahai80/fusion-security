@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Tag, Space, message } from 'antd';
+import { Table, Button, Modal, Form, Input, Select, Tag, Space, Empty, message } from 'antd';
 import { PlusOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { scanApi } from '../services/api';
 import { useT } from '../i18n';
@@ -67,7 +67,22 @@ export default function Scans() {
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>{t('新建扫描', 'New scan')}</Button>
                 </Space>
             </div>
-            <Table dataSource={scans} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+            <Table
+                dataSource={scans}
+                columns={columns}
+                rowKey="id"
+                loading={loading}
+                pagination={{ pageSize: 10 }}
+                locale={{
+                    emptyText: (
+                        <Empty description={t('暂无扫描任务', 'No scans yet')}>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+                                {t('立即发起扫描', 'Start your first scan')}
+                            </Button>
+                        </Empty>
+                    ),
+                }}
+            />
             <Modal title={t('新建扫描', 'New scan')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
                 <Form form={form} layout="vertical" onFinish={handleCreate}>
                     <Form.Item name="path" label={t('目标路径', 'Target path')} rules={[{ required: true, message: t('请输入路径', 'Path is required') }]}>
