@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Table, Tag, Button, Space, Modal, message, Descriptions, Input, theme as antdTheme } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { Table, Tag, Button, Space, Modal, message, Descriptions, Input, Empty, theme as antdTheme } from 'antd';
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons';
 import { vulnApi, patchApi } from '../services/api';
 import { useT } from '../i18n';
@@ -24,6 +25,7 @@ export default function Vulnerabilities() {
     const [detailOpen, setDetailOpen] = useState(false);
     const [filterRule, setFilterRule] = useState('');
     const t = useT();
+    const navigate = useNavigate();
     // 规范 S1:代码片段底色走 theme token,暗色自适应。
     const { token } = antdTheme.useToken();
 
@@ -83,7 +85,22 @@ export default function Vulnerabilities() {
                     <Button icon={<ReloadOutlined />} onClick={loadVulns}>{t('刷新', 'Refresh')}</Button>
                 </Space>
             </div>
-            <Table dataSource={vulns} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 15 }} />
+            <Table
+                dataSource={vulns}
+                columns={columns}
+                rowKey="id"
+                loading={loading}
+                pagination={{ pageSize: 15 }}
+                locale={{
+                    emptyText: (
+                        <Empty description={t('暂无漏洞记录', 'No vulnerabilities yet')}>
+                            <Button type="primary" onClick={() => navigate('/scans')}>
+                                {t('去发起扫描', 'Run a scan first')}
+                            </Button>
+                        </Empty>
+                    ),
+                }}
+            />
             <Modal title={t('漏洞详情', 'Vulnerability detail')} open={detailOpen} onCancel={() => setDetailOpen(false)} footer={null} width={640}>
                 {detail && (
                     <Descriptions column={1} bordered size="small">
