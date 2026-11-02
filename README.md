@@ -261,6 +261,8 @@ When self-registering with the gateway, set `FUSION_SECURITY_SHELL_API_KEY` so t
 | **Vulnerabilities** | Vuln table with filters, detail modal, mark false positive, generate patch |
 | **Projects** | Project CRUD management |
 
+All pages follow the union-web frontend spec (`architecture/fusion-web-ui-spec-1015.md`): copy is bilingual and follows the shell language live (`@fusion/web-sdk` `i18n` subscription — a language switch re-renders mounted pages without reload, covering menus, page headers, buttons and the four data states; AntD's built-in texts — pagination, modals, date pickers — follow via `ConfigProvider` locale); theme follows the shell dark/light mode with status colors taken from AntD theme tokens (no hardcoded hex — severity levels map to theme-adaptive presets: critical=red, high=volcano, medium=gold, low=green, info=blue).
+
 ### Admin Console (Issues #60 / #61 / #62)
 
 The console surfaces are the admin aggregation layer of the module — fusion-security renders, fusion-identity is the data backbone (members, SSO, module keys):
