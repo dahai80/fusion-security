@@ -6,6 +6,7 @@ Issue #60/#61: AuditLogger 落盘 audit_{tenant}.jsonl(append-only);本模块只
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -21,9 +22,22 @@ HIGH_RISK_LEVELS = ("high", "critical")
 
 
 def event_key(rec: dict[str, Any]) -> str:
-    # Issue #65: 事件无落盘 ID,用 ts:action:actor 组合键定位(jsonl append-only,
-    # 标记复核存独立表引用该键;同秒同action同actor视为同一事件,工作台场景够用)。
+    # Issue #68 R1: 事件无落盘 ID,键 = 全载荷 sha256 摘要。盘上时间戳本就是微秒
+    # 精度,旧式 ts:action:actor 三位截断在同毫秒同actor同action 时碰撞(并发
+    # 突发正是这种形态) → 标记互相污染。摘要含完整 payload,实际无碰撞。
+    # 迁移兼容:legacy_event_key 继续参与匹配,存量标记不失效。
+    payload = json.dumps(rec, sort_keys=True, ensure_ascii=False, default=str)
+    return "mk_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def legacy_event_key(rec: dict[str, Any]) -> str:
+    # v0.2.0rc9 及之前的键形态(三位毫秒截断),仅供存量标记匹配。
     return f"{rec['timestamp']:.3f}:{rec['action']}:{rec['actor']}"
+
+
+def event_key_candidates(rec: dict[str, Any]) -> tuple[str, str]:
+    # 标记解析候选:新摘要键优先,旧键兜底(事件条目/标记表格两侧同用)。
+    return (event_key(rec), legacy_event_key(rec))
 
 
 def _entry_from_line(line: str) -> dict[str, Any] | None:
@@ -97,7 +111,7 @@ class AuditStore:
             return False
         if resource_id and rec["resource_id"] != resource_id:
             return False
-        if marked_only and (marked_keys is None or event_key(rec) not in marked_keys):
+        if marked_only and (marked_keys is None or not (set(event_key_candidates(rec)) & marked_keys)):
             return False
         if search:
             haystack = f"{rec['action']} {rec['actor']} {rec['resource_type']} {rec['resource_id']}"
@@ -143,6 +157,14 @@ class AuditStore:
         matched.sort(key=lambda r: r["timestamp"], reverse=True)
         total = len(matched)
         return matched[offset : offset + limit], total
+
+    def known_mark_keys(self, tenant_id: str) -> frozenset[str]:
+        # Issue #68 R2: 当前审计流中真实存在的全部标记键(新摘要 + legacy 兜底),
+        # marks 写入口用它拒绝悬空 event_key。
+        keys: set[str] = set()
+        for rec in self._load(tenant_id):
+            keys.update(event_key_candidates(rec))
+        return frozenset(keys)
 
     def today_counts(self, tenant_id: str) -> dict[str, int]:
         # 首页审计分区:今日事件数 + 高风险数 + 最近高风险条目。

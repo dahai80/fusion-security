@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import os
 
 from fastapi.testclient import TestClient
 
@@ -436,6 +437,87 @@ class TestAuditMarks:
         exp = client.get("/api/v1/console/audit/export", params={"trace_id": "tr-9"}, headers=h)
         rows = list(csv.DictReader(io.StringIO(exp.text.lstrip("﻿"))))
         assert len(rows) == 2
+
+
+class TestAuditMarkKeyIntegrity:
+    # Issue #68:R1 同毫秒事件键不碰撞(摘要键 + legacy 兜底)、R2 悬空键 404。
+
+    @staticmethod
+    def _write_same_ms_events(audit_dir):
+        import json as _json
+
+        ts = 1793598851.581275  # 同一微秒级时间戳,三位截断后必然同毫秒
+        lines = [
+            {
+                "action": "auth.invalid_key",
+                "actor": "anonymous",
+                "risk_level": "high",
+                "timestamp": ts,
+                "details": {"ip": "10.0.0.1"},
+            },
+            {
+                "action": "auth.invalid_key",
+                "actor": "anonymous",
+                "risk_level": "high",
+                "timestamp": ts,
+                "details": {"ip": "10.0.0.2"},
+            },
+        ]
+        path = f"{audit_dir}/audit_default.jsonl"
+        os.makedirs(audit_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for rec in lines:
+                f.write(_json.dumps(rec) + "\n")
+
+    def test_same_ms_events_marked_independently(self, monkeypatch, tmp_path):
+        from fusion_security.engine.console.audit_store import legacy_event_key
+
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        self._write_same_ms_events(audit_dir)
+        client = _client()
+        h = _admin_headers()
+        items = client.get("/api/v1/console/audit/events", headers=h).json()["items"]
+        assert len(items) == 2
+        keys = {i["event_key"] for i in items}
+        assert len(keys) == 2, "同毫秒同actor同action 事件必须得到独立键"
+        assert all(k.startswith("mk_") for k in keys)
+        # 旧式键两者相同 —— 摘要键才是身份
+        assert len({legacy_event_key(i) for i in items}) == 1
+
+        for k in keys:
+            r = client.post("/api/v1/console/audit/marks", json={"event_key": k}, headers=h)
+            assert r.status_code == 200
+        only = client.get("/api/v1/console/audit/events", params={"marked_only": "true"}, headers=h)
+        assert only.json()["total"] == 2, "两条事件必须可独立标记,不得互相污染"
+        assert all(i["marked"] for i in only.json()["items"])
+
+    def test_unknown_event_key_rejected(self, monkeypatch, tmp_path):
+        _reset_audit(monkeypatch, tmp_path)
+        client = _client()
+        resp = client.post(
+            "/api/v1/console/audit/marks", json={"event_key": "mk_does_not_exist"}, headers=_admin_headers()
+        )
+        assert resp.status_code == 404
+        assert "不存在" in resp.json()["detail"]
+
+    def test_legacy_key_still_accepted(self, monkeypatch, tmp_path):
+        # 迁移兼容:存量标记用旧键,标记解析两侧都要认。
+        from fusion_security.engine.console.audit_store import legacy_event_key
+
+        audit_dir = _reset_audit(monkeypatch, tmp_path)
+        self._write_same_ms_events(audit_dir)
+        client = _client()
+        h = _admin_headers()
+        items = client.get("/api/v1/console/audit/events", headers=h).json()["items"]
+        legacy = legacy_event_key(items[0])
+        r = client.post("/api/v1/console/audit/marks", json={"event_key": legacy}, headers=h)
+        assert r.status_code == 200
+        again = client.get("/api/v1/console/audit/events", headers=h).json()["items"]
+        # 旧键同毫秒碰撞 —— 两条原始事件都会显示已标记(legacy 键既有语义);
+        # 标记动作自身也会进审计流(audit.mark_review,未标记),故按 action 圈定。
+        originals = [i for i in again if i["action"] == "auth.invalid_key"]
+        assert len(originals) == 2
+        assert all(i["marked"] for i in originals)
 
 
 class TestConsoleEdgePaths:
