@@ -233,7 +233,7 @@ npm run preview    # 预览生产构建
 控制台三页是模块的管理聚合面 —— fusion-security 负责呈现，fusion-identity 是数据底座（成员/SSO/模块 key）：
 
 - **控制台首页**（`/console`，CS-1）：四分区汇总（成员/审计/密钥/态势）+ 租户选择器 + 高危事件条，深链到工作台与密钥台。上游数据不可读的分区如实降级 —— 卡片显示原因，绝不伪造数字。
-- **审计工作台**（`/audit`，CS-2）：对只追加审计日志（`~/.fusion_security/audit/audit_<租户>.jsonl`，所有鉴权拒绝与 key 操作均带风险等级 + trace-id 落盘）做检索/过滤，保存查询重放同一结果集，流式 CSV 导出（带 BOM，Excel 友好），告警订阅 —— 命中事件同时呈现在控制台首页与 union-web shell 通知中心（manifest `notifications` 声明，shell 轮询 `/api/v1/console/notifications`）。
+- **审计工作台**（`/audit`，CS-2）：对只追加审计日志（`~/.fusion_security/audit/audit_<租户>.jsonl`，所有鉴权拒绝与 key 操作均带风险等级 + trace-id 落盘）做检索/过滤，保存查询重放同一结果集，流式 CSV 导出（带 BOM，Excel 友好），告警订阅 —— 命中事件同时呈现在控制台首页与 union-web shell 通知中心（manifest `notifications` 声明，shell 轮询 `/api/v1/console/notifications`）。分诊增强（Issue #65）：标记复核按租户持久化在独立表（`audit_review_marks`，jsonl 保持只追加）并支持「仅看已标记」过滤；一键「关联事件」按同一 `trace_id`（缺省回退 `resource_id`）重过滤并高亮本源行；标记/取消均进审计流。
 - **密钥台**（`/keys`，CS-3）：本地服务 key 生命周期（过期时间、启停）+ fusion-identity 模块 key 台账轮换（旧版本进宽限期；新 secret 仅显示一次，绝不落日志）。SSO 状态只读自 identity。
 
 identity 聚合依赖上游 fusion-identity#35（service-token 可读的成员/IdP/app-secret 台账 + secret 吊销端点）。上游落地前，成员汇总、全量 key 台账、SSO 状态与吊销均优雅降级并附明确原因 —— 模块绝不伪造数据。key 轮换与租户列表走 identity 既有端点，当前可用。
@@ -386,6 +386,7 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | GET | `/api/v1/console/audit/events` | 审计日志检索/过滤（search、action、risk、时间窗） |
 | GET | `/api/v1/console/audit/export` | 流式 CSV 导出（按当前过滤） |
 | GET/POST/DELETE | `/api/v1/console/audit/saved-queries` | 保存查询增删查（重放 = 同过滤） |
+| POST | `/api/v1/console/audit/marks` | 标记/取消复核事件（进审计流） |
 | GET/POST/DELETE | `/api/v1/console/alerts/subscriptions` | 告警订阅增删查 |
 | GET | `/api/v1/console/notifications` | shell 通知轮询：命中告警 + key 过期提醒 |
 | GET | `/api/v1/console/keys` | 本地 key 清单 + identity 模块 key 台账 |

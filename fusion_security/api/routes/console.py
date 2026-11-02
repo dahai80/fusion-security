@@ -29,11 +29,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ...db.models import AlertSubscriptionORM, SavedQueryORM
+from ...db.models import AlertSubscriptionORM, AuditMarkORM, SavedQueryORM
 from ...db.session import get_session
 from ...engine.console import build_console_summary, get_identity_admin_client
 from ...engine.console.alert_engine import match_new_alerts, notification_items
-from ...engine.console.audit_store import RISK_LEVELS, AuditStore
+from ...engine.console.audit_store import RISK_LEVELS, AuditStore, event_key
 from ...engine.tenant.audit import audit_log_dir, get_audit_logger
 from ..auth import APIKey, require_permission
 
@@ -123,6 +123,16 @@ def _resolve_filters(
     }
 
 
+def _marked_keys(tenant_id: str) -> frozenset[str]:
+    # Issue #65: 租户已标记事件键集(标记表 → 过滤用)。
+    db = get_session()
+    try:
+        rows = db.query(AuditMarkORM).filter(AuditMarkORM.tenant_id == tenant_id).all()
+        return frozenset(r.event_key for r in rows)
+    finally:
+        db.close()
+
+
 @router.get("/audit/events")
 def audit_events(
     search: str = "",
@@ -131,14 +141,30 @@ def audit_events(
     start: str = "",
     end: str = "",
     saved_query_id: str = "",
+    trace_id: str = "",
+    resource_id: str = "",
+    marked_only: bool = False,
     limit: int = 50,
     offset: int = 0,
     key: APIKey = Depends(require_permission("system:manage")),
 ):
     limit = max(1, min(limit, 1000))
     filters = _resolve_filters(key, search, action, risk, start, end, saved_query_id)
-    entries, total = _store().query(key.tenant_id, offset=offset, limit=limit, **filters)
-    logger.info(f"[Console] audit 检索 tenant={key.tenant_id} total={total} filters={filters}")
+    marks = _marked_keys(key.tenant_id)
+    entries, total = _store().query(
+        key.tenant_id,
+        offset=offset,
+        limit=limit,
+        trace_id=trace_id,
+        resource_id=resource_id,
+        marked_keys=marks,
+        marked_only=marked_only,
+        **filters,
+    )
+    for e in entries:
+        e["event_key"] = event_key(e)
+        e["marked"] = e["event_key"] in marks
+    logger.info(f"[Console] audit 检索 tenant={key.tenant_id} total={total} marked={len(marks)} filters={filters}")
     return {"items": entries, "total": total, "limit": limit, "offset": offset}
 
 
@@ -150,6 +176,8 @@ def audit_export(
     start: str = "",
     end: str = "",
     saved_query_id: str = "",
+    trace_id: str = "",
+    resource_id: str = "",
     key: APIKey = Depends(require_permission("system:manage")),
 ):
     # 流式 CSV:逐行生成,不在内存攒全量(大时间窗不 OOM)。BOM 头保 Excel 中文。
@@ -178,7 +206,9 @@ def audit_export(
         )
         yield buf.getvalue()
         while True:
-            entries, total = store.query(tenant_id, offset=offset, limit=500, **filters)
+            entries, total = store.query(
+                tenant_id, offset=offset, limit=500, trace_id=trace_id, resource_id=resource_id, **filters
+            )
             if not entries:
                 break
             for rec in entries:
@@ -274,6 +304,39 @@ def delete_saved_query(query_id: str, key: APIKey = Depends(require_permission("
         db.close()
     _audit(key, "saved_query.delete", query_id)
     return {"ok": True}
+
+
+class AuditMarkBody(BaseModel):
+    event_key: str = Field(min_length=1, max_length=255)
+    marked: bool = True
+
+
+@router.post("/audit/marks")
+def set_audit_mark(body: AuditMarkBody, key: APIKey = Depends(require_permission("system:manage"))):
+    # Issue #65: 标记复核 —— 审计 jsonl append-only,分诊态落 audit_review_marks 表,
+    # (tenant_id, event_key) 唯一,重复标记幂等。标记/取消均进审计流。
+    db = get_session()
+    try:
+        if body.marked:
+            exists = (
+                db.query(AuditMarkORM)
+                .filter(AuditMarkORM.tenant_id == key.tenant_id, AuditMarkORM.event_key == body.event_key)
+                .first()
+            )
+            if exists is None:
+                db.add(AuditMarkORM(tenant_id=key.tenant_id, event_key=body.event_key, marked_by=key.name))
+                db.commit()
+        else:
+            db.query(AuditMarkORM).filter(
+                AuditMarkORM.tenant_id == key.tenant_id, AuditMarkORM.event_key == body.event_key
+            ).delete(synchronize_session=False)
+            db.commit()
+    finally:
+        db.close()
+    action = "audit.mark_review" if body.marked else "audit.unmark_review"
+    _audit(key, action, body.event_key)
+    logger.info(f"[Console] 标记复核 {action} event_key={body.event_key} actor={key.name}")
+    return {"ok": True, "marked": body.marked}
 
 
 class AlertSubscriptionBody(BaseModel):

@@ -266,7 +266,7 @@ When self-registering with the gateway, set `FUSION_SECURITY_SHELL_API_KEY` so t
 The console surfaces are the admin aggregation layer of the module — fusion-security renders, fusion-identity is the data backbone (members, SSO, module keys):
 
 - **Console home** (`/console`, CS-1): four-zone summary (members / audit / keys / posture) with tenant selector, high-risk event strip, and deep links into the workbench and key console. Zones whose upstream data is not readable degrade honestly — the card shows the reason, never fabricated numbers.
-- **Audit workbench** (`/audit`, CS-2): search/filter over the append-only audit trail (`~/.fusion_security/audit/audit_<tenant>.jsonl`, every auth denial and key operation is recorded with risk level + trace id), saved queries that replay the identical result set, streaming CSV export (BOM, Excel-friendly), and alert subscriptions — matched events surface both on the console home and in the union-web shell notification center (manifest `notifications` entry, shell polls `/api/v1/console/notifications`).
+- **Audit workbench** (`/audit`, CS-2): search/filter over the append-only audit trail (`~/.fusion_security/audit/audit_<tenant>.jsonl`, every auth denial and key operation is recorded with risk level + trace id), saved queries that replay the identical result set, streaming CSV export (BOM, Excel-friendly), and alert subscriptions — matched events surface both on the console home and in the union-web shell notification center (manifest `notifications` entry, shell polls `/api/v1/console/notifications`). Triage extras (Issue #65): mark-for-review persists per tenant in a dedicated table (`audit_review_marks`; the jsonl stays append-only) with a "marked only" filter, and a one-click **related events** action re-filters the list by the same `trace_id` (falling back to `resource_id`) while highlighting the source row; both mark and unmark are audit-logged.
 - **Key console** (`/keys`, CS-3): local service key lifecycle (expiry dates, enable/disable) plus the fusion-identity module key ledger with rotation (old version gets a grace window; the new secret is displayed exactly once, never logged). SSO state is read-only from identity.
 
 Identity aggregation depends on upstream fusion-identity#35 (service-token-readable member/IdP/app-secret inventory + secret revoke endpoints). Until that ships, member summaries, the full key inventory, SSO state and secret revocation degrade gracefully with an explicit reason — the module never fakes data. Key rotation and tenant listing work against the existing identity endpoints.
@@ -429,6 +429,7 @@ fusion-security serve --host 127.0.0.1 --port 8080
 | GET | `/api/v1/console/audit/events` | Audit trail search/filter (search, action, risk, time window) |
 | GET | `/api/v1/console/audit/export` | Streaming CSV export of the filtered audit trail |
 | GET/POST/DELETE | `/api/v1/console/audit/saved-queries` | Saved query CRUD (replay = same filters) |
+| POST | `/api/v1/console/audit/marks` | Mark / unmark an event for review (audit-logged) |
 | GET/POST/DELETE | `/api/v1/console/alerts/subscriptions` | Alert subscription CRUD |
 | GET | `/api/v1/console/notifications` | Shell notification poll: matched alerts + key-expiry warnings |
 | GET | `/api/v1/console/keys` | Local key inventory + identity module key ledger |

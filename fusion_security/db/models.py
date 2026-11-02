@@ -306,3 +306,16 @@ class AlertRecordORM(Base):
     event_action: Mapped[str] = mapped_column(String(100), default="")
     trace_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class AuditMarkORM(Base):
+    # Issue #65: 审计事件"标记复核"分诊态 —— 审计 jsonl 是 append-only 不可改,
+    # 标记落独立表,(tenant_id, event_key) 唯一;event_key = ts:action:actor。
+    __tablename__ = "audit_review_marks"
+    __table_args__ = (Index("uq_audit_mark", "tenant_id", "event_key", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(16), default="", index=True)
+    event_key: Mapped[str] = mapped_column(String(255), default="")
+    marked_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

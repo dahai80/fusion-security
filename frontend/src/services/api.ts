@@ -126,6 +126,7 @@ export const consoleApi = {
     getSummary: () => request('GET', '/console/summary'),
     getTenants: () => request('GET', '/console/tenants'),
     getAuditEvents: (params?: object) => request('GET', '/console/audit/events', undefined, params),
+    setAuditMark: (data: object) => request('POST', '/console/audit/marks', data),
     getSavedQueries: () => request('GET', '/console/audit/saved-queries'),
     createSavedQuery: (data: object) => request('POST', '/console/audit/saved-queries', data),
     deleteSavedQuery: (id: string) => request('DELETE', `/console/audit/saved-queries/${id}`),
