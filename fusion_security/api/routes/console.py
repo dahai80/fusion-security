@@ -33,7 +33,7 @@ from ...db.models import AlertSubscriptionORM, AuditMarkORM, SavedQueryORM
 from ...db.session import get_session
 from ...engine.console import build_console_summary, get_identity_admin_client
 from ...engine.console.alert_engine import match_new_alerts, notification_items
-from ...engine.console.audit_store import RISK_LEVELS, AuditStore, event_key
+from ...engine.console.audit_store import RISK_LEVELS, AuditStore, event_key_candidates
 from ...engine.tenant.audit import audit_log_dir, get_audit_logger
 from ..auth import APIKey, require_permission
 
@@ -162,8 +162,9 @@ def audit_events(
         **filters,
     )
     for e in entries:
-        e["event_key"] = event_key(e)
-        e["marked"] = e["event_key"] in marks
+        new_key, legacy = event_key_candidates(e)
+        e["event_key"] = new_key
+        e["marked"] = bool({new_key, legacy} & marks)
     logger.info(f"[Console] audit 检索 tenant={key.tenant_id} total={total} marked={len(marks)} filters={filters}")
     return {"items": entries, "total": total, "limit": limit, "offset": offset}
 
@@ -315,6 +316,10 @@ class AuditMarkBody(BaseModel):
 def set_audit_mark(body: AuditMarkBody, key: APIKey = Depends(require_permission("system:manage"))):
     # Issue #65: 标记复核 —— 审计 jsonl append-only,分诊态落 audit_review_marks 表,
     # (tenant_id, event_key) 唯一,重复标记幂等。标记/取消均进审计流。
+    # Issue #68 R2: 拒绝悬空 event_key(拼写错/过期键)—— 不存在的键静默消失
+    # 会让"仅看已标记"无声丢项,这里 fail-fast 404。
+    if body.event_key not in _store().known_mark_keys(key.tenant_id):
+        raise HTTPException(status_code=404, detail="事件不存在或已被清理")
     db = get_session()
     try:
         if body.marked:
