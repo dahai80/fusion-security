@@ -1,7 +1,23 @@
+---
+doc_id: fusion-security/readme
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: readme
+title: { zh: "fusion-security 自述文件", en: "fusion-security readme" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README.md
+---
+
 <div align="center">
-  <h1>🔒 Fusion-Security</h1>
-  <p><strong>Local AI-powered code security audit tool for macOS Apple Silicon</strong></p>
-  <p><em>100% offline, zero code upload, powered by fusion-mlx. The domestic alternative to Claude Security.</em></p>
+  <p><b>🔒 Fusion-Security</b></p>
+  <p><b>Local AI-powered code security audit tool for macOS Apple Silicon</b></p>
+  <p><i>100% offline, zero code upload, powered by fusion-mlx. The domestic alternative to Claude Security.</i></p>
 </div>
 
 <p align="center">
@@ -602,8 +618,8 @@ fusion-security scan ~/my-project   # writes to ~/.fusion-security/fusion_securi
 # 1. Install the optional DB drivers
 pip install -e ".[postgres]"     # asyncpg (async) + psycopg2-binary (sync)
 
-# 2. Point every node at the same shared DB
-export POSTGRES_PASSWORD="your-strong-password"
+# 2. Point every node at the same shared DB (set a strong value in your environment; keep it out of git)
+export POSTGRES_PASSWORD
 export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:${POSTGRES_PASSWORD}@fusion-postgres:5432/fusion"
 fusion-security serve --port 11454
 ```
@@ -611,7 +627,7 @@ fusion-security serve --port 11454
 Docker Compose multi-node: the `docker-compose.postgres.yml` override brings up a `postgres:16` service and wires `FUSION_SECURITY_DB_URL` to it. The PostgreSQL password is **not** hardcoded — it is read from the `POSTGRES_PASSWORD` environment variable and compose fails fast if it is unset.
 
 ```bash
-export POSTGRES_PASSWORD="your-strong-password"   # required
+export POSTGRES_PASSWORD   # required; set a strong value in your environment
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
 ```
 
@@ -718,8 +734,8 @@ MIT License. See [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  <strong>Fusion-Security — Local AI Code Security. Zero Upload, Maximum Privacy.</strong>
+  <b>Fusion-Security — Local AI Code Security. Zero Upload, Maximum Privacy.</b>
 </p>
 <p align="center">
-  <sub>Built with ❤️ and fusion-mlx</sub>
+  <i>Built with ❤️ and fusion-mlx</i>
 </p>

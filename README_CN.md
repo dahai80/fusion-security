@@ -1,7 +1,23 @@
+---
+doc_id: fusion-security/readme-cn
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: readme
+title: { zh: "fusion-security 中文自述", en: "fusion-security readme (Chinese)" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README_CN.md
+---
+
 <div align="center">
-  <h1>🔒 Fusion-Security</h1>
-  <p><strong>本地 AI 代码安全审计工具 — macOS Apple Silicon 原生</strong></p>
-  <p><em>100% 本地离线，代码不出境，基于 fusion-mlx。国内 Claude Security 替代方案。</em></p>
+  <p><b>🔒 Fusion-Security</b></p>
+  <p><b>本地 AI 代码安全审计工具 — macOS Apple Silicon 原生</b></p>
+  <p><i>100% 本地离线，代码不出境，基于 fusion-mlx。国内 Claude Security 替代方案。</i></p>
 </div>
 
 <p align="center">
@@ -532,7 +548,7 @@ fusion-security scan ~/my-project   # 写入 ~/.fusion-security/fusion_security.
 pip install -e ".[postgres]"     # asyncpg（异步）+ psycopg2-binary（同步）
 
 # 2. 每个节点指向同一个共享库
-export POSTGRES_PASSWORD="你的强密码"
+export POSTGRES_PASSWORD   # 在环境中设置强值，勿写入 git
 export FUSION_SECURITY_DB_URL="postgresql+asyncpg://fusion:${POSTGRES_PASSWORD}@fusion-postgres:5432/fusion"
 fusion-security serve --port 11454
 ```
@@ -540,7 +556,7 @@ fusion-security serve --port 11454
 Docker Compose 多节点：`docker-compose.postgres.yml` override 会拉起 `postgres:16` 服务并把 `FUSION_SECURITY_DB_URL` 指向它。PostgreSQL 密码**不硬编码** — 从 `POSTGRES_PASSWORD` 环境变量读取，未设置时 compose 直接启动失败。
 
 ```bash
-export POSTGRES_PASSWORD="你的强密码"   # 必填
+export POSTGRES_PASSWORD   # 必填；在环境中设置强值
 docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
 ```
 
@@ -626,7 +642,7 @@ pytest tests/ -v
 | `FUSION_RATE_LIMIT_PER_MINUTE` | `120` | 每 60 秒滑动窗口最大请求数，桶 key 为 `(client_ip, sha256(api_key))`。超限返回 `429` 并带 `Retry-After`。 |
 | `FUSION_MAX_CONCURRENT_SCANS` | `4` | 每租户并发活跃扫描上限（running/queued/pending）。超限创建扫描返回 `409`。 |
 
-## ✨ 已打通特性（v0.2.0rc1）
+## ✨ 已接通特性（v0.2.0rc1）
 
 此前代码中声明但从未接通的 5 个特性现已全部接通到生产路径并**落库持久化**（重启不丢）：
 
@@ -647,8 +663,8 @@ MIT License. 详情见 [LICENSE](LICENSE)。
 ---
 
 <p align="center">
-  <strong>Fusion-Security — 本地 AI 代码安全审计。零上传，最大隐私。</strong>
+  <b>Fusion-Security — 本地 AI 代码安全审计。零上传，最大隐私。</b>
 </p>
 <p align="center">
-  <sub>用 ❤️ 和 fusion-mlx 构建</sub>
+  <i>用 ❤️ 和 fusion-mlx 构建</i>
 </p>

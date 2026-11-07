@@ -1,3 +1,19 @@
+---
+doc_id: fusion-security/security-self-assessment
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: guide
+title: { zh: "fusion-security 安全自评", en: "fusion-security security self-assessment" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/security-self-assessment.md
+---
+
 # Fusion-Security Security Self-Assessment
 
 **Date:** 2026-09-01

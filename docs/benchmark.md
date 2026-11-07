@@ -1,3 +1,19 @@
+---
+doc_id: fusion-security/benchmark
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: guide
+title: { zh: "fusion-security 性能基准", en: "fusion-security benchmark" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/benchmark.md
+---
+
 # Fusion-Security Performance Benchmarks
 
 Quantified performance, concurrency, and AI backpressure for fusion-security v0.1.7+.
