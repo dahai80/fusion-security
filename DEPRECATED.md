@@ -1,3 +1,19 @@
+---
+doc_id: fusion-security/deprecated
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: guide
+title: { zh: "fusion-security 废弃模块说明", en: "fusion-security deprecated modules" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - DEPRECATED.md
+---
+
 # Deprecated / Legacy Modules
 
 This file tracks modules deprecated due to upstream capability convergence (issue #23, decision A).

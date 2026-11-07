@@ -1,3 +1,20 @@
+---
+doc_id: fusion-security/api-reference
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: api-reference
+title: { zh: "fusion-security API 参考", en: "fusion-security API reference" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/api.md
+  - fusion_security/api/
+---
+
 # Fusion-Security API Reference
 
 ## Core Modules

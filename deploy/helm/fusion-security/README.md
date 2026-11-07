@@ -1,3 +1,19 @@
+---
+doc_id: fusion-security/helm-readme
+product: fusion-security
+class: app
+entry: guided-ui
+doc_type: readme
+title: { zh: "fusion-security Helm Chart 说明", en: "fusion-security Helm chart readme" }
+audience: engineer
+status: draft
+version: 0.2.0rc14
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - deploy/helm/fusion-security/
+---
+
 # Fusion-Security Helm Chart
 
 部署 Fusion-Security 到 Kubernetes 集群。
