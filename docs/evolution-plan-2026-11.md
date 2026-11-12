@@ -1,3 +1,9 @@
+---
+doc_id: fusion-security/evolution-plan-2026-11
+product: fusion-security
+class: app
+---
+
 # fusion-security Evolution Plan: Capability Catch-Up and Overtake (2026-11)
 
 > Status: PROPOSED (plan only; no production impact).
