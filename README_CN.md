@@ -27,7 +27,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/离线优先-核心特性-important" alt="离线优先">
   <img src="https://img.shields.io/badge/状态-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/测试-930%20通过-brightgreen" alt="测试">
+  <img src="https://img.shields.io/badge/测试-1044%20通过-brightgreen" alt="测试">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -599,7 +599,7 @@ fusion-security scan ~/my-project
 ```bash
 pip install -e ".[test]"
 pytest tests/ -v
-# 930 测试用例，90% 覆盖率（CI 门禁 --cov-fail-under=90）
+# 1044 测试用例，90% 覆盖率（CI 门禁 --cov-fail-under=90）
 # 计数由 CI 校验（scripts/check_test_count.py，±10% 漂移门禁）；刷新命令：pytest --collect-only -q | tail -1
 ```
 
