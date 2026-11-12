@@ -22,6 +22,11 @@ class InjectionScanRequest(BaseModel):
     use_llm: bool = False
 
 
+class AssetScanRequest(BaseModel):
+    path: str
+    signatures: str = ""
+
+
 @router.post("/injection-scan")
 async def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permission("scan:read"))):
     """Scan free text or a file for prompt-injection payloads. Rule tier is
@@ -49,6 +54,41 @@ async def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permis
     else:
         result = await injection_detect_async(text)
     return result
+
+
+@router.post("/asset-scan")
+def run_asset_scan(req: AssetScanRequest, _=Depends(require_permission("scan:read"))):
+    """Scan a server-local directory for malicious MCP servers / skills /
+    agent configs. Fully offline; signature library is local (manual bundle
+    import only)."""
+    from ...engine.agent.assets import SignatureLibrary, scan_assets
+
+    target = Path(req.path).expanduser()
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {req.path}")
+    lib = SignatureLibrary.load(req.signatures) if req.signatures else None
+    inventory, findings = scan_assets(target, sigs=lib)
+    logger.info(
+        f"asset-scan request: path={req.path} servers={len(inventory.mcp_servers)} "
+        f"skills={len(inventory.skills)} findings={len(findings)}"
+    )
+    return {
+        "files_scanned": inventory.files_scanned,
+        "mcp_servers": len(inventory.mcp_servers),
+        "skills": len(inventory.skills),
+        "findings": [
+            {
+                "rule_id": v.rule_id,
+                "severity": v.severity,
+                "title": v.title,
+                "description": v.description,
+                "file_path": v.file_path,
+                "code_snippet": v.code_snippet,
+                "fix_suggestion": v.fix_suggestion,
+            }
+            for v in findings
+        ],
+    }
 
 
 @router.get("/injection-rules")

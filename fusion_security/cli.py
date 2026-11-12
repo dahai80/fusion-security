@@ -27,6 +27,13 @@ from .utils.logger import setup_logger
 logger = logging.getLogger(__name__)
 
 
+def _logs_to_stderr():
+    # Machine-readable commands (JSON on stdout) send log lines to stderr;
+    # the shared setup_logger binds the fusion_security handler to stdout.
+    for handler in logging.getLogger("fusion_security").handlers:
+        handler.stream = sys.stderr
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="详细输出")
 @click.version_option(version=__version__, prog_name=__app_name__)
@@ -298,6 +305,7 @@ async def _async_sarif(path: str, output: str):
 @click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
 def inject_scan(target: str, pretty: bool):
     """Prompt-injection scan for a file, directory of text files, or stdin ('-')."""
+    _logs_to_stderr()
     from .engine.agent.injection import detect
 
     if target == "-":
@@ -342,6 +350,7 @@ def inject_scan(target: str, pretty: bool):
 @click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
 def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty: bool):
     """Scan working tree or git history for hardcoded secrets (offline)."""
+    _logs_to_stderr()
     from .engine.secrets import scan_history
     from .engine.secrets.integration import get_shared_scanner
 
@@ -387,6 +396,41 @@ def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty
 
     click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
     if payload["findings"]:
+        sys.exit(1)
+
+
+@cli.command(name="agent-scan")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--signatures", "-s", default="", help="Override signature library bundle (offline import)")
+@click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
+def agent_scan(path: str, signatures: str, pretty: bool):
+    """Scan a repo for malicious MCP servers / skills / agent configs (offline)."""
+    _logs_to_stderr()
+    from .engine.agent.assets import SignatureLibrary, scan_assets
+
+    root = Path(path).expanduser().resolve()
+    lib = SignatureLibrary.load(signatures) if signatures else None
+    inventory, findings = scan_assets(root, sigs=lib)
+
+    payload = {
+        "files_scanned": inventory.files_scanned,
+        "mcp_servers": len(inventory.mcp_servers),
+        "skills": len(inventory.skills),
+        "findings": [
+            {
+                "rule_id": v.rule_id,
+                "severity": v.severity,
+                "title": v.title,
+                "description": v.description,
+                "file_path": v.file_path,
+                "code_snippet": v.code_snippet,
+                "fix_suggestion": v.fix_suggestion,
+            }
+            for v in findings
+        ],
+    }
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
+    if findings:
         sys.exit(1)
 
 
