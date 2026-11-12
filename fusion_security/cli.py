@@ -293,6 +293,47 @@ async def _async_sarif(path: str, output: str):
     click.echo(f"📄 SARIF 报告已保存: {saved}")
 
 
+@cli.command(name="inject-scan")
+@click.argument("target", default="-")
+@click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
+def inject_scan(target: str, pretty: bool):
+    """Prompt-injection scan for a file, directory of text files, or stdin ('-')."""
+    from .engine.agent.injection import detect
+
+    if target == "-":
+        text = sys.stdin.read()
+        results = [("[stdin]", detect(text))]
+    else:
+        p = Path(target).expanduser()
+        if p.is_file():
+            targets = [p]
+        elif p.is_dir():
+            targets = sorted(
+                f
+                for f in p.rglob("*")
+                if f.is_file()
+                and f.suffix.lower() in {".txt", ".md", ".json", ".yaml", ".yml"}
+                and f.stat().st_size < 5_000_000
+            )
+        else:
+            click.echo(f"error: no such file or directory: {target}", err=True)
+            sys.exit(2)
+        results = []
+        for f in targets:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+            results.append((str(f), detect(text)))
+
+    flagged = [(name, r) for name, r in results if r["is_injection"]]
+    payload = {
+        "scanned": len(results),
+        "flagged": len(flagged),
+        "results": [{"target": name, **r} for name, r in results if r["is_injection"]],
+    }
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
+    if flagged:
+        sys.exit(1)
+
+
 def main():
     cli()
 
