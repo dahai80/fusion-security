@@ -147,6 +147,8 @@ cd frontend && npm install && npm run dev
 | `inject-scan <file\|dir\|->` | Prompt-injection scan for agent-facing text (JSON output, exit 1 when flagged) |
 | `secrets-scan <path>` | Secrets scan (entropy + provider validators + allowlist, offline) |
 | `secrets-scan <path> --history` | Walk git history for leaked secrets (introducing commit per finding) |
+| `agent-scan <path>` | Scan MCP servers / skills / agent configs for poisoning and over-broad permissions (offline) |
+| `agent-scan <path> --signatures <file>` | Use an offline signature bundle instead of the shipped one |
 | `rules` | List all detection rules |
 | `serve` | Start Web API server (FastAPI) |
 | `serve --host 127.0.0.1` | Bind to all interfaces |

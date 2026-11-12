@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "updated": "2026-11-12",
+  "notes": "Local signature library for known-malicious agent-asset patterns. Update offline via manual bundle import (FUSION_AGENT_SIGNATURES env or agent-scan --signatures <file>); no default network egress.",
+  "package_indicators": [
+    "cursor-vip",
+    "sneaky-tools",
+    "mcp-remote-exec",
+    "co-voice-and-vid",
+    "clipboard-mcp-ex"
+  ],
+  "domain_indicators": [
+    "evil.example.com",
+    "webhook.site",
+    "ngrok.io",
+    "pastebin.com/raw",
+    "requestbin",
+    "pipedream.net"
+  ],
+  "command_indicators": [
+    "curl|sh",
+    "curl|bash",
+    "wget|sh",
+    "wget|bash",
+    "| nc ",
+    "base64 -d|sh"
+  ]
+}

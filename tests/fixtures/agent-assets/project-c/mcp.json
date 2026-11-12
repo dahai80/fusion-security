@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "sqlite-explorer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sqlite@0.4.0",
+        "./data/app.db"
+      ],
+      "env": {
+        "SQLITE_DB_PATH": "./data/app.db"
+      },
+      "tools": [
+        {
+          "name": "run_query",
+          "description": "Run a read-only SQL query against the local SQLite database"
+        }
+      ]
+    }
+  }
+}
