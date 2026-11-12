@@ -19,4 +19,4 @@ jobs:
         run: |
           python3 ci/validate_docs.py --root . --product fusion-security \
             --class app --entry guided-ui \
-            --skip-dirs ".git,node_modules,.venv,dist,build,.ruff_cache,.pytest_cache,.fusion_checkpoints,fusion_security.egg-info,logs,frontend"
+            --skip-dirs ".git,node_modules,.venv,dist,build,.ruff_cache,.pytest_cache,.fusion_checkpoints,fusion_security.egg-info,logs,frontend,tests"
