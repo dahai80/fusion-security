@@ -128,3 +128,16 @@ The async `Scanner` orchestrator adds file discovery + batch scheduling overhead
 | promptinject.detect_positive_rate | verify_injection | PASS | 3/3 positives flagged (rate=1.00, gate>=0.60) |
 | promptinject.detect_negative_rate | verify_injection | PASS | 4/4 benign clean (rate=1.00, gate>=0.80) |
 | promptinject.detect_async_end_to_end | detect_async | PASS | rule_findings=1 llm_verdict=yes |
+
+## Guardrails latency (P2.3, 2026-11-13)
+
+Method: 2000 in-process calls of `inspect_input` / `inspect_output` on benign
+representative text (rule tier only, no LLM, no IO), Apple Silicon local.
+
+| filter | p50 | p99 | max | budget |
+|--------|-----|-----|-----|--------|
+| `inspect_input` (P1.1 injection rule tier) | 0.135ms | 0.322ms | 0.737ms | <5ms p99 |
+| `inspect_output` (secret/tool-call/exfil regex) | 0.007ms | 0.008ms | 0.110ms | <5ms p99 |
+
+Both filters hold the <5ms p99 budget with >15x headroom. The LLM tier is
+opt-in per tenant and excluded from the budget (fail-closed, escalates only).
