@@ -27,7 +27,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/tests-930%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-1044%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -683,7 +683,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 ```
 
-930 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
+1044 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
 
 The test count is verified against reality in CI (`scripts/check_test_count.py`, ±10% drift gate). To refresh the count after adding/removing tests: `pytest --collect-only -q | tail -1`.
 
