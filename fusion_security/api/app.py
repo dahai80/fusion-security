@@ -285,6 +285,10 @@ def create_app() -> FastAPI:
     # Issue #60: Admin Console 聚合面 —— system:manage 门禁在 route 内(require_permission),
     # 挂 _AUTH 仅做 principal 解析,避免双重 403 语义。
     app.include_router(console.router, prefix="/api/v1/console", tags=["Console"])
+    # Evolution plan P1.1: agent-security routes (injection detection).
+    from .routes import agent as agent_routes
+
+    app.include_router(agent_routes.router, prefix="/api/v1/agent", tags=["Agent Security"])
 
     @app.post("/api/v1/keys", tags=["Auth"])
     async def create_api_key(
