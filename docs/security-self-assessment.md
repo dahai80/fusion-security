@@ -311,6 +311,11 @@ New attack surface introduced by docs/evolution-plan-2026-11.md Phase 1 and its 
 - **Robustness self-test** (`scripts/robustness_selftest.py`, nightly workflow) — adversarial probes assert fail-closed behavior: injected instructions inside scanned snippets cannot suppress a known finding or confirm a benign one. Nightly job reports `SKIPPED` (never `passed`) when no model is loaded; gate failures block release tags, not PRs.
 - **Residual risk**: the LLM judge itself is a local model and can be wrong in both directions; gates accept this (verified rule tier is authoritative, LLM can only escalate heuristic-supported text, never silently drop rule findings).
 
+## Phase 2 evolution attack surface (2026-11, P2.1-P2.2)
+
+- **Agent-asset scanner** (`agent-scan` CLI, `POST /api/v1/agent/asset-scan`) — reads MCP manifests and skill files from a target tree; parses are tolerant (malformed files yield zero entries, never findings); checks are deterministic and offline. The API endpoint takes a server-local path only — no file upload surface.
+- **Agent risk-score + decision feed** (`POST /api/v1/agent/risk-score`, `POST /api/v1/agent/decisions`; contract: `schemas/agent-risk-score.v1.json`, upstream proposal dahai80/fusion-harness#24) — scoring is deterministic (no model on the hot path); policy hints are advisory and fusion-harness remains the deny-first executor. Decision events append to the per-tenant audit jsonl; reputation reads only the file tail (bounded IO) and unreadable audit files degrade to zero reputation, never a scan failure.
+
 ## Out of scope
 
 - Third-party / network penetration testing

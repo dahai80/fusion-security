@@ -1,0 +1,114 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://raw.githubusercontent.com/dahai80/fusion-security/main/schemas/agent-risk-score.v1.json",
+    "title": "Fusion-Security agent tool-call risk-score exchange (v1)",
+    "description": "Contract-first schema for the fusion-harness agent-IAM loop (dahai80/fusion-harness#24). Harness POSTs a RiskScoreRequest to /api/v1/agent/risk-score and receives a RiskScoreResult; harness then pushes allow/deny outcomes to /api/v1/agent/decisions.",
+    "type": "object",
+    "definitions": {
+        "risk_score_request": {
+            "type": "object",
+            "required": ["tool_name"],
+            "properties": {
+                "tool_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Name of the tool the agent wants to invoke"
+                },
+                "arguments": {
+                    "type": "object",
+                    "default": {},
+                    "description": "Tool arguments (JSON object); scanned for risky patterns"
+                },
+                "caller": {
+                    "type": "object",
+                    "default": {},
+                    "description": "Caller context (agent_id, session_id, harness version, ...)"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "default": "default",
+                    "maxLength": 100
+                },
+                "signatures": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional path to an offline signature bundle override"
+                }
+            }
+        },
+        "risk_score_result": {
+            "type": "object",
+            "required": ["schema_version", "tool_name", "score", "risk_class", "policy_hints", "signals"],
+            "properties": {
+                "schema_version": {
+                    "type": "integer",
+                    "const": 1
+                },
+                "tool_name": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Deterministic risk score; higher is riskier"
+                },
+                "risk_class": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"]
+                },
+                "policy_hints": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["allow", "require_approval", "sandbox", "deny"]
+                    },
+                    "description": "Advisory hints only; harness remains the deny-first executor"
+                },
+                "signals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Deterministic reasons that contributed to the score"
+                },
+                "caller": {
+                    "type": "object"
+                }
+            }
+        },
+        "decision_event": {
+            "type": "object",
+            "required": ["tool_name", "decision"],
+            "properties": {
+                "tool_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                },
+                "decision": {
+                    "type": "string",
+                    "enum": ["allow", "deny"]
+                },
+                "caller": {
+                    "type": "object",
+                    "default": {}
+                },
+                "reason": {
+                    "type": "string",
+                    "default": ""
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "default": "default",
+                    "maxLength": 100
+                },
+                "trace_id": {
+                    "type": "string",
+                    "default": ""
+                }
+            }
+        }
+    }
+}
