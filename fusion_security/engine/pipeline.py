@@ -24,6 +24,7 @@ from .rules.engine import RuleEngine
 from .rules.taint_tracker import TaintTracker
 from .sca.scanner import SCAScanner
 from .scanner import ScanResult, ScanTarget
+from .secrets.integration import secrets_vulnerabilities
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,8 @@ class PipelineConfig:
     enable_taint: bool = True
     enable_adversarial: bool = True
     enable_sca: bool = True
+    # P1.2: secrets module (entropy + provider validators), offline by default.
+    enable_secrets: bool = True
     # OSV.dev 是云端依赖漏洞库，默认关闭以保持 100% 离线承诺。
     # 开启后会向 https://osv.dev 外发依赖清单，需用户显式同意。
     enable_osv: bool = False
@@ -318,6 +321,11 @@ class ScanPipeline:
                                 else f"{tp.source.name} → {tp.sink.name}",
                             )
                             vulns.append(v)
+                if self.config.enable_secrets:
+                    # P1.2: secrets module as Discover sub-step (entropy +
+                    # provider validators + allowlist), severity feeds gate.
+                    # Runs before the cache put so cached results include it.
+                    vulns.extend(secrets_vulnerabilities(f, content, root))
                 if self._project_cache:
                     rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
                     self._project_cache.put(self.project_id, rel, content, vulns, commit=False)

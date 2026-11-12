@@ -130,6 +130,9 @@ class RuleEngine:
                 fix_template="对用户输入进行路径规范化检查，限制在允许目录内",
                 prdid="FUS-ACL-003",
             ),
+            # DEPRECATED (P1.2): superseded by engine/secrets (entropy +
+            # provider validators + allowlist). Kept for backward compat;
+            # findings now overlap with SEC-HIGH_ENTROPY_STRING / SEC-*.
             ScanRule(
                 "SEC001",
                 "硬编码密钥",
@@ -140,6 +143,8 @@ class RuleEngine:
                 fix_template="使用环境变量或密钥管理服务存储敏感信息",
                 prdid="FUS-AUTH-001",
             ),
+            # DEPRECATED (P1.2): superseded by engine/secrets provider
+            # validators (verified confidence class). Kept for backward compat.
             ScanRule(
                 "SEC002",
                 "硬编码令牌",

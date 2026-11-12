@@ -1,3 +1,19 @@
+---
+doc_id: fusion-security/evolution-plan-2026-11
+product: fusion-security
+class: app
+entry: developer
+doc_type: architecture
+title: { zh: "fusion-security 演进计划（2026-11）", en: "fusion-security evolution plan (2026-11)" }
+audience: engineer
+status: draft
+version: 0.2.0rc17
+updated: 2026-11-12
+owner: "@dahai"
+source_of_truth:
+  - docs/evolution-plan-2026-11.md
+---
+
 # fusion-security Evolution Plan: Capability Catch-Up and Overtake (2026-11)
 
 > Status: PROPOSED (plan only; no production impact).

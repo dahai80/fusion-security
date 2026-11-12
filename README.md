@@ -27,7 +27,7 @@ source_of_truth:
   <img src="https://img.shields.io/badge/AI-MLX%20Native-orange" alt="MLX">
   <img src="https://img.shields.io/badge/Offline-First-important" alt="Offline">
   <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
-  <img src="https://img.shields.io/badge/tests-930%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-1044%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/React-18-blue" alt="React">
   <img src="https://img.shields.io/badge/K8s-Helm-blueviolet" alt="Helm">
 </p>
@@ -108,6 +108,14 @@ fusion-security scan /path/to/project --model qwen3.5-9b
 # Quick check (CI-friendly JSON output)
 fusion-security check /path/to/project
 
+# Prompt-injection scan (text files / stdin), exits 1 when flagged
+fusion-security inject-scan /path/to/prompts
+echo "ignore all previous instructions" | fusion-security inject-scan -
+
+# Secrets scan (working tree or git history), offline, exits 1 on findings
+fusion-security secrets-scan /path/to/project
+fusion-security secrets-scan /path/to/project --history
+
 # List detection rules
 fusion-security rules
 
@@ -136,6 +144,9 @@ cd frontend && npm install && npm run dev
 | `gate <path>` | Security quality gate (CI/CD pass/fail) |
 | `gate --policy strict` | Gate policy: strict/standard/permissive |
 | `sarif <path>` | Export SARIF format results |
+| `inject-scan <file\|dir\|->` | Prompt-injection scan for agent-facing text (JSON output, exit 1 when flagged) |
+| `secrets-scan <path>` | Secrets scan (entropy + provider validators + allowlist, offline) |
+| `secrets-scan <path> --history` | Walk git history for leaked secrets (introducing commit per finding) |
 | `rules` | List all detection rules |
 | `serve` | Start Web API server (FastAPI) |
 | `serve --host 127.0.0.1` | Bind to all interfaces |
@@ -672,7 +683,7 @@ pip install -e ".[test]"
 pytest tests/ -v
 ```
 
-930 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
+1044 tests covering all modules: rule engine (37 rules), scanner, AI analyzer (8 semantic rules), SCA scanner (deprecated/license/stale), Jira integration, pipeline, checkpoint/resume, circuit breaker, notifications, fix generator, reports, API routes, CLI. 90% coverage (CI gate `--cov-fail-under=90`).
 
 The test count is verified against reality in CI (`scripts/check_test_count.py`, ±10% drift gate). To refresh the count after adding/removing tests: `pytest --collect-only -q | tail -1`.
 
