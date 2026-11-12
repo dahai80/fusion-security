@@ -290,6 +290,11 @@ def create_app() -> FastAPI:
 
     app.include_router(agent_routes.router, prefix="/api/v1/agent", tags=["Agent Security"])
 
+    # Evolution plan P2.3: guardrails routes (LLM input/output filtering).
+    from .routes import guardrails as guardrails_routes
+
+    app.include_router(guardrails_routes.router, prefix="/api/v1/guardrails", tags=["Guardrails"])
+
     @app.post("/api/v1/keys", tags=["Auth"])
     async def create_api_key(
         name: str = "default", roles: str = "viewer", principal: APIKey = Depends(require_permission("api_key:manage"))
