@@ -302,6 +302,15 @@ The remaining findings (RBAC rework P0-1, cross-tenant IDOR P1-1, SSRF redirect-
 | Availability / DoS | ⚠ issues | P0-6, P2-9, P2-11, P3-1, P3-5 |
 | Race conditions / concurrency | ⚠ issues | P1-8, P1-9 (fixed), P2-10, P2-11 |
 
+## Phase 1 evolution attack surface (2026-11, P1.1-P1.3)
+
+New attack surface introduced by docs/evolution-plan-2026-11.md Phase 1 and its controls:
+
+- **Injection-scan endpoints** (`POST /api/v1/agent/injection-scan`, `GET /api/v1/agent/injection-rules`) — auth-gated (`scan:read`), request size capped (text 200k chars, file 5MB), no egress (rule tier offline; LLM tier calls local fusion-mlx only). Text submitted for scanning is treated as pure data: the analyzer prompt wraps it in `<TEXT>` data markers; rule tier is pure regex.
+- **`secrets-scan` CLI + secrets module** — findings report a truncated `match` (64 chars) plus sha256; allowlist stores only content hashes and paths, never secret values. History scan shells out to `git log -p` with fixed arg list (no injection).
+- **Robustness self-test** (`scripts/robustness_selftest.py`, nightly workflow) — adversarial probes assert fail-closed behavior: injected instructions inside scanned snippets cannot suppress a known finding or confirm a benign one. Nightly job reports `SKIPPED` (never `passed`) when no model is loaded; gate failures block release tags, not PRs.
+- **Residual risk**: the LLM judge itself is a local model and can be wrong in both directions; gates accept this (verified rule tier is authoritative, LLM can only escalate heuristic-supported text, never silently drop rule findings).
+
 ## Out of scope
 
 - Third-party / network penetration testing
