@@ -8,8 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from ...engine.agent.injection import detect as injection_detect
-from ...engine.agent.injection import validate_rules
+from ...engine.agent.injection import RULES, validate_rules
+from ...engine.agent.injection import detect_async as injection_detect_async
 from ..auth import require_permission
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,10 @@ class InjectionScanRequest(BaseModel):
 
 
 @router.post("/injection-scan")
-def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permission("scan:read"))):
-    """Scan free text or a file for prompt-injection payloads (offline)."""
+async def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permission("scan:read"))):
+    """Scan free text or a file for prompt-injection payloads. Rule tier is
+    offline; use_llm=true escalates to fusion-mlx and degrades to rule
+    results when the engine is unavailable."""
     text = req.text
     if req.path:
         target = Path(req.path).expanduser()
@@ -36,7 +38,16 @@ def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permission("
     if not text.strip():
         raise HTTPException(status_code=422, detail="provide 'text' or a readable 'path'")
     logger.info(f"injection-scan request: chars={len(text)} use_llm={req.use_llm}")
-    result = injection_detect(text, use_llm=req.use_llm)
+    if req.use_llm:
+        from ...engine.ai.analyzer import AIAnalyzer
+
+        analyzer = AIAnalyzer()
+        try:
+            result = await injection_detect_async(text, analyzer=analyzer, use_llm=True)
+        finally:
+            await analyzer.aclose()
+    else:
+        result = await injection_detect_async(text)
     return result
 
 
@@ -55,6 +66,6 @@ def list_injection_rules(_=Depends(require_permission("scan:read"))):
                 "severity": r.severity,
                 "description": r.description,
             }
-            for r in __import__("fusion_security.engine.agent.injection", fromlist=["RULES"]).RULES
+            for r in RULES
         ],
     }

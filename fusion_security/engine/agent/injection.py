@@ -12,7 +12,9 @@ Three tiers, offline by default (evolution plan P1.1):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import logging
 import re
 from dataclasses import dataclass, field
@@ -418,10 +420,11 @@ def _rule_findings(text: str, tier: str = "rule") -> list[InjectionFinding]:
     return findings
 
 
-def detect(text: str, analyzer: Any = None, use_llm: bool = False) -> dict[str, Any]:
-    """Full three-tier detection. LLM tier requires an analyzer with
-    `verify(prompt, context)`-style API; it can only escalate rule/heuristic
-    hits, and is skipped silently when unavailable (offline degrade)."""
+async def detect_async(text: str, analyzer: Any = None, use_llm: bool = False) -> dict[str, Any]:
+    """Full three-tier detection (async core). The analyzer's
+    verify_injection may be sync or async (awaitable result); the LLM tier
+    can only escalate rule/heuristic hits, and degrades silently when the
+    analyzer is unavailable (offline degrade)."""
     rule_hits = _rule_findings(text)
     heur = heuristic_score(text)
     llm_verdict: dict[str, Any] | None = None
@@ -429,6 +432,8 @@ def detect(text: str, analyzer: Any = None, use_llm: bool = False) -> dict[str, 
     if use_llm and analyzer is not None and (rule_hits or heur["score"] >= 40):
         try:
             verdict = analyzer.verify_injection(text)
+            if inspect.isawaitable(verdict):
+                verdict = await verdict
             if verdict and verdict.get("is_injection"):
                 llm_verdict = verdict
                 if not rule_hits and heur["score"] >= 40:
@@ -464,6 +469,12 @@ def detect(text: str, analyzer: Any = None, use_llm: bool = False) -> dict[str, 
         "llm_verdict": llm_verdict,
         "text_sha256": hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:16],
     }
+
+
+def detect(text: str, analyzer: Any = None, use_llm: bool = False) -> dict[str, Any]:
+    """Sync wrapper over detect_async. Callers already inside a running
+    event loop (API routes) must await detect_async directly."""
+    return asyncio.run(detect_async(text, analyzer=analyzer, use_llm=use_llm))
 
 
 def validate_rules() -> dict[str, Any]:
