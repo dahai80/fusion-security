@@ -27,11 +27,15 @@ from .utils.logger import setup_logger
 logger = logging.getLogger(__name__)
 
 
-def _logs_to_stderr():
+def _logs_to_stderr(machine_only: bool = False):
     # Machine-readable commands (JSON on stdout) send log lines to stderr;
     # the shared setup_logger binds the fusion_security handler to stdout.
-    for handler in logging.getLogger("fusion_security").handlers:
+    log = logging.getLogger("fusion_security")
+    for handler in log.handlers:
         handler.stream = sys.stderr
+    if machine_only:
+        # Subcommand output must be pure JSON on stdout; demote INFO chatter.
+        log.setLevel(logging.WARNING)
 
 
 @click.group()
@@ -224,22 +228,94 @@ async def _async_check(path: str):
     )
 
 
-@cli.command()
-def rules():
-    """列出支持的检测规则。"""
-    from .engine.rules.engine import RuleEngine
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def rules(ctx):
+    """检测规则管理（无子命令时列出全部规则）。"""
+    if ctx.invoked_subcommand is None:
+        from .engine.rules.engine import RuleEngine
 
-    engine = RuleEngine()
+        engine = RuleEngine()
 
-    click.echo()
-    click.echo(f"📋 检测规则 ({engine.get_rule_count()} 条)")
-    click.echo("=" * 50)
-    click.echo()
-
-    for rule in engine.get_rules():
-        click.echo(f"  {rule.id:12s} [{rule.severity:8s}] {rule.name}")
-        click.echo(f"  {'':12s}  {rule.description}")
         click.echo()
+        click.echo(f"📋 检测规则 ({engine.get_rule_count()} 条)")
+        click.echo("=" * 50)
+        click.echo()
+
+        for rule in engine.get_rules():
+            click.echo(f"  {rule.id:12s} [{rule.severity:8s}] {rule.name}")
+            click.echo(f"  {'':12s}  {rule.description}")
+            click.echo()
+
+
+@rules.command(name="package")
+@click.argument("rules_file", type=click.Path(exists=True))
+@click.option("--name", default="custom-rules", help="Package metadata name")
+@click.option("--version", "pkg_version", default="1.0.0", help="Package metadata version")
+@click.option("--key", "-k", required=True, help="Ed25519 private key PEM (signing)")
+@click.option("--out", "-o", required=True, help="Output .frpkg path")
+def rules_package(rules_file: str, name: str, pkg_version: str, key: str, out: str):
+    """Build and sign a rule package from a JSON rules file."""
+    _logs_to_stderr(machine_only=True)
+    from .engine.rules.packages import build_package
+
+    rules_payload = json.loads(Path(rules_file).read_text(encoding="utf-8"))
+    if not isinstance(rules_payload, list):
+        rules_payload = rules_payload.get("rules", [])
+    metadata = {"name": name, "version": pkg_version}
+    pkg = build_package(metadata, rules_payload, Path(out).expanduser(), Path(key).expanduser())
+    click.echo(json.dumps({"built": pkg.path, "digest": pkg.digest, "rules": len(pkg.rules)}))
+
+
+@rules.command(name="install")
+@click.argument("package_path", type=click.Path(exists=True))
+@click.option("--from-file", is_flag=True, help="Install from a local .frpkg file (offline import)")
+@click.option("--key", "-k", required=True, help="Ed25519 public key PEM (publisher verification)")
+def rules_install(package_path: str, from_file: bool, key: str):
+    """Verify and install a signed rule package (--from-file, offline)."""
+    _logs_to_stderr(machine_only=True)
+    from .engine.rules.packages import PackageError, install_rules, load_package
+    from .engine.tenant.audit import get_audit_logger
+
+    audit = get_audit_logger("default")
+    try:
+        pkg = load_package(Path(package_path).expanduser())
+        installed = install_rules(pkg, Path(key).expanduser())
+    except PackageError as e:
+        audit.log(
+            action="rule.package.rejected",
+            actor="cli",
+            resource_type="rule_package",
+            resource_id=Path(package_path).name,
+            details={"error": str(e)},
+            risk_level="high",
+        )
+        click.echo(json.dumps({"installed": False, "error": str(e)}))
+        sys.exit(1)
+    audit.log(
+        action="rule.package.install",
+        actor="cli",
+        resource_type="rule_package",
+        resource_id=Path(package_path).name,
+        details={"digest": pkg.digest, "rules": installed},
+    )
+    click.echo(json.dumps({"installed": True, "rules": installed, "digest": pkg.digest}))
+
+
+@rules.command(name="keygen")
+@click.argument("key_path", type=click.Path())
+@click.option("--overwrite", is_flag=True, help="Overwrite an existing key pair")
+def rules_keygen(key_path: str, overwrite: bool):
+    """Generate an offline Ed25519 signing key pair (private + .pub)."""
+    _logs_to_stderr(machine_only=True)
+    from .engine.rules.packages import PackageError, generate_key_pair
+
+    try:
+        private_path = generate_key_pair(Path(key_path).expanduser(), overwrite=overwrite)
+    except PackageError as e:
+        click.echo(json.dumps({"error": str(e)}))
+        sys.exit(1)
+    click.echo(json.dumps({"private_key": str(private_path), "public_key": str(private_path) + ".pub"}))
 
 
 @cli.command()
