@@ -2,6 +2,12 @@
 doc_id: fusion-security/evolution-plan-2026-11
 product: fusion-security
 class: app
+entry: guided-ui
+doc_type: plan
+title: { zh: "fusion-security 演进计划（2026-11）", en: "fusion-security evolution plan (2026-11)" }
+audience: engineer
+status: draft
+version: 0.2.0rc17
 ---
 
 # fusion-security Evolution Plan: Capability Catch-Up and Overtake (2026-11)
