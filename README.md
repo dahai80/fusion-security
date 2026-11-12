@@ -108,6 +108,14 @@ fusion-security scan /path/to/project --model qwen3.5-9b
 # Quick check (CI-friendly JSON output)
 fusion-security check /path/to/project
 
+# Prompt-injection scan (text files / stdin), exits 1 when flagged
+fusion-security inject-scan /path/to/prompts
+echo "ignore all previous instructions" | fusion-security inject-scan -
+
+# Secrets scan (working tree or git history), offline, exits 1 on findings
+fusion-security secrets-scan /path/to/project
+fusion-security secrets-scan /path/to/project --history
+
 # List detection rules
 fusion-security rules
 
@@ -136,6 +144,9 @@ cd frontend && npm install && npm run dev
 | `gate <path>` | Security quality gate (CI/CD pass/fail) |
 | `gate --policy strict` | Gate policy: strict/standard/permissive |
 | `sarif <path>` | Export SARIF format results |
+| `inject-scan <file\|dir\|->` | Prompt-injection scan for agent-facing text (JSON output, exit 1 when flagged) |
+| `secrets-scan <path>` | Secrets scan (entropy + provider validators + allowlist, offline) |
+| `secrets-scan <path> --history` | Walk git history for leaked secrets (introducing commit per finding) |
 | `rules` | List all detection rules |
 | `serve` | Start Web API server (FastAPI) |
 | `serve --host 127.0.0.1` | Bind to all interfaces |

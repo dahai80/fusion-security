@@ -334,6 +334,62 @@ def inject_scan(target: str, pretty: bool):
         sys.exit(1)
 
 
+@cli.command(name="secrets-scan")
+@click.argument("target", default=".")
+@click.option("--history", is_flag=True, help="Scan git history (all commits) instead of working tree")
+@click.option("--base", "-b", default="", help="History incremental base ref (default: full history)")
+@click.option("--max-commits", default=2000, help="Max commits to walk in history mode")
+@click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
+def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty: bool):
+    """Scan working tree or git history for hardcoded secrets (offline)."""
+    from .engine.secrets import scan_history
+    from .engine.secrets.integration import get_shared_scanner
+
+    if history:
+        p = Path(target).expanduser()
+        try:
+            result = scan_history(str(p), base=base, max_commits=max_commits)
+        except (ValueError, RuntimeError) as e:
+            click.echo(f"error: {e}", err=True)
+            sys.exit(2)
+        payload = {
+            "mode": "history",
+            "commits_scanned": result.commits_scanned,
+            "findings": [f.to_dict() for f in result.findings],
+        }
+    else:
+        p = Path(target).expanduser()
+        if not p.exists():
+            click.echo(f"error: no such file or directory: {target}", err=True)
+            sys.exit(2)
+        files = (
+            [p]
+            if p.is_file()
+            else sorted(
+                f for f in p.rglob("*") if f.is_file() and f.stat().st_size < 1_000_000 and ".git" not in f.parts
+            )
+        )
+        scanner = get_shared_scanner()
+        findings = []
+        for f in files:
+            try:
+                content = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                logger.warning(f"secrets-scan: unreadable file {f}: {e}")
+                continue
+            rel = str(f.relative_to(p)) if f.is_relative_to(p) else str(f)
+            findings.extend(scanner.scan_text(content, rel_path=rel))
+        payload = {
+            "mode": "worktree",
+            "files_scanned": len(files),
+            "findings": [f.to_dict() for f in findings],
+        }
+
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
+    if payload["findings"]:
+        sys.exit(1)
+
+
 def main():
     cli()
 

@@ -12,6 +12,7 @@ from ..models.project import Scan
 from ..models.vulnerability import Vulnerability
 from .ai.analyzer import AIAnalyzer
 from .rules.engine import RuleEngine
+from .secrets.integration import secrets_vulnerabilities
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +324,9 @@ class Scanner:
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file_full(file_path, content)
+                # P1.2: secrets module runs as a sub-step on the legacy path
+                # too, so check/gate/sarif count secret findings as severity.
+                vulns.extend(secrets_vulnerabilities(file_path, content, target.path))
                 if self._project_cache:
                     rel = (
                         str(file_path.relative_to(target.path))
@@ -395,6 +399,9 @@ class Scanner:
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file_full(file_path, content)
+                # P1.2: secrets module runs as a sub-step on the legacy path
+                # too, so check/gate/sarif count secret findings as severity.
+                vulns.extend(secrets_vulnerabilities(file_path, content, target.path))
                 if self._project_cache:
                     rel = (
                         str(file_path.relative_to(target.path))
