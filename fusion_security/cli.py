@@ -58,6 +58,12 @@ def cli(verbose: bool):
 )
 @click.option("--output", "-o", default="", help="报告输出目录")
 @click.option("--format", "-f", "fmt", default="md", type=click.Choice(["md", "json", "html", "all"]), help="报告格式")
+@click.option(
+    "--compliance",
+    default="",
+    type=click.Choice(["", "dengbao", "iso27001", "pci_dss", "eu_ai_act"]),
+    help="报告附带合规对照段(P3.2 框架 profile)",
+)
 @click.option("--no-ai", is_flag=True, help="禁用 AI 分析")
 @click.option("--model", "-m", default="", help="fusion-mlx 模型名称")
 @click.option("--pipeline", is_flag=True, help="使用5阶段流水线扫描")
@@ -70,6 +76,7 @@ def scan(
     severity: str,
     output: str,
     fmt: str,
+    compliance: str,
     no_ai: bool,
     model: str,
     pipeline: bool,
@@ -79,7 +86,9 @@ def scan(
     base: str,
 ):
     """扫描代码安全漏洞。"""
-    asyncio.run(_async_scan(path, severity, output, fmt, no_ai, model, pipeline, sca, osv, incremental, base))
+    asyncio.run(
+        _async_scan(path, severity, output, fmt, compliance, no_ai, model, pipeline, sca, osv, incremental, base)
+    )
 
 
 async def _async_scan(
@@ -87,6 +96,7 @@ async def _async_scan(
     severity: str,
     output: str,
     fmt: str,
+    compliance: str,
     no_ai: bool,
     model: str,
     pipeline: bool,
@@ -191,7 +201,7 @@ async def _async_scan(
         output_dir = output or "~/Desktop/fusion_security_reports"
         reporter = ReportGenerator()
         formats = ["md", "json", "html"] if fmt == "all" else [fmt]
-        saved = reporter.save_report(result, output_dir, formats)
+        saved = reporter.save_report(result, output_dir, formats, compliance_framework=compliance)
         click.echo()
         click.echo("  报告已保存:")
         for fmt_name, path in saved.items():

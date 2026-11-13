@@ -316,6 +316,11 @@ New attack surface introduced by docs/evolution-plan-2026-11.md Phase 1 and its 
 - **Agent-asset scanner** (`agent-scan` CLI, `POST /api/v1/agent/asset-scan`) — reads MCP manifests and skill files from a target tree; parses are tolerant (malformed files yield zero entries, never findings); checks are deterministic and offline. The API endpoint takes a server-local path only — no file upload surface.
 - **Agent risk-score + decision feed** (`POST /api/v1/agent/risk-score`, `POST /api/v1/agent/decisions`; contract: `schemas/agent-risk-score.v1.json`, upstream proposal dahai80/fusion-harness#24) — scoring is deterministic (no model on the hot path); policy hints are advisory and fusion-harness remains the deny-first executor. Decision events append to the per-tenant audit jsonl; reputation reads only the file tail (bounded IO) and unreadable audit files degrade to zero reputation, never a scan failure.
 
+## Phase 3 evolution attack surface (2026-11, P3.1-P3.2)
+
+- **Signed rule packages** (`.frpkg`, `rules keygen/package/install --from-file`) — canonical-JSON digest + Ed25519 signature; only signed packages can install; tampered/unsigned/wrong-key bundles are rejected at load with a `rule.package.rejected` audit event. The signing key never leaves the operator machine (offline keygen; no key-escrow, no egress).
+- **Compliance profiles** (`engine/scoring/compliance.py`, `scan --compliance <framework>`) — control-item mapping per framework (等保2.0 / ISO 27001 / PCI DSS / EU AI Act with the 2025-08 GPAI, 2026-08 high-risk and 2027-08 final-transposition milestones). Purely a reporting layer over existing findings — no new data collection, no network calls.
+
 ## Out of scope
 
 - Third-party / network penetration testing
