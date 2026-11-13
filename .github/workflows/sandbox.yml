@@ -1,0 +1,51 @@
+name: sandbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "scripts/sandbox-run.sh"
+      - "fusion_security/engine/sandbox.py"
+      - ".github/workflows/sandbox.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "scripts/sandbox-run.sh"
+      - "fusion_security/engine/sandbox.py"
+      - ".github/workflows/sandbox.yml"
+  workflow_dispatch:
+
+jobs:
+  docker-network-disabled:
+    # P3.3 done-when: FUSION_SECURITY_SANDBOX=docker mode passes the full
+    # pipeline in CI with network disabled inside the container.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sandbox image
+        run: docker build -t fusion-security:sandbox .
+      - name: Prepare scan target fixture
+        run: |
+          mkdir -p /tmp/sandbox-target/src
+          cat > /tmp/sandbox-target/src/app.py <<'PY'
+          import sqlite3
+          def get_user(conn, uid):
+              cur = conn.cursor()
+              cur.execute("SELECT * FROM users WHERE id = " + uid)
+              return cur.fetchone()
+          PY
+      - name: Run full pipeline with network disabled
+        run: |
+          docker run --rm \
+            --network none \
+            --memory 2g --cpus 2 --pids-limit 256 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --read-only --tmpfs /tmp:rw,size=256m \
+            -v /tmp/sandbox-target:/target:ro \
+            fusion-security:sandbox \
+            fusion-security check /target
+      - name: Run sandbox module unit check (profile args)
+        run: |
+          docker run --rm --network none fusion-security:sandbox \
+            python -c "from fusion_security.engine.sandbox import docker_run_args; a = docker_run_args('img', '/data', ['x']); assert '--network' in a and 'none' in a and '--read-only' in a and '--cap-drop' in a; print('sandbox-profile-ok')"
