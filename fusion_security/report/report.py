@@ -93,7 +93,7 @@ _html_template = _jinja_env.from_string(HTML_TEMPLATE)
 
 
 class ReportGenerator:
-    def generate_markdown(self, result: ScanResult) -> str:
+    def generate_markdown(self, result: ScanResult, compliance_framework: str = "") -> str:
         lines = []
         lines.append("# 代码安全审计报告")
         lines.append("")
@@ -127,6 +127,12 @@ class ReportGenerator:
                 lines.append(vuln.code_snippet[:500])
                 lines.append(f"{fence}")
                 lines.append("")
+
+        # P3.2: optional compliance section from a single profile flag.
+        if compliance_framework:
+            from ..engine.scoring.compliance import build_compliance_section
+
+            lines.extend(build_compliance_section(compliance_framework, result.vulnerabilities))
 
         lines.append("---")
         lines.append(f"*由 Fusion-Security v{__version__} 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
@@ -165,7 +171,9 @@ class ReportGenerator:
             version=__version__,
         )
 
-    def save_report(self, result: ScanResult, output_dir: str, formats: list[str] = None) -> dict[str, str]:
+    def save_report(
+        self, result: ScanResult, output_dir: str, formats: list[str] = None, compliance_framework: str = ""
+    ) -> dict[str, str]:
         if formats is None:
             formats = ["md", "json"]
 
@@ -176,7 +184,7 @@ class ReportGenerator:
 
         if "md" in formats:
             path = out_dir / f"security_report_{timestamp}.md"
-            path.write_text(self.generate_markdown(result), encoding="utf-8")
+            path.write_text(self.generate_markdown(result, compliance_framework=compliance_framework), encoding="utf-8")
             saved["markdown"] = str(path)
 
         if "json" in formats:
