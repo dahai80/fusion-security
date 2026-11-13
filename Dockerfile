@@ -14,13 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 # 用 builder venv 而非 --prefix:fusion-security 依赖 fusion-core,--prefix 隔离
 # 会让后续 pip 解析看不到刚装的 fusion-core(报 No matching distribution)。
 ARG FUSION_CORE_REF=master
+ARG FUSION_IDENTITY_REF=main
 COPY pyproject.toml README.md ./
 COPY fusion_security/ fusion_security/
 
+# fusion-identity is a sibling dep with no PyPI release — same as fusion-core,
+# it must come from git (see CLAUDE.md install order note).
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/venv/bin/pip install --no-cache-dir \
         git+https://github.com/dahai80/fusion-core.git@${FUSION_CORE_REF} \
+        git+https://github.com/dahai80/fusion-identity.git@${FUSION_IDENTITY_REF} \
         ".[postgres]"
 
 
