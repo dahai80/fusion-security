@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ...engine.agent.assets.signatures import SignatureLibrary
-from ...engine.agent.injection import RULES, validate_rules
+from ...engine.agent.injection import INJECTION_CONTRACT_VERSION, RULES, validate_rules
 from ...engine.agent.injection import detect_async as injection_detect_async
 from ...engine.tenant.audit import get_audit_logger
 from ..auth import require_permission
@@ -21,6 +21,11 @@ router = APIRouter()
 class InjectionScanRequest(BaseModel):
     text: str = Field(default="", max_length=200_000)
     path: str = ""
+    use_llm: bool = False
+
+
+class InjectionBatchRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=50)
     use_llm: bool = False
 
 
@@ -72,7 +77,35 @@ async def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permis
             await analyzer.aclose()
     else:
         result = await injection_detect_async(text)
+    result["contract_version"] = INJECTION_CONTRACT_VERSION
     return result
+
+
+@router.post("/injection-scan/batch")
+async def run_injection_scan_batch(req: InjectionBatchRequest, _=Depends(require_permission("scan:read"))):
+    """Batch prompt-injection scan for service consumers (issue #85).
+
+    Rule+heuristic tiers only (offline, deterministic); the LLM tier is
+    not available in batch mode. Response shape is pinned by
+    INJECTION_CONTRACT_VERSION — Rust consumers pin against it.
+    """
+    from ...engine.agent.injection import MAX_INJECTION_TEXT_CHARS
+
+    for i, text in enumerate(req.texts):
+        if len(text) > MAX_INJECTION_TEXT_CHARS:
+            raise HTTPException(status_code=413, detail=f"texts[{i}] exceeds {MAX_INJECTION_TEXT_CHARS} chars")
+    results = []
+    for i, text in enumerate(req.texts):
+        verdict = await injection_detect_async(text)
+        results.append({"index": i, "contract_version": INJECTION_CONTRACT_VERSION, **verdict})
+    flagged = sum(1 for r in results if r["is_injection"])
+    logger.info(f"injection-scan batch: items={len(results)} flagged={flagged}")
+    return {
+        "contract_version": INJECTION_CONTRACT_VERSION,
+        "scanned": len(results),
+        "flagged": flagged,
+        "results": results,
+    }
 
 
 @router.post("/asset-scan")

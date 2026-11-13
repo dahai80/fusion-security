@@ -190,3 +190,15 @@ fusion-security rules
 | `language` | `str` | Target language |
 | `fix_template` | `str` | Fix suggestion template |
 | `category` | `str` | `injection`, `xss`, `crypto`, `config`, `auth` |
+## Service-to-Service Contract (agent security endpoints)
+
+Stable contract for other fusion-* services (e.g. fusion-memory trust chain, issue #85):
+
+- **Contract version**: every `/api/v1/agent/injection-scan*` response carries `contract_version` (currently `1`). Consumers pin against it; the version bumps only on a breaking shape change.
+- **Single scan**: `POST /api/v1/agent/injection-scan` `{text | path, use_llm}` → verdict (`is_injection`, `max_severity`, `rule_findings`, `heuristic`, `text_sha256`).
+- **Batch scan**: `POST /api/v1/agent/injection-scan/batch` `{texts: [..≤50 items, each ≤200k chars]}` → `{contract_version, scanned, flagged, results: [{index, ...verdict}]}`. Rule+heuristic tiers only (offline, deterministic); the LLM tier is single-scan only.
+- **Auth (dual-mode, both accepted)**:
+  - API key: `X-API-Key: <key>` (created via `POST /api/v1/keys`, roles include `scan:read` for viewer+).
+  - Service JWT: `Authorization: Bearer <token>` — a service token issued by fusion-identity (`FUSION_IDENTITY_SERVICE_TOKEN` on the caller side), verified against fusion-identity `/api/v1/auth/verify`.
+  - Both modes must also send `X-Tenant-Id: <tenant>`; key/JWT tenant must match the header (fail-closed).
+- **Egress**: all endpoints are local-only (loopback by default); no outbound calls except the optional LLM tier to fusion-mlx on 127.0.0.1.

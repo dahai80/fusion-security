@@ -22,6 +22,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Issue #85: versioned service-to-service contract. Bump only on a
+# breaking change to the injection-scan response shape; consumers pin.
+INJECTION_CONTRACT_VERSION = 1
+MAX_INJECTION_TEXT_CHARS = 200_000
+
 
 @dataclass
 class InjectionRule:
