@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 # 用 builder venv 而非 --prefix:fusion-security 依赖 fusion-core,--prefix 隔离
 # 会让后续 pip 解析看不到刚装的 fusion-core(报 No matching distribution)。
 ARG FUSION_CORE_REF=master
-ARG FUSION_IDENTITY_REF=master
+ARG FUSION_IDENTITY_REF=main
 COPY pyproject.toml README.md ./
 COPY fusion_security/ fusion_security/
 
