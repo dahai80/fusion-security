@@ -58,12 +58,45 @@ check_port_registry() {
     return 0
 }
 
+load_service_env() {
+    # Issue #95: inject identity credentials into the service process.
+    # Caller-provided env wins (supervisor may pass FUSION_IDENTITY_* directly).
+    # Otherwise load ~/.fusion-security/env; if absent, fall back to the
+    # sibling identity env file (~/.fusion-identity/env), which carries
+    # FUSION_IDENTITY_SERVICE_TOKEN. All identity vars are FUSION_IDENTITY_*
+    # prefixed so sourcing them cannot collide with fusion-security settings.
+    if [ -n "${FUSION_IDENTITY_SERVICE_TOKEN:-}" ]; then
+        return 0
+    fi
+    local env_file="${FUSION_SECURITY_ENV_FILE:-${HOME}/.fusion-security/env}"
+    if [ -f "$env_file" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$env_file"
+        set +a
+        log_info "loaded service env from $env_file"
+        return 0
+    fi
+    local identity_env="${HOME}/.fusion-identity/env"
+    if [ -f "$identity_env" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$identity_env"
+        set +a
+        log_info "loaded identity env from $identity_env (FUSION_IDENTITY_SERVICE_TOKEN)"
+        return 0
+    fi
+    log_error "no service env file (${env_file}) and no FUSION_IDENTITY_SERVICE_TOKEN — identity-backed zones will degrade"
+    return 0
+}
+
 do_start() {
     if is_running; then
         log_info "fusion-security already running (pid $(cat "$PID_FILE"))"
         return 0
     fi
     ensure_venv
+    load_service_env
     check_port_registry || return 1
     log_info "starting fusion-security API on ${HOST}:${PORT} ..."
     nohup uvicorn fusion_security.api.app:app \
