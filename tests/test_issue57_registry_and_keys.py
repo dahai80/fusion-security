@@ -93,3 +93,45 @@ class TestLegacyKeyNames:
         from fusion_security import shell_registry
 
         assert shell_registry.ADMIN_KEY_ENV == "FUSION_ADMIN_KEY"
+
+
+def _run_env_load(tmp_path: Path, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    }
+    if extra_env:
+        env.update(extra_env)
+    logger.debug(f"[test] run load_service_env home={tmp_path} extra={extra_env}")
+    return subprocess.run(
+        ["bash", "-c", f"source '{START_SH}'; load_service_env; echo \"token=${{FUSION_IDENTITY_SERVICE_TOKEN:-}}\""],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+
+class TestServiceEnvLoad:
+    def test_falls_back_to_identity_env(self, tmp_path):
+        (tmp_path / ".fusion-identity").mkdir()
+        (tmp_path / ".fusion-identity" / "env").write_text("export FUSION_IDENTITY_SERVICE_TOKEN=id-tok-123\n")
+        r = _run_env_load(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert "token=id-tok-123" in r.stdout, r.stdout
+
+    def test_dedicated_env_file_wins(self, tmp_path):
+        (tmp_path / ".fusion-security").mkdir()
+        (tmp_path / ".fusion-security" / "env").write_text("export FUSION_IDENTITY_SERVICE_TOKEN=dedicated-tok\n")
+        r = _run_env_load(tmp_path)
+        assert "token=dedicated-tok" in r.stdout, r.stdout
+
+    def test_caller_env_not_clobbered(self, tmp_path):
+        r = _run_env_load(tmp_path, extra_env={"FUSION_IDENTITY_SERVICE_TOKEN": "caller-tok"})
+        assert "token=caller-tok" in r.stdout, r.stdout
+
+    def test_missing_files_warns_and_continues(self, tmp_path):
+        r = _run_env_load(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert "token=" in r.stdout
+        assert "degrade" in r.stdout  # log_error prints to stdout
