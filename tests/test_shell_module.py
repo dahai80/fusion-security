@@ -371,3 +371,142 @@ def test_spa_mount_skipped_when_dist_missing(app_with_db, tmp_path):
     from fusion_security.api.app import _mount_spa
 
     assert _mount_spa(app_with_db, tmp_path / "empty") is False
+
+
+# ---------- E. issue #97: gateway-issued raw_key persistence ----------
+
+
+@pytest.mark.asyncio
+async def test_register_once_persists_issued_raw_key(monkeypatch):
+    init_db(":memory:")
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.delenv(shell_registry.MODULE_KEY_ENV, raising=False)
+    monkeypatch.setenv("FUSION_SECURITY_SHELL_TENANT", "default")
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"raw_key": "fm-issued-key-97", "key_id": "k-97"}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    ok, reason = await shell_registry.register_once()
+    assert ok is True and reason == ""
+    key_obj = auth_manager.validate_key("fm-issued-key-97")
+    assert key_obj is not None
+    assert key_obj.name == "shell-module"
+    assert key_obj.roles == ["admin"]
+    assert key_obj.tenant_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_register_once_without_raw_key_still_ok(monkeypatch):
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.delenv(shell_registry.MODULE_KEY_ENV, raising=False)
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"ok": True}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    ok, reason = await shell_registry.register_once()
+    assert ok is True and reason == ""
+
+
+@pytest.mark.asyncio
+async def test_register_once_tolerates_non_json_response(monkeypatch):
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.delenv(shell_registry.MODULE_KEY_ENV, raising=False)
+
+    class _Resp:
+        status_code = 204
+        text = ""
+
+        def json(self):
+            raise ValueError("no body")
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    ok, reason = await shell_registry.register_once()
+    assert ok is True and reason == ""
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_does_not_break_registration(monkeypatch):
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.delenv(shell_registry.MODULE_KEY_ENV, raising=False)
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"raw_key": "fm-boom-key-97"}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(auth_manager, "create_api_key_from_raw", _boom)
+    ok, reason = await shell_registry.register_once()
+    assert ok is True and reason == ""

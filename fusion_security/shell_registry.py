@@ -93,8 +93,8 @@ async def register_once() -> tuple[bool, str]:
         body["api_key"] = module_key
     else:
         logger.warning(
-            "[ShellRegistry] %s 未设置:注册体不带 api_key,gateway 将签发 fm- key 且"
-            "上游会 401 —— 建议停用自注册,改用静态模块配置",
+            "[ShellRegistry] %s 未设置:注册体不带 api_key,gateway 将签发 fm- key;"
+            "签发结果(raw_key)会在注册响应后自动落库(issue #97)",
             MODULE_KEY_ENV,
         )
     url = f"{gateway}/api/v1/shell/manifests"
@@ -102,8 +102,31 @@ async def register_once() -> tuple[bool, str]:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         resp = await client.post(url, json=body, headers=headers)
     if resp.status_code in (200, 201, 204):
+        _persist_issued_key(resp)
         return True, ""
     return False, f"注册失败 {url} -> {resp.status_code} {resp.text[:200]}"
+
+
+def _persist_issued_key(resp: httpx.Response) -> None:
+    # Issue #97: gateway 在签发/轮换 fm- key 时于 2xx 响应体返回 raw_key,且仅此一次。
+    # 必须落库到本模块 key store,否则代理注入的 Bearer 永远 401。幂等 upsert
+    # (同 hash 更新角色/租户),key 明文绝不落日志。
+    try:
+        payload = resp.json() if hasattr(resp, "json") else {}
+    except ValueError:
+        payload = {}
+    raw_key = str((payload or {}).get("raw_key") or "").strip()
+    if not raw_key:
+        return
+    from .api.auth import auth_manager
+
+    tenant = os.environ.get("FUSION_SECURITY_SHELL_TENANT", "default").strip() or "default"
+    try:
+        auth_manager.create_api_key_from_raw("shell-module", raw_key, ["admin"], tenant_id=tenant)
+        logger.info("[ShellRegistry] gateway-issued service key persisted to module key store")
+    except Exception as e:
+        # 落库失败不拖垮注册心跳:下个间隔 gateway 重发(或人工配置静态 key)。
+        logger.error("[ShellRegistry] failed to persist gateway-issued key: %s", e)
 
 
 async def run_shell_registry() -> None:
