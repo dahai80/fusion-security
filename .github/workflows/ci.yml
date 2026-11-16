@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # Issue #99: docs-only changes skip the test gate (docs.yml still runs).
+    paths-ignore:
+      - "**.md"
+  # Issue #99 tiered gate: nightly full suite on main is the authoritative
+  # run; per-PR jobs stay the fast gate and are never replaced by batched runs.
+  schedule:
+    - cron: "20 19 * * *"
+
+# Issue #99: cancel superseded runs on the same ref (PR force-push churn).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -12,8 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        # Issue #99: pip cache keyed on the manifest (deps resolve from git
+        # siblings + local extras; no lockfile to hash).
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install fusion-core (in-tree dependency, not on PyPI)
         run: pip install git+https://github.com/dahai80/fusion-core.git
         # fusion-core is an in-tree editable install in the monorepo venv
@@ -37,8 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        # Issue #99: pip cache keyed on the manifest.
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install fusion-core (in-tree dependency, not on PyPI)
         run: pip install git+https://github.com/dahai80/fusion-core.git
         # See dahai80/fusion-core#9 for the permanent publish-track fix.
@@ -58,8 +77,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        # Issue #99: pip cache keyed on the manifest (deps resolve from git
+        # siblings + local extras; no lockfile to hash).
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install fusion-core (in-tree dependency, not on PyPI)
         run: pip install git+https://github.com/dahai80/fusion-core.git
         # See dahai80/fusion-core#9 for the permanent publish-track fix.
