@@ -7,6 +7,11 @@ on:
     - cron: "40 18 * * *"
   workflow_dispatch:
 
+# Issue #99: group nightly runs; no cancel-in-progress — the scheduled
+# nightly is authoritative and must not be killed by a manual dispatch.
+concurrency:
+  group: robustness-${{ github.ref }}
+
 jobs:
   selftest:
     runs-on: ubuntu-latest

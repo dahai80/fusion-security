@@ -16,6 +16,11 @@ on:
       - ".github/workflows/sandbox.yml"
   workflow_dispatch:
 
+# Issue #99: cancel superseded sandbox runs on the same ref.
+concurrency:
+  group: sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-network-disabled:
     # P3.3 done-when: FUSION_SECURITY_SANDBOX=docker mode passes the full
