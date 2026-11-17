@@ -24,6 +24,10 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
+          # fusion_core is an in-tree sibling imported by the analyzer chain
+          # (engine/ai -> fusion_core.http_client); --no-deps skips it, so it
+          # must come from git like in ci.yml. See dahai80/fusion-core#9.
+          pip install git+https://github.com/dahai80/fusion-core.git
           pip install -e . --no-deps
           pip install httpx
       - name: Run robustness self-test
