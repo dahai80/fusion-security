@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -159,10 +160,12 @@ PROBES = [
 ]
 
 
-async def resolve_model(base_url: str) -> str | None:
+async def resolve_model(base_url: str, preferred: str = "") -> str | None:
     """Return the loaded model id, or None when the engine has no model.
     Auth uses the same fusion_core client_key resolution as AIAnalyzer so a
-    single env var (FUSION_CLIENT_KEY) drives both."""
+    single env var (FUSION_CLIENT_KEY) drives both. Non-chat models loaded on
+    the shared engine (rerankers / embedders / TTS / OCR / image) would make
+    garbage judges — they are filtered out unless explicitly preferred."""
     import httpx
     from fusion_core.config import client_key
 
@@ -173,12 +176,34 @@ async def resolve_model(base_url: str) -> str | None:
     key = client_key().strip()
     if key:
         headers["Authorization"] = f"Bearer {key}"
+    _NON_CHAT = (
+        "reranker",
+        "embed",
+        "bge-",
+        "tts",
+        "whisper",
+        "kokoro",
+        "ocr",
+        "image",
+        "vl-",
+        "-vl",
+        "musetalk",
+        "miniLM",
+    )
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{models_url}/models", headers=headers)
             resp.raise_for_status()
             data = resp.json().get("data", [])
-            return data[0].get("id") if data else None
+            ids = [str(m.get("id") or "") for m in data]
+            if preferred:
+                if preferred in ids:
+                    return preferred
+                logger.warning(f"preferred model {preferred!r} not loaded; falling back to chat-model filter")
+            for mid in ids:
+                if mid and not any(tok in mid.lower() for tok in _NON_CHAT):
+                    return mid
+            return ids[0] if ids else None
     except Exception as e:
         logger.info(f"model probe failed ({e}); treating as no-model")
         return None
@@ -210,14 +235,18 @@ def append_benchmark(benchmark_path: Path, summary: dict) -> None:
 async def main_async() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="", help="fusion-mlx base URL (env MLX_BASE_URL)")
+    parser.add_argument(
+        "--model",
+        default="",
+        help="preferred model id (default: first loaded chat model, non-chat filtered; env FUSION_SECURITY_SELFTEST_MODEL)",
+    )
     parser.add_argument("--benchmark", default="docs/benchmark.md", help="markdown file to append results to")
     parser.add_argument("--no-append", action="store_true", help="do not write to the benchmark file")
     args = parser.parse_args()
 
-    import os
-
     base_url = args.base_url or os.environ.get("MLX_BASE_URL", "http://127.0.0.1:11432/v1")
-    model = await resolve_model(base_url)
+    preferred = args.model or os.environ.get("FUSION_SECURITY_SELFTEST_MODEL", "")
+    model = await resolve_model(base_url, preferred=preferred)
     if not model:
         print(json.dumps({"result": "SKIPPED", "reason": "no model loaded"}))
         logger.warning("ROBUSTNESS RESULT: SKIPPED (no model loaded)")
