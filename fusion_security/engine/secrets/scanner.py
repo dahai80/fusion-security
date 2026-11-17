@@ -94,6 +94,7 @@ class SecretFinding:
     start: int
     end: int
     commit: str = ""
+    file: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +108,7 @@ class SecretFinding:
             "start": self.start,
             "end": self.end,
             "commit": self.commit,
+            "file": self.file,
         }
 
 
@@ -204,6 +206,8 @@ class SecretScanner:
                     self._finding("high_entropy_string", "likely", value, content, abs_start, abs_end, commit)
                 )
 
+        for f in findings:
+            f.file = rel_path
         filtered = [f for f in findings if not self.allowlist.allows(f, rel_path)]
         if len(filtered) != len(findings):
             logger.info(f"[Secrets] allowlist suppressed {len(findings) - len(filtered)} finding(s) in {rel_path}")

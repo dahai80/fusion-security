@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
 import sys
-from pathlib import Path
+from collections import Counter
+from pathlib import Path, PurePosixPath
 
 import click
 
@@ -428,18 +430,111 @@ def inject_scan(target: str, pretty: bool):
         sys.exit(1)
 
 
+SECRETS_DEFAULT_EXCLUDE_DIRS = {
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    "out",
+    ".venv",
+    "venv",
+    "vendor",
+    "coverage",
+    "htmlcov",
+    ".nyc_output",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".tox",
+    ".eggs",
+}
+SECRETS_DEFAULT_EXCLUDE_GLOBS = (
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "bun.lockb",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Cargo.lock",
+    "composer.lock",
+    "Gemfile.lock",
+    "Podfile.lock",
+)
+
+
+def _secrets_path_excluded(rel_path: str, extra_excludes: tuple[str, ...] = (), use_default: bool = True) -> bool:
+    parts = PurePosixPath(rel_path.replace("\\", "/")).parts
+    name = parts[-1] if parts else rel_path
+    if use_default:
+        if any(part in SECRETS_DEFAULT_EXCLUDE_DIRS for part in parts):
+            return True
+        if any(fnmatch.fnmatch(name, g) or fnmatch.fnmatch(rel_path, g) for g in SECRETS_DEFAULT_EXCLUDE_GLOBS):
+            return True
+    for pattern in extra_excludes:
+        clean = pattern.strip().strip("/")
+        if not clean:
+            continue
+        if clean in parts or clean in rel_path or fnmatch.fnmatch(name, clean) or fnmatch.fnmatch(rel_path, clean):
+            return True
+    return False
+
+
+def _secrets_summary(payload: dict, top_n: int = 10) -> dict:
+    rule_counts = Counter(f["rule_id"] for f in payload["findings"])
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    top = sorted(
+        payload["findings"], key=lambda f: (severity_rank.get(f.get("severity", "low"), 9), f.get("file", ""))
+    )[:top_n]
+    summary = {
+        "mode": payload.get("mode"),
+        "files_scanned": payload.get("files_scanned", 0),
+        "total_findings": len(payload["findings"]),
+        "rules": dict(sorted(rule_counts.items())),
+        "top_findings": top,
+    }
+    if "commits_scanned" in payload:
+        summary["commits_scanned"] = payload["commits_scanned"]
+    return summary
+
+
 @cli.command(name="secrets-scan")
 @click.argument("target", default=".")
 @click.option("--history", is_flag=True, help="Scan git history (all commits) instead of working tree")
 @click.option("--base", "-b", default="", help="History incremental base ref (default: full history)")
 @click.option("--max-commits", default=2000, help="Max commits to walk in history mode")
 @click.option("--pretty", is_flag=True, help="Pretty-print JSON output")
-def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty: bool):
+@click.option("--exclude", "-e", multiple=True, help="Extra exclude pattern (repeatable): path substring or glob")
+@click.option("--no-default-excludes", is_flag=True, help="Disable the built-in exclude set (node_modules, dist, ...)")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write full JSON to this file; stdout gets a compact summary line only",
+)
+@click.option("--summary", is_flag=True, help="Print per-rule counts + top-10 findings to stdout instead of full JSON")
+def secrets_scan(
+    target: str,
+    history: bool,
+    base: str,
+    max_commits: int,
+    pretty: bool,
+    exclude: tuple[str, ...],
+    no_default_excludes: bool,
+    output: Path | None,
+    summary: bool,
+):
     """Scan working tree or git history for hardcoded secrets (offline)."""
     _logs_to_stderr()
     from .engine.secrets import scan_history
     from .engine.secrets.integration import get_shared_scanner
 
+    use_default = not no_default_excludes
     if history:
         p = Path(target).expanduser()
         try:
@@ -447,10 +542,13 @@ def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty
         except (ValueError, RuntimeError) as e:
             click.echo(f"error: {e}", err=True)
             sys.exit(2)
+        kept = [f for f in result.findings if not _secrets_path_excluded(f.file, exclude, use_default)]
+        if len(kept) != len(result.findings):
+            logger.info(f"secrets-scan: history excludes dropped {len(result.findings) - len(kept)} finding(s)")
         payload = {
             "mode": "history",
             "commits_scanned": result.commits_scanned,
-            "findings": [f.to_dict() for f in result.findings],
+            "findings": [f.to_dict() for f in kept],
         }
     else:
         p = Path(target).expanduser()
@@ -461,7 +559,14 @@ def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty
             [p]
             if p.is_file()
             else sorted(
-                f for f in p.rglob("*") if f.is_file() and f.stat().st_size < 1_000_000 and ".git" not in f.parts
+                f
+                for f in p.rglob("*")
+                if f.is_file()
+                and f.stat().st_size < 1_000_000
+                and ".git" not in f.parts
+                and not _secrets_path_excluded(
+                    str(f.relative_to(p)) if f.is_relative_to(p) else str(f), exclude, use_default
+                )
             )
         )
         scanner = get_shared_scanner()
@@ -480,7 +585,15 @@ def secrets_scan(target: str, history: bool, base: str, max_commits: int, pretty
             "findings": [f.to_dict() for f in findings],
         }
 
-    click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None), encoding="utf-8")
+        logger.info(f"secrets-scan: full JSON written to {output}")
+        click.echo(json.dumps(_secrets_summary(payload, top_n=0), ensure_ascii=False))
+    elif summary:
+        click.echo(json.dumps(_secrets_summary(payload), ensure_ascii=False, indent=2 if pretty else None))
+    else:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2 if pretty else None))
     if payload["findings"]:
         sys.exit(1)
 

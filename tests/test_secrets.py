@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -205,3 +206,96 @@ class TestSastDeprecation:
 
         mod_src = inspect.getsource(rules_mod)
         assert "DEPRECATED (P1.2)" in mod_src
+
+
+class TestSecretsCli:
+    def _make_tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        (tmp_path / ".next" / "static").mkdir(parents=True)
+        (tmp_path / "dist").mkdir(parents=True)
+        (tmp_path / "sub" / "vendor").mkdir(parents=True)
+        (tmp_path / "src").mkdir(parents=True)
+        (tmp_path / "src" / "app.py").write_text(f'stripe_key = "{STRIPE_KEY}"\n', encoding="utf-8")
+        (tmp_path / "node_modules" / "pkg" / "index.js").write_text(f'const k = "{STRIPE_KEY}";\n', encoding="utf-8")
+        (tmp_path / ".next" / "static" / "chunk.js").write_text(f'e="{STRIPE_KEY}";\n', encoding="utf-8")
+        (tmp_path / "dist" / "bundle.min.js").write_text(f'x="{STRIPE_KEY}";\n', encoding="utf-8")
+        (tmp_path / "sub" / "vendor" / "lib.py").write_text(f'k = "{STRIPE_KEY}"\n', encoding="utf-8")
+        (tmp_path / "package-lock.json").write_text(f'{{"k": "{STRIPE_KEY}"}}\n', encoding="utf-8")
+        return tmp_path
+
+    def _run(self, tmp_path: Path, *args: str):
+        from click.testing import CliRunner
+
+        from fusion_security.cli import cli
+
+        runner = CliRunner()
+        return runner.invoke(cli, ["secrets-scan", str(tmp_path), *args])
+
+    @staticmethod
+    def _json_out(result) -> dict:
+        # CliRunner may merge stderr log lines into output; JSON starts at first brace
+        return json.loads(result.output[result.output.index("{") :])
+
+    def test_default_excludes_skip_build_dirs(self, tmp_path):
+        self._make_tree(tmp_path)
+        result = self._run(tmp_path)
+        assert result.exit_code == 1
+        payload = self._json_out(result)
+        assert payload["files_scanned"] == 1  # only src/app.py survives excludes
+        files = {f["file"] for f in payload["findings"]}
+        assert files == {os.path.join("src", "app.py")}
+
+    def test_findings_carry_file_field(self, tmp_path):
+        self._make_tree(tmp_path)
+        payload = json.loads(self._run(tmp_path).output)
+        assert payload["findings"]
+        for f in payload["findings"]:
+            assert f["file"] == os.path.join("src", "app.py")
+
+    def test_no_default_excludes_restores_full_walk(self, tmp_path):
+        self._make_tree(tmp_path)
+        payload = json.loads(self._run(tmp_path, "--no-default-excludes").output)
+        assert payload["files_scanned"] == 6
+        files = {f["file"] for f in payload["findings"]}
+        assert any("node_modules" in f for f in files)
+
+    def test_exclude_option_overrides(self, tmp_path):
+        self._make_tree(tmp_path)
+        payload = json.loads(
+            self._run(tmp_path, "--no-default-excludes", "--exclude", "node_modules", "--exclude", "*.min.js").output
+        )
+        files = {f["file"] for f in payload["findings"]}
+        assert files
+        assert not any("node_modules" in f or f.endswith(".min.js") for f in files)
+
+    def test_output_writes_file_and_summary_stdout(self, tmp_path):
+        self._make_tree(tmp_path)
+        out_file = tmp_path.parent / "report.json"
+        result = self._run(tmp_path, "--output", str(out_file))
+        assert result.exit_code == 1
+        assert out_file.exists()
+        full = json.loads(out_file.read_text(encoding="utf-8"))
+        assert full["findings"]
+        summary = self._json_out(result)
+        assert summary["total_findings"] == len(full["findings"])
+        assert summary["files_scanned"] == full["files_scanned"]
+        assert summary["rules"].get("SEC-STRIPE_SECRET_KEY") == len(full["findings"])
+        assert summary["top_findings"] == []
+
+    def test_summary_mode_counts(self, tmp_path):
+        self._make_tree(tmp_path)
+        result = self._run(tmp_path, "--summary")
+        assert result.exit_code == 1
+        summary = self._json_out(result)
+        assert summary["total_findings"] >= 1
+        assert summary["rules"]
+        assert 0 < len(summary["top_findings"]) <= 10
+        assert summary["top_findings"][0]["severity"] in {"critical", "high", "medium", "low"}
+        assert "findings" not in summary
+
+    def test_scan_text_sets_file_field(self):
+        scanner = SecretScanner()
+        findings = scanner.scan_text(f'k = "{STRIPE_KEY}"\n', rel_path="cfg/prod.py")
+        assert findings
+        assert findings[0].file == "cfg/prod.py"
+        assert findings[0].to_dict()["file"] == "cfg/prod.py"

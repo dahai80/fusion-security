@@ -66,6 +66,13 @@ class TestReportsAPI:
 
 
 class TestWebhooksAPI:
+    @pytest.fixture(autouse=True)
+    def _no_outbound_check(self, monkeypatch):
+        # SSRF guard resolves real DNS; webhook CRUD tests must stay offline
+        from fusion_security.api.routes import integrations
+
+        monkeypatch.setattr(integrations, "_validate_outbound", lambda url: None)
+
     def test_create_webhook(self, client):
         resp = client.post(
             "/api/v1/integrations/webhooks",
