@@ -51,6 +51,13 @@ class DecisionEventRequest(BaseModel):
     trace_id: str = ""
 
 
+class TriageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+    preset: str = Field(default="guard", pattern="^(guard|moderation)$")
+    questions: list[str] = Field(default_factory=list, max_length=64)
+    tenant_id: str = Field(default="default", max_length=100)
+
+
 @router.post("/injection-scan")
 async def run_injection_scan(req: InjectionScanRequest, _=Depends(require_permission("scan:read"))):
     """Scan free text or a file for prompt-injection payloads. Rule tier is
@@ -188,6 +195,33 @@ def push_decision(req: DecisionEventRequest, _=Depends(require_permission("scan:
     )
     logger.info(f"decision event: {req.decision} tool={req.tool_name} tenant={req.tenant_id}")
     return {"accepted": True, "tool_name": req.tool_name, "decision": req.decision}
+
+
+@router.post("/triage")
+async def run_triage(req: TriageRequest, _=Depends(require_permission("scan:read"))):
+    """First-pass event triage via fusion-mlx typed-decision API (issue #103).
+
+    Laya decides locally only on high-confidence (choice|score) answers;
+    noul / low-confidence / timeout / unreachable escalates to the LLM
+    pipeline (tier="escalate", the LLM stays the arbiter). Input is a
+    compact extract (model max_len 1024)."""
+    from ...engine.agent.triage import triage_event
+
+    result = await triage_event(req.text, req.preset, req.questions or None)
+    audit_logger = get_audit_logger(req.tenant_id)
+    audit_logger.log(
+        action="agent.triage",
+        actor="triage-api",
+        resource_type="event",
+        resource_id=req.preset,
+        details={
+            "tier": result["tier"],
+            "suspicious": result["suspicious"],
+            "latency_ms": result["latency_ms"],
+        },
+        risk_level="high" if result.get("suspicious") else "info",
+    )
+    return result
 
 
 @router.get("/injection-rules")
