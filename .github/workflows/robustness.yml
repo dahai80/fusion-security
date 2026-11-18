@@ -25,11 +25,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # fusion_core is an in-tree sibling imported by the analyzer chain
-          # (engine/ai -> fusion_core.http_client); --no-deps skips it, so it
-          # must come from git like in ci.yml. See dahai80/fusion-core#9.
+          # (engine/ai -> fusion_core.http_client); it must come from git
+          # like in ci.yml. See dahai80/fusion-core#9.
           pip install git+https://github.com/dahai80/fusion-core.git
-          pip install -e . --no-deps
-          pip install httpx
+          # Full install (not --no-deps): the selftest import chain pulls the
+          # AST stack (tree_sitter_c et al.), which --no-deps kept skipping.
+          pip install -e .
       - name: Run robustness self-test
         # Runners without a loaded MLX model exit 0 with result=SKIPPED —
         # skipped is never reported as passed. A real gate failure exits 1

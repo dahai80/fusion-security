@@ -202,3 +202,12 @@ Stable contract for other fusion-* services (e.g. fusion-memory trust chain, iss
   - Service JWT: `Authorization: Bearer <token>` — a service token issued by fusion-identity (`FUSION_IDENTITY_SERVICE_TOKEN` on the caller side), verified against fusion-identity `/api/v1/auth/verify`.
   - Both modes must also send `X-Tenant-Id: <tenant>`; key/JWT tenant must match the header (fail-closed).
 - **Egress**: all endpoints are local-only (loopback by default); no outbound calls except the optional LLM tier to fusion-mlx on 127.0.0.1.
+
+### First-pass event triage (`POST /api/v1/agent/triage`, issue #103)
+
+Routes event triage/classification through the fusion-mlx typed-decision API (`POST /v1/laya/decide`, model `aac6fef/laya-multilingual-mlx`, <15ms P50 on the engine) instead of a full LLM turn per event.
+
+- **Request**: `{text, preset: "guard"|"moderation", questions?: [≤64], tenant_id}` — `text` is a compact extract (whitespace-collapsed, truncated to 1024 chars = model max_len).
+- **Response**: `{schema_version: 1, tier: "local"|"escalate", suspicious: bool|null, decision: {dim: answer}, reasons: [...], latency_ms, model, usage}`.
+- **Escalation policy (fail-closed)**: a local decision requires at least one confident dimension (`FUSION_SECURITY_LAYA_MIN_CONFIDENCE`, default 0.80; `harm_severity` is server-side discounted by design and ignored unless nothing else is confident). No confident dimension, malformed answer, empty input, timeout (`FUSION_SECURITY_LAYA_TIMEOUT_MS`, default 5000), or unreachable decision API → `tier="escalate"` with `suspicious=null`; the LLM pipeline stays the arbiter and never auto-decides.
+- **Measured** (real engine, 5-sample corpus, `scripts/triage_demo.py`): laya p50 ≈ 60ms / p95 ≈ 92ms vs full LLM turn p50 ≈ 6.8s (~110× faster, ~1.5k input tokens/sample vs a full chat turn); laya-vs-LLM agreement rate 1.0 on the sample.
