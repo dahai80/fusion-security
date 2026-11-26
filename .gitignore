@@ -52,3 +52,6 @@ logs/
 *.sqlite3
 .fusion-security.pid
 frontend/vendor/**/node_modules/
+coverage.json
+logs/
+*.log
