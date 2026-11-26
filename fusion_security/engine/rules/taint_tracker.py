@@ -34,29 +34,29 @@ SOURCES = {
 }
 
 SINKS = {
-    "execute": "SQL注入",
-    "exec": "命令注入",
-    "query": "SQL注入",
-    "os.system": "命令注入",
-    "subprocess.call": "命令注入",
-    "subprocess.Popen": "命令注入",
-    "subprocess.run": "命令注入",
-    "eval": "代码注入",
+    "execute": "SQL injection",
+    "exec": "Command injection",
+    "query": "SQL injection",
+    "os.system": "Command injection",
+    "subprocess.call": "Command injection",
+    "subprocess.Popen": "Command injection",
+    "subprocess.run": "Command injection",
+    "eval": "Code injection",
     "innerHTML": "XSS",
     "document.write": "XSS",
-    "open": "路径穿越",
-    "Path": "路径穿越",
-    "redirect": "开放重定向",
-    "send_file": "路径穿越",
+    "open": "Path traversal",
+    "Path": "Path traversal",
+    "redirect": "Open redirect",
+    "send_file": "Path traversal",
     "render_template_string": "SSTI",
-    "system": "命令注入",
-    "Popen": "命令注入",
-    "run": "命令注入",
-    "call": "命令注入",
+    "system": "Command injection",
+    "Popen": "Command injection",
+    "run": "Command injection",
+    "call": "Command injection",
 }
 
-# 泛型 sink 基名 (run/call/open/query/execute/system/Popen) 单独出现时误报极高
-# (app.run、client.query、config.open 等)。只有挂在危险所有者上才认定为 sink。
+# Generic sink base names (run/call/open/query/execute/system/Popen) alone have a very high false-positive rate
+# (app.run, client.query, config.open, etc.). Only treat them as sinks when attached to a dangerous owner.
 GENERIC_SINK_BASES = {"run", "call", "open", "query", "execute", "system", "Popen"}
 DANGEROUS_OWNERS = {"os", "subprocess", "cursor", "db", "session", "conn", "engine", "shell", "commands"}
 
@@ -188,8 +188,8 @@ class TaintTracker:
             base = name.split(".")[-1] if "." in name else name
             if base not in SINKS:
                 continue
-            # 泛型基名必须挂在危险所有者上才算 sink，否则 app.run()/client.query()
-            # 这类正常调用会产生大量误报。非泛型 sink (eval/exec/innerHTML 等) 直采纳。
+            # Generic base names only count as sinks when attached to a dangerous owner; otherwise normal calls like
+            # app.run()/client.query() would flood false positives. Non-generic sinks (eval/exec/innerHTML etc.) are accepted directly.
             if base in GENERIC_SINK_BASES:
                 owner = name.rsplit(".", 1)[0].lower() if "." in name else ""
                 if owner not in DANGEROUS_OWNERS:

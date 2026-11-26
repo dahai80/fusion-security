@@ -499,7 +499,7 @@ class TestAdversarialVerifier:
         vuln = _make_vuln()
         is_real, confidence, reason = await verifier.verify(vuln, [Path("test.py")])
         assert is_real is False
-        assert "防御反驳" in reason
+        assert "defense refutation" in reason
 
     async def test_verify_batch(self, mock_ai):
         mock_ai._chat.return_value = "irrelevant"
@@ -624,7 +624,7 @@ def execute_query(param):
         )
         sinks = tracker._find_sinks(ast_result)
         assert len(sinks) >= 1
-        assert sinks[0].sink_type == "SQL注入"
+        assert sinks[0].sink_type == "SQL injection"
 
     def test_find_sinks_base_name(self):
         tracker = TaintTracker()
@@ -635,7 +635,7 @@ def execute_query(param):
         )
         sinks = tracker._find_sinks(ast_result)
         assert len(sinks) >= 1
-        assert sinks[0].sink_type == "命令注入"
+        assert sinks[0].sink_type == "Command injection"
 
     def test_check_sanitization(self):
         tracker = TaintTracker()
