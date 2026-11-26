@@ -5,8 +5,8 @@ import Scans from './pages/Scans';
 import Vulnerabilities from './pages/Vulnerabilities';
 import { scanApi, vulnApi } from './services/api';
 
-// 空表 CTA:无数据时 Table 空态必须给业务引导按钮(扫描页直接开新建弹窗、
-// 漏洞页跳转扫描页),不能只留工具栏刷新。
+// Empty-table CTA: when there is no data, the Table empty state must offer a business guidance button (scans page opens the create modal directly,
+// vulnerabilities page navigates to the scans page); do not leave only the toolbar refresh.
 
 vi.mock('./sdk', () => ({
     sdk: {
@@ -30,9 +30,9 @@ describe('empty-state CTA on data tables', () => {
                 <Scans />
             </MemoryRouter>
         );
-        const cta = await screen.findByText('立即发起扫描');
+        const cta = await screen.findByText('立即发起扫描'); // i18n: user-facing
         fireEvent.click(cta);
-        await waitFor(() => expect(document.querySelector('.ant-modal-title')?.textContent).toBe('新建扫描'));
+        await waitFor(() => expect(document.querySelector('.ant-modal-title')?.textContent).toBe('新建扫描')); // i18n: user-facing
     });
 
     it('Vulnerabilities empty table offers navigation to /scans', async () => {
@@ -42,7 +42,7 @@ describe('empty-state CTA on data tables', () => {
                 <Vulnerabilities />
             </MemoryRouter>
         );
-        const cta = await screen.findByText('去发起扫描');
+        const cta = await screen.findByText('去发起扫描'); // i18n: user-facing
         fireEvent.click(cta);
         expect(window.location.pathname).toBeDefined();
     });

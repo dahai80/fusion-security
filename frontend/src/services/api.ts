@@ -1,13 +1,13 @@
 import axios from 'axios';
 import { isEmbedded, sdk } from '../sdk';
 
-// 双模式 API 客户端(Issue #35):
-// - 内嵌模式(iframe 挂在 shell 下):走 @fusion/web-sdk http 桥,宿主带
-//   gateway 会话 token,gateway 的 /shell/fusion-security/ 代理再注入模块
-//   API Key 上游;X-Tenant-Id 由本模块透传(租户 id 非机密)。
-// - 独立模式(本机 vite dev / 直连部署):axios 直连同源 /api/v1,凭
-//   VITE_API_KEY + VITE_TENANT_ID(仅开发便利;生产请走 gateway 内嵌)。
-// 两种模式返回统一形状 { status, data },页面层零改动。
+// Dual-mode API client (Issue #35):
+// - Embedded mode (iframe mounted under the shell): uses the @fusion/web-sdk http bridge; the host carries the
+//   gateway session token, and the gateway /shell/fusion-security/ proxy injects the module API key upstream;
+//   X-Tenant-Id is passed through by this module (tenant id is not a secret).
+// - Standalone mode (local vite dev / direct deploy): axios connects same-origin /api/v1 directly, with
+//   VITE_API_KEY + VITE_TENANT_ID (dev convenience only; production should use the gateway embedded mode).
+// Both modes return a unified shape { status, data }; page-level code unchanged.
 
 const TENANT_ID: string = import.meta.env.VITE_TENANT_ID || 'default';
 const DEV_API_KEY: string | undefined = import.meta.env.VITE_API_KEY;
@@ -65,11 +65,11 @@ async function request<T = any>(
 
 export const dashboardApi = {
     getStats: () => request('GET', '/integrations/dashboard'),
-    // Issue #53: /system/health/detailed 需 system:manage(admin),角色不足的
-    // 服务 key(或权限收紧后)会 403 —— 降级到公开 /system/health,仪表盘仍可
-    // 渲染(仅 status,子系统项显示 unknown)。嵌入桥把 HTTP 错误统一折成
-    // 502 HttpError,无法按状态码精确区分,故任意失败都降级;公开端点也失败
-    // 时向上抛原始错误。
+// Issue #53: /system/health/detailed requires system:manage (admin); service keys with insufficient roles
+// (or after permission tightening) get 403 — fall back to the public /system/health so the dashboard still
+// renders (status only; subsystem items show unknown). The embedded bridge folds HTTP errors into
+// 502 HttpError, so status codes cannot be distinguished precisely; any failure degrades. If the public
+// endpoint also fails, the original error propagates.
     getHealth: async () => {
         try {
             return await request('GET', '/system/health/detailed');
@@ -121,7 +121,7 @@ export const reportApi = {
     generate: (data: object) => request('POST', '/reports/generate', data),
 };
 
-// Issue #60/#61/#62: Admin Console 聚合面(全部 system:manage)。
+// Issue #60/#61/#62: Admin Console aggregate surface (all system:manage).
 export const consoleApi = {
     getSummary: () => request('GET', '/console/summary'),
     getTenants: () => request('GET', '/console/tenants'),

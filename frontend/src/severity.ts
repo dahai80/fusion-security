@@ -1,6 +1,6 @@
-// 规范 §3.1/S1/S2:严重度/风险色统一 —— AntD 预设色名(暗色随 theme
-// algorithm 自适应),语义全生态唯一:红=失败/严重、volcano=高、gold=中、
-// 绿=正常/低、蓝=info、灰=default。禁止页面再散落硬编码 hex。
+// Spec §3.1/S1/S2: severity/risk colors unified — AntD preset color names (dark mode adapts via theme
+// algorithm); semantics unique ecosystem-wide: red=fail/critical, volcano=high, gold=medium,
+// green=normal/low, blue=info, gray=default. Pages must not scatter hardcoded hex.
 
 export const severityTagColor = (level?: string | null): string => {
     switch ((level || '').toLowerCase()) {

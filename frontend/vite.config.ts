@@ -1,11 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Issue #35: union-web 双模式。
-// - 独立开发: vite dev 于 11476(已登记 port-registry.yaml),/api 代理到
-//   本服务 11454。
-// - 内嵌生产: 构建产物由 gateway 托管于 /shell/fusion-security/,资源前缀
-//   与之一致;iframe 沙盒按 PRD §7.2(安全模块走同源 iframe 隔离)。
+// Issue #35: union-web dual mode.
+// - Standalone dev: vite dev on 11476 (registered in port-registry.yaml), /api proxied to
+//   this service on 11454.
+// - Embedded production: build output hosted by the gateway at /shell/fusion-security/, asset prefix
+//   matches it; iframe sandbox per PRD §7.2 (security modules use same-origin iframe isolation).
 export default defineConfig({
     plugins: [react()],
     base: process.env.NODE_ENV === 'production' ? '/shell/fusion-security/' : '/',

@@ -1,9 +1,9 @@
 import { createShellSdk } from "@fusion/web-sdk";
 
-// 单例 SDK(toast/tab/theme 与 shell 宿主的 postMessage 桥)。
-// 数据调用在 services/api.ts:内嵌模式走 SDK http 桥(宿主带 gateway 会话
-// token,gateway 再注入模块 key 上游);独立模式直连同源 /api/v1。
-// ?embedded=1 由 shell 追加;独立运行保留模块自有导航。
+// Singleton SDK (toast/tab/theme postMessage bridge with the shell host).
+// Data calls live in services/api.ts: embedded mode uses the SDK http bridge (host carries the gateway session
+// token, gateway then injects the module key upstream); standalone mode connects same-origin /api/v1 directly.
+// ?embedded=1 is appended by the shell; standalone runs keep the module's own navigation.
 export const embeddedParam = (): boolean => {
     try {
         return (
@@ -14,11 +14,11 @@ export const embeddedParam = (): boolean => {
     }
 };
 
-// 顶层打开的 shell 深链没有父帧,单看 iframe 会误判独立模式;
-// ?embedded=1 是权威标记。
+// Shell deep links opened top-level have no parent frame; judging standalone mode from the iframe alone misfires;
+// ?embedded=1 is the authoritative marker.
 export const isEmbedded = (): boolean =>
     typeof window !== "undefined" &&
     (window.parent !== window || embeddedParam());
 
-// SDK 自身按 window.parent 自动判定桥接/独立;此处无参构造。
+// The SDK itself decides bridged/standalone by window.parent; construct with no args here.
 export const sdk = createShellSdk();

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createThemeState } from '@fusion/web-sdk';
 
-// 主题同步回归:宿主初始 push/pull 可能在消费方订阅前就 set 过一次,
-// set() 同值去重会吞掉后续所有相同值的通知 —— 订阅方永远卡在初值。
-// subscribe 必须立即用当前值回调一次,保证订阅即同步。
+// Theme sync regression: the host's initial push/pull may set() once before the consumer subscribes,
+// and set()'s same-value dedup swallows all later notifications of the same value — the subscriber stays stuck at the initial value.
+// subscribe must call back immediately with the current value so subscribing implies sync.
 
 describe('createThemeState.subscribe notifies immediately (theme sync race)', () => {
     it('calls new subscribers with the current mode at once', () => {

@@ -25,18 +25,18 @@ import { useLang, useT } from './i18n';
 
 const { Sider, Content } = Layout;
 
-// Issue #60/#61/#62: Admin Console 形态 —— /console 为首页(四分区聚合),
-// /audit 审计工作台、/keys 密钥台;既有扫描/漏洞/项目页保留为次级。
-// 规范 S9:菜单文案双语,经 useT 跟随 shell 语言切换重渲染。
+// Issue #60/#61/#62: Admin Console layout — /console is the home (four-zone aggregate),
+// /audit audit workbench, /keys key console; existing scan/vuln/project pages remain as secondary.
+// Spec S9: menu copy is bilingual, re-rendered via useT following the shell language switch.
 const menuItems = (t: (zh: string, en: string) => string) => [
-    { key: '/console', icon: <ConsoleSqlOutlined />, label: t('管理控制台', 'Admin Console') },
-    { key: '/audit', icon: <FileSearchOutlined />, label: t('审计工作台', 'Audit workbench') },
-    { key: '/keys', icon: <KeyOutlined />, label: t('密钥与策略', 'Keys & policies') },
-    { type: 'group' as const, label: t('安全审计', 'Security audit') },
-    { key: '/dashboard', icon: <DashboardOutlined />, label: t('仪表盘', 'Dashboard') },
-    { key: '/scans', icon: <ScanOutlined />, label: t('扫描任务', 'Scans') },
-    { key: '/vulnerabilities', icon: <BugOutlined />, label: t('漏洞管理', 'Vulnerabilities') },
-    { key: '/projects', icon: <ProjectOutlined />, label: t('项目管理', 'Projects') },
+    { key: '/console', icon: <ConsoleSqlOutlined />, label: t('管理控制台', 'Admin Console') }, // i18n: user-facing
+    { key: '/audit', icon: <FileSearchOutlined />, label: t('审计工作台', 'Audit workbench') }, // i18n: user-facing
+    { key: '/keys', icon: <KeyOutlined />, label: t('密钥与策略', 'Keys & policies') }, // i18n: user-facing
+    { type: 'group' as const, label: t('安全审计', 'Security audit') }, // i18n: user-facing
+    { key: '/dashboard', icon: <DashboardOutlined />, label: t('仪表盘', 'Dashboard') }, // i18n: user-facing
+    { key: '/scans', icon: <ScanOutlined />, label: t('扫描任务', 'Scans') }, // i18n: user-facing
+    { key: '/vulnerabilities', icon: <BugOutlined />, label: t('漏洞管理', 'Vulnerabilities') }, // i18n: user-facing
+    { key: '/projects', icon: <ProjectOutlined />, label: t('项目管理', 'Projects') }, // i18n: user-facing
 ];
 
 const routes = (
@@ -84,9 +84,9 @@ function AppContent() {
 }
 
 export default function App() {
-    // Issue #60: 双主题 —— 跟随 shell 宿主(sdk.theme)或系统 prefers-color-scheme,
-    // AntD v5 algorithm 切换;中英由各页 useT 承担(规范 S9),AntD 内置文案
-    // (分页/弹窗/日期)经 ConfigProvider locale 同步 shell 语言。
+// Issue #60: dual theme — follow the shell host (sdk.theme) or system prefers-color-scheme,
+// switched via the AntD v5 algorithm; zh/en copy is handled per page by useT (spec S9), AntD built-in text
+// (pagination/modals/dates) follows the shell language via ConfigProvider locale.
     const [dark, setDark] = useState(() => {
         try {
             return sdk.theme.get() === 'dark';
@@ -108,8 +108,8 @@ export default function App() {
         }
     }, []);
 
-    // 主题画布:iframe body/html 默认透明白,深色下组件外的空隙露出白底。
-    // 按当前算法取 token 画布色并同步 colorScheme(滚动条/原生控件)。
+// Theme canvas: iframe body/html defaults to transparent white; in dark mode gaps outside components would show a white background.
+// Take the token canvas color for the current algorithm and sync colorScheme (scrollbars/native controls).
     useEffect(() => {
         const canvas = antdTheme.getDesignToken({
             algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
@@ -119,9 +119,9 @@ export default function App() {
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
     }, [dark]);
 
-    // Issue #35: 内嵌模式(union-web shell iframe)隐藏自有侧边导航,
-    // 由 shell 菜单 + manifest pages 深链承担导航;独立模式保留完整布局。
-    // 经 gateway /shell/fusion-security/ 托管时,路由 basename 对齐托管前缀。
+// Issue #35: embedded mode (union-web shell iframe) hides its own side navigation;
+// navigation is handled by the shell menu + manifest pages deep links; standalone mode keeps the full layout.
+// When hosted via gateway /shell/fusion-security/, the router basename aligns with the hosting prefix.
     const shellBase = /^\/shell\/fusion-security\//.test(
         typeof window !== 'undefined' ? window.location.pathname : '',
     )

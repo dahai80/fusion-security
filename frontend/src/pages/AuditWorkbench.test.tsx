@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import AuditWorkbench from './AuditWorkbench';
 import { consoleApi } from '../services/api';
 
-// Issue #68 R3: 标记复核 / 仅看已标记 / 关联事件高亮 的冒烟覆盖。
+// Issue #68 R3: smoke coverage for mark-for-review / marked-only / related-event highlight.
 
 vi.mock('../sdk', () => ({
     sdk: {
@@ -70,8 +70,8 @@ describe('AuditWorkbench marks (Issue #68 R3 smoke)', () => {
 
     it('marked-only checkbox re-queries with marked_only=true', async () => {
         renderWorkbench();
-        await waitFor(() => expect(screen.getByText('仅看已标记')).toBeInTheDocument());
-        fireEvent.click(screen.getByText('仅看已标记'));
+        await waitFor(() => expect(screen.getByText('仅看已标记')).toBeInTheDocument()); // i18n: user-facing
+        fireEvent.click(screen.getByText('仅看已标记')); // i18n: user-facing
         await waitFor(() => {
             const calls = mockedApi.getAuditEvents.mock.calls as Array<[Record<string, unknown>]>;
             expect(calls.some(([params]) => params && params.marked_only === 'true')).toBe(true);
@@ -81,14 +81,14 @@ describe('AuditWorkbench marks (Issue #68 R3 smoke)', () => {
     it('openRelated re-queries by trace_id and highlights the source row', async () => {
         renderWorkbench();
         await waitFor(() => expect(screen.getByText('auth.invalid_key')).toBeInTheDocument());
-        // AntD 展开图标 → 展开行渲染"关联事件"
+// AntD expand icon -> expanded row renders "Related events"
         const expandIcon = await waitFor(() => {
             const el = document.querySelector('.ant-table-row-expand-icon');
             if (!el) throw new Error('expand icon not rendered yet');
             return el;
         });
         fireEvent.click(expandIcon);
-        fireEvent.click(await screen.findByText('关联事件'));
+        fireEvent.click(await screen.findByText('关联事件')); // i18n: user-facing
         await waitFor(() => {
             const calls = mockedApi.getAuditEvents.mock.calls as Array<[Record<string, unknown>]>;
             expect(calls.some(([params]) => params && params.trace_id === 'tr-9')).toBe(true);
