@@ -8,5 +8,5 @@ Capabilities:
 - Audit logging and reporting
 """
 
-__version__ = "0.2.0rc32"
+__version__ = "0.2.0rc33"
 __app_name__ = "Fusion-Security"
