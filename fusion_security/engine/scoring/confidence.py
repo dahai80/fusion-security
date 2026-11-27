@@ -46,7 +46,7 @@ def compute_confidence(factors: ConfidenceFactors) -> int:
         w_val = getattr(WEIGHTS, attr)
         total += f_val * w_val / 100.0
     result = int(max(CONFIDENCE_MIN, min(CONFIDENCE_MAX, round(total))))
-    logger.debug(f"置信度计算: factors={factors.to_dict()}, result={result}")
+    logger.debug(f"confidence computed: factors={factors.to_dict()}, result={result}")
     return result
 
 

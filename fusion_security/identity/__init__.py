@@ -1,7 +1,8 @@
-"""fusion-identity 集成入口 —— verify_jwt 回调 + 配额缓存。
+"""fusion-identity integration entry — verify_jwt callback + quota cache.
 
-TenantMiddleware 的 verify_jwt 回调由此构造,调用 IdentityVerifyClient.verify_sync,
-成功后缓存该租户配额供 enforce_scan_quota 读取。
+TenantMiddleware's verify_jwt callback is constructed here; it calls
+IdentityVerifyClient.verify_sync, and on success caches the tenant quota for
+enforce_scan_quota to read.
 """
 
 from __future__ import annotations
@@ -18,23 +19,24 @@ logger = logging.getLogger(__name__)
 
 
 def looks_like_jwt(token: str) -> bool:
-    # JWT 形状 = header.payload.signature 三段 base64url。gateway shell 代理
-    # (Issue #35)上游注入的是 Bearer <模块 API Key>,非 JWT 形状 —— 这类
-    # token 不送 identity 校验,交由 get_principal 按 API Key 验证(fail-closed)。
+    # JWT shape = header.payload.signature, three base64url segments. The gateway shell proxy
+    # (Issue #35) injects Bearer <module API key> upstream, which is not JWT-shaped — such
+    # tokens are not sent to identity for verification; they go to get_principal for API-key
+    # validation (fail-closed).
     parts = token.split(".")
     return len(parts) == 3 and all(parts)
 
 
 def make_verify_jwt() -> Callable[[str], dict[str, Any]]:
-    # TenantMiddleware 要求 verify_jwt: Callable[[str], dict[str, Any]] —— 同步。
-    # 抛异常 → 中间件返回 401 "invalid token"(fail-closed)。
-    # 非 JWT 形状的 Bearer(gateway 模块代理注入的 API Key)返回空 claims
-    # 放行中间件,由 get_principal 做真正的 key 校验;校验不过仍 401。
+    # TenantMiddleware requires verify_jwt: Callable[[str], dict[str, Any]] — synchronous.
+    # Raising -> middleware returns 401 "invalid token" (fail-closed).
+    # Non-JWT-shaped Bearer tokens (API keys injected by the gateway module proxy) return empty claims
+    # to pass the middleware; get_principal does the real key validation; failure still yields 401.
     client = get_identity_client()
 
     def _verify(token: str) -> dict[str, Any]:
         if not looks_like_jwt(token):
-            logger.debug("[Identity] Bearer 非 JWT 形状,转 API Key 路径")
+            logger.debug("[Identity] Bearer token is not JWT-shaped; falling back to the API-key path")
             return {}
         claims = client.verify_sync(token)
         tid = claims.get("tid") or claims.get("tenant") or ""

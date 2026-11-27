@@ -1,8 +1,8 @@
-"""P0-6: 限流中间件 + 每租户并发扫描配额。
+"""P0-6: rate limiting middleware + per-tenant concurrent scan quota.
 
-限流:滑动窗口计数,桶 key=(client_ip, api_key 摘要)。超限返回 429。
-配额:创建扫描前按 tenant_id 统计活跃扫描(running/queued/pending),超
-MAX_CONCURRENT_SCANS_PER_TENANT 返回 409。无 tenant_id 的 key 共用一个 "" 桶。
+Rate limit: sliding-window counter, bucket key=(client_ip, api_key digest). Over-limit returns 429.
+Quota: before creating a scan, count active scans (running/queued/pending) by tenant_id; over
+MAX_CONCURRENT_SCANS_PER_TENANT returns 409. Keys without a tenant_id share one "" bucket.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _WINDOW_SECONDS = 60
 _DEFAULT_MAX_PER_MINUTE = 120
 MAX_CONCURRENT_SCANS_PER_TENANT = int(os.environ.get("FUSION_MAX_CONCURRENT_SCANS", "4"))
 
-# (ip, key_hash) -> [timestamp,...] 滑动窗口。
+# (ip, key_hash) -> [timestamp,...] sliding window.
 _buckets: dict[tuple[str, str], list[float]] = defaultdict(list)
 
 
@@ -31,7 +31,7 @@ def _max_per_minute() -> int:
 
 
 def _client_ip(request: Request) -> str:
-    # 信任代理时优先 X-Forwarded-For 首段;否则用直连 client host。
+    # When trusting proxies, prefer the first segment of X-Forwarded-For; otherwise use the direct client host.
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         return xff.split(",")[0].strip()
@@ -46,25 +46,25 @@ def _key_hash(request: Request) -> str:
 
 
 async def rate_limit_middleware(request: Request, call_next):
-    # FUSION_RATE_LIMIT=0 关闭限流(测试/单机离线场景)。
+    # FUSION_RATE_LIMIT=0 disables rate limiting (tests / single-machine offline scenarios).
     if os.environ.get("FUSION_RATE_LIMIT", "1") == "0":
         return await call_next(request)
     path = request.url.path
-    # 只对受保护 API 限流;公开 /health 放行。
+    # Only rate-limit protected APIs; the public /health passes through.
     if not path.startswith("/api/v1/") or path.endswith("/system/health"):
         return await call_next(request)
     bucket = (_client_ip(request), _key_hash(request))
     now = time.monotonic()
     window = _buckets[bucket]
-    # 清理过期戳。
+    # Drop expired timestamps.
     cutoff = now - _WINDOW_SECONDS
     fresh = [t for t in window if t > cutoff]
     _buckets[bucket] = fresh
     if len(fresh) >= _max_per_minute():
-        logger.warning(f"[RateLimit] 拒绝 ip={bucket[0]} key={bucket[1] or '-'} count={len(fresh)}")
+        logger.warning(f"[RateLimit] rejected ip={bucket[0]} key={bucket[1] or '-'} count={len(fresh)}")
         return JSONResponse(
             status_code=429,
-            content={"detail": "请求过于频繁,请稍后重试"},
+            content={"detail": "Too many requests, please retry later"},
             headers={"Retry-After": str(_WINDOW_SECONDS)},
         )
     fresh.append(now)
@@ -72,7 +72,7 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 def count_active_scans(tenant_id: str) -> int:
-    # Issue #32: fail-closed。始终按 tenant_id 过滤(空 tenant 不会到达,已由 get_principal 拦截)。
+    # Issue #32: fail-closed. Always filter by tenant_id (an empty tenant never reaches here, already blocked by get_principal).
     from ..db import get_session
     from ..db.models import ScanORM
 
@@ -86,7 +86,7 @@ def count_active_scans(tenant_id: str) -> int:
 
 
 def _tenant_quota_cap(tenant_id: str) -> int:
-    # Issue #32: JWT 路径 verify_jwt 回调缓存了 fusion-identity 下发的配额;API-key 路径回退环境变量。
+    # Issue #32: on the JWT path the verify_jwt callback caches the quota issued by fusion-identity; the API-key path falls back to the environment variable.
     cap = MAX_CONCURRENT_SCANS_PER_TENANT
     try:
         from ..identity.client import get_tenant_quota
@@ -97,7 +97,7 @@ def _tenant_quota_cap(tenant_id: str) -> int:
             if isinstance(val, (int, float)) and val > 0:
                 return int(val)
     except Exception as e:
-        logger.debug(f"[Quota] 读取 identity 配额失败,回退默认: tid={tenant_id} err={e}")
+        logger.debug(f"[Quota] failed to read identity quota, falling back to default: tid={tenant_id} err={e}")
     return cap
 
 
@@ -105,7 +105,7 @@ def enforce_scan_quota(tenant_id: str) -> None:
     cap = _tenant_quota_cap(tenant_id)
     active = count_active_scans(tenant_id)
     if active >= cap:
-        logger.warning(f"[Quota] 租户 {tenant_id or '-'} 活跃扫描 {active} >= {cap},拒绝")
+        logger.warning(f"[Quota] tenant {tenant_id or '-'} active scans {active} >= {cap}, rejected")
         raise _QuotaExceeded()
 
 

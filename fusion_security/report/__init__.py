@@ -1,4 +1,4 @@
-"""Fusion-Security 报告模块。"""
+"""Fusion-Security report module."""
 
 from .report import ReportGenerator
 

@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 def _to_datetime(value):
-    # 领域模型 created_at/updated_at 是 ISO 字符串(__post_init__ 里 isoformat)，
-    # ORM DateTime 列只接受 datetime 对象；空串回退 None 让列默认值生效。
+    # Domain model created_at/updated_at are ISO strings (isoformat in __post_init__),
+    # ORM DateTime columns only accept datetime objects; empty strings fall back to None so column defaults apply.
     if not value:
         return None
     if isinstance(value, datetime):
@@ -32,7 +32,7 @@ def _to_datetime(value):
     try:
         return datetime.fromisoformat(str(value))
     except (ValueError, TypeError) as e:
-        logger.warning("convert: 无法解析时间字段 %r: %s", value, e)
+        logger.warning("convert: cannot parse time field %r: %s", value, e)
         return None
 
 
@@ -77,7 +77,8 @@ def orm_to_vuln(o: VulnerabilityORM) -> Vulnerability:
 
 
 def finding_to_orm(f: Finding, scan_id: str = "") -> FindingORM:
-    # 此前缺失 — 阻塞管道持久化 Finding。Finding 域模型与 FindingORM 字段 1:1。
+    # Previously missing — blocked the pipeline from persisting Findings. Finding domain model and
+    # FindingORM fields map 1:1.
     return FindingORM(
         id=f.id,
         vuln_id=f.vuln_id,
@@ -121,7 +122,7 @@ def webhook_to_orm(url: str, events: list[str], secret_hash: str, enabled: bool 
 
 
 def orm_to_webhook(o: WebhookORM) -> dict:
-    # 响应里绝不返回 secret_hash(S-P0)。
+    # Never return secret_hash in responses (S-P0).
     import json
 
     return {

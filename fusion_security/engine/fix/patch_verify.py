@@ -26,14 +26,14 @@ class PatchVerifier:
         result = PatchVerifyResult(patch_id=patch.id)
 
         if not patch.diff_content and not patch.patched_code:
-            result.errors.append("空补丁")
+            result.errors.append("empty patch")
             return result
 
         patched = patch.patched_code
         if not patched and patch.diff_content:
             patched = self._apply_patch_text(original_code, patch.diff_content)
             if patched is None:
-                result.errors.append("补丁无法应用")
+                result.errors.append("patch could not be applied")
                 return result
             result.diff_applies = True
 
@@ -55,7 +55,7 @@ class PatchVerifier:
                 lines[start : start + count] = new_lines
             return "".join(lines)
         except Exception as e:
-            logger.debug(f"[PatchVerify] 应用补丁失败: {e}")
+            logger.debug(f"[PatchVerify] failed to apply patch: {e}")
             return None
 
     def _parse_unified_diff(self, diff_text: str) -> list:

@@ -1,4 +1,4 @@
-"""Compliance mapping — 等保2.0, ISO 27001, PCI DSS, EU AI Act.
+"""Compliance mapping — Dengbao 2.0 (China MLPS), ISO 27001, PCI DSS, EU AI Act.
 
 P3.2: the flat mapper grows into control-item profiles per framework.
 Each framework profile carries an id, display name and (where applicable)
@@ -22,7 +22,8 @@ EU_AI_ACT_TIMELINE: list[dict[str, str]] = [
 ]
 
 FRAMEWORK_PROFILES: dict[str, dict] = {
-    "dengbao": {"name": "等保2.0", "timeline": []},
+    # i18n: user-facing
+    "dengbao": {"name": "等保2.0", "timeline": []},  # i18n: user-facing
     "iso27001": {"name": "ISO 27001", "timeline": []},
     "pci_dss": {"name": "PCI DSS", "timeline": []},
     "eu_ai_act": {"name": "EU AI Act", "timeline": EU_AI_ACT_TIMELINE},
@@ -41,29 +42,38 @@ class ComplianceMapping:
 
 COMPLIANCE_MAP: dict[str, ComplianceMapping] = {
     "SQL001": ComplianceMapping(
-        "SQL001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "SQL注入", ["Art. 15 robustness & cybersecurity"]
+        "SQL001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "SQL injection", ["Art. 15 robustness & cybersecurity"]
     ),
     "CMD001": ComplianceMapping(
-        "CMD001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "命令注入", ["Art. 15 robustness & cybersecurity"]
+        "CMD001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "Command injection", ["Art. 15 robustness & cybersecurity"]
     ),
     "XSS001": ComplianceMapping(
-        "XSS001", ["8.1.3"], ["A.14.2.1"], ["6.5.7"], "跨站脚本", ["Art. 15 robustness & cybersecurity"]
+        "XSS001", ["8.1.3"], ["A.14.2.1"], ["6.5.7"], "Cross-site scripting", ["Art. 15 robustness & cybersecurity"]
     ),
     "SEC001": ComplianceMapping(
-        "SEC001", ["8.1.4"], ["A.10.1.1"], ["6.5.3"], "硬编码密钥", ["Art. 15 cybersecurity", "Art. 10 data governance"]
+        "SEC001",
+        ["8.1.4"],
+        ["A.10.1.1"],
+        ["6.5.3"],
+        "Hardcoded credentials",
+        ["Art. 15 cybersecurity", "Art. 10 data governance"],
     ),
-    "AUTH001": ComplianceMapping("AUTH001", ["8.1.4"], ["A.9.2.1"], ["8.1"], "弱认证", ["Art. 15 cybersecurity"]),
-    "CRYPTO001": ComplianceMapping("CRYPTO001", ["8.1.4"], ["A.10.1.1"], ["4.1"], "弱加密", ["Art. 15 cybersecurity"]),
+    "AUTH001": ComplianceMapping(
+        "AUTH001", ["8.1.4"], ["A.9.2.1"], ["8.1"], "Weak authentication", ["Art. 15 cybersecurity"]
+    ),
+    "CRYPTO001": ComplianceMapping(
+        "CRYPTO001", ["8.1.4"], ["A.10.1.1"], ["4.1"], "Weak cryptography", ["Art. 15 cybersecurity"]
+    ),
     "FUS-SCA-001": ComplianceMapping(
         "FUS-SCA-001",
         ["8.1.3", "8.1.10"],
         ["A.14.2.1", "A.12.6.1"],
         ["6.5", "11.3"],
-        "依赖漏洞",
+        "Dependency vulnerability",
         ["Art. 15 robustness & cybersecurity"],
     ),
     "TAINT-001": ComplianceMapping(
-        "TAINT-001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "污点追踪", ["Art. 15 robustness & cybersecurity"]
+        "TAINT-001", ["8.1.3"], ["A.14.2.1"], ["6.5.1"], "Taint tracking", ["Art. 15 robustness & cybersecurity"]
     ),
 }
 
@@ -79,7 +89,9 @@ class ComplianceMapper:
     def map_rule(self, rule_id: str) -> ComplianceMapping | None:
         mapping = COMPLIANCE_MAP.get(rule_id)
         if mapping:
-            logger.debug(f"[Compliance] {rule_id} → 等保{mapping.dengbao_controls} ISO{mapping.iso27001_controls}")
+            logger.debug(
+                f"[Compliance] {rule_id} -> dengbao={mapping.dengbao_controls} iso27001={mapping.iso27001_controls}"
+            )
         return mapping
 
     def _controls_for(self, mapping: ComplianceMapping, framework: str) -> list[str]:
@@ -126,21 +138,23 @@ def build_compliance_section(framework: str, vulns: list) -> list[str]:
     except ValueError as e:
         logger.warning(f"[Compliance] section skipped: {e}")
         return []
-    lines = ["## 合规对照", ""]
-    lines.append(f"**框架**: {summary['name']}")
+    lines = ["## Compliance Mapping", ""]
+    lines.append(f"**Framework**: {summary['name']}")
     if summary["timeline"]:
         lines.append("")
-        lines.append("**法规时间线**:")
+        lines.append("**Regulatory timeline**:")
         for item in summary["timeline"]:
             lines.append(f"- {item['date']}: {item['label']}")
     lines.append("")
     if summary["controls"]:
-        lines.append(f"**命中控制项** ({len(summary['controls'])}):")
+        lines.append(f"**Matched controls** ({len(summary['controls'])}):")
         for entry in summary["controls"]:
             lines.append(f"- {entry['control']} — {entry['description']} ({entry['rule_id']})")
     else:
-        lines.append("**命中控制项**: 无（本次扫描未发现映射到该框架的漏洞）")
+        lines.append("**Matched controls**: none (no vulnerabilities mapped to this framework in this scan)")
     if summary["unmapped_rule_count"]:
-        lines.append(f"- *未映射规则数: {summary['unmapped_rule_count']}（规则→控制项映射持续扩充）*")
+        lines.append(
+            f"- *Unmapped rule count: {summary['unmapped_rule_count']} (rule-to-control mapping keeps expanding)*"
+        )
     lines.append("")
     return lines

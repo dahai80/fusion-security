@@ -1,1 +1,1 @@
-"""Fusion-Security 工具函数。"""
+"""Fusion-Security utility helpers."""

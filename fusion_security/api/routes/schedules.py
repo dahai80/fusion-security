@@ -63,21 +63,21 @@ def _orm_to_dict(o) -> dict:
     }
 
 
-@router.get("", summary="列出所有定时扫描计划")
+@router.get("", summary="List all scheduled scans")
 async def list_schedules(
     db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:read"))
 ):
     from ...db.models import ScheduledScanORM
 
     q = db.query(ScheduledScanORM)
-    # Issue #32: fail-closed。按调用方 tenant_id 过滤,始终生效。
+    # Issue #32: fail-closed. Always filter by the caller's tenant_id.
     tenant_id = api_key.tenant_id or ""
     q = q.filter(ScheduledScanORM.tenant_id == tenant_id)
     rows = q.all()
     return {"schedules": [_orm_to_dict(r) for r in rows]}
 
 
-@router.post("", summary="创建定时扫描计划")
+@router.post("", summary="Create a scheduled scan")
 async def create_schedule(
     body: ScheduleCreate,
     db: Session = Depends(get_session),
@@ -87,9 +87,11 @@ async def create_schedule(
     from ...engine.scheduler import ScheduledScan, ScheduleFrequency
 
     if body.frequency not in _VALID_FREQ:
-        raise HTTPException(status_code=400, detail=f"非法 frequency: {body.frequency} (允许 {sorted(_VALID_FREQ)})")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid frequency: {body.frequency} (allowed {sorted(_VALID_FREQ)})"
+        )
     if not body.project_path:
-        raise HTTPException(status_code=400, detail="project_path 不能为空")
+        raise HTTPException(status_code=400, detail="project_path must not be empty")
 
     tenant_id = api_key.tenant_id or ""
     sid = uuid.uuid4().hex[:16]
@@ -103,12 +105,12 @@ async def create_schedule(
         tenant_id=tenant_id,
         config=body.config or {},
     )
-    # 用 scheduler 落库 + 进内存(它计算 next_run 并持久化)。
+    # Persist via the scheduler and load it into memory (it computes next_run and persists).
     if _scheduler is not None:
         _scheduler.schedules[sid] = sched
         _scheduler._persist(sched)
     else:
-        # scheduler 未启动(如 CLI 直连):直接落库,启动后 load_from_db 会载入。
+        # Scheduler not started (e.g. direct CLI usage): persist directly; load_from_db will pick it up at startup.
         sched.next_run = sched.compute_next_run()
         from ...engine.scheduler import _schedule_to_orm
 
@@ -116,11 +118,11 @@ async def create_schedule(
         db.add(orm)
         _schedule_to_orm(orm, sched)
         db.commit()
-    logger.info(f"[Schedule] 创建计划 {sid} path={body.project_path} freq={body.frequency} tenant={tenant_id}")
+    logger.info(f"[Schedule] schedule created {sid} path={body.project_path} freq={body.frequency} tenant={tenant_id}")
     return {"id": sid, "status": "created"}
 
 
-@router.patch("/{schedule_id}", summary="更新定时扫描计划")
+@router.patch("/{schedule_id}", summary="Update a scheduled scan")
 async def update_schedule(
     schedule_id: str,
     body: ScheduleUpdate,
@@ -131,13 +133,13 @@ async def update_schedule(
 
     row = db.query(ScheduledScanORM).filter(ScheduledScanORM.id == schedule_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="计划不存在")
-    # P1-1 IDOR: 校验租户归属,跨租户不可改。
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    # P1-1 IDOR: verify tenant ownership; cross-tenant modification is not allowed.
     tenant_id = api_key.tenant_id or ""
     if (row.tenant_id or "") != tenant_id:
-        raise HTTPException(status_code=404, detail="计划不存在")
+        raise HTTPException(status_code=404, detail="Schedule not found")
     if body.frequency is not None and body.frequency not in _VALID_FREQ:
-        raise HTTPException(status_code=400, detail=f"非法 frequency: {body.frequency}")
+        raise HTTPException(status_code=400, detail=f"Invalid frequency: {body.frequency}")
     if body.name is not None:
         row.name = body.name
     if body.project_path is not None:
@@ -149,16 +151,16 @@ async def update_schedule(
     if body.enabled is not None:
         row.enabled = body.enabled
     db.commit()
-    # 同步内存中的 scheduler 副本。
+    # Sync the in-memory scheduler copy.
     if _scheduler is not None:
         from ...engine.scheduler import _orm_to_schedule
 
         _scheduler.schedules[schedule_id] = _orm_to_schedule(row)
-    logger.info(f"[Schedule] 更新计划 {schedule_id}")
+    logger.info(f"[Schedule] schedule updated {schedule_id}")
     return {"id": schedule_id, "status": "updated"}
 
 
-@router.delete("/{schedule_id}", summary="删除定时扫描计划")
+@router.delete("/{schedule_id}", summary="Delete a scheduled scan")
 async def delete_schedule(
     schedule_id: str,
     db: Session = Depends(get_session),
@@ -168,14 +170,14 @@ async def delete_schedule(
 
     row = db.query(ScheduledScanORM).filter(ScheduledScanORM.id == schedule_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="计划不存在")
-    # P1-1 IDOR: 校验租户归属,跨租户不可删。
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    # P1-1 IDOR: verify tenant ownership; cross-tenant deletion is not allowed.
     tenant_id = api_key.tenant_id or ""
     if (row.tenant_id or "") != tenant_id:
-        raise HTTPException(status_code=404, detail="计划不存在")
+        raise HTTPException(status_code=404, detail="Schedule not found")
     db.delete(row)
     db.commit()
     if _scheduler is not None:
         _scheduler.remove_schedule(schedule_id)
-    logger.info(f"[Schedule] 删除计划 {schedule_id}")
+    logger.info(f"[Schedule] schedule deleted {schedule_id}")
     return {"id": schedule_id, "status": "deleted"}

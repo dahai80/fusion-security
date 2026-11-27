@@ -1,20 +1,21 @@
-"""Console routes —— Admin Console 聚合面(Issue #60/#61/#62)。
+"""Console routes —— Admin Console aggregate surface (Issue #60/#61/#62).
 
-GET  /console/summary                 四分区聚合 + 高风险速览(#60)
-GET  /console/tenants                 租户选择器(identity admin 面,可降级)
-GET  /console/audit/events            审计检索:全文/时间窗/类型/风险 + 保存查询重放(#61)
-GET  /console/audit/export            过滤窗口 CSV 流式导出(#61)
-*    /console/audit/saved-queries     保存查询 CRUD(#61)
-*    /console/alerts/subscriptions    告警订阅 CRUD(#61)
-GET  /console/notifications           shell 🔔 通知源(拉取式匹配 + 告警表)(#61)
-GET  /console/keys                    key 台账:本地 + identity app secrets(#62)
-POST /console/keys/rotate             模块 key 轮换(grace 窗口,经 identity)(#62)
-POST /console/keys/revoke             模块 key 吊销(依赖上游 #35)(#62)
-PATCH /console/keys/local/{key_id}    本地 key 过期/启停(#62)
-GET  /console/sso                     SSO 能力面(identity idps summary)(#62)
+GET  /console/summary                 four-section aggregation + high-risk overview (#60)
+GET  /console/tenants                 tenant selector (identity admin surface, degradable)
+GET  /console/audit/events            audit search: full-text/time-window/type/risk + saved query replay (#61)
+GET  /console/audit/export            filtered-window CSV streaming export (#61)
+*    /console/audit/saved-queries     saved query CRUD (#61)
+*    /console/alerts/subscriptions    alert subscription CRUD (#61)
+GET  /console/notifications           shell notification source (pull-based matching + alert table) (#61)
+GET  /console/keys                    key inventory: local + identity app secrets (#62)
+POST /console/keys/rotate             module key rotation (grace window, via identity) (#62)
+POST /console/keys/revoke             module key revocation (depends on upstream #35) (#62)
+PATCH /console/keys/local/{key_id}    local key expiry/enable-disable (#62)
+GET  /console/sso                     SSO capability surface (identity idps summary) (#62)
 
-权限:全部 system:manage(管理台为 admin 面)。审计事件本身也进审计流
-(key 操作 medium,订阅/查询管理 low)—— 工作台可见自身操作痕迹。
+Permissions: all system:manage (the console is an admin surface). Audit events themselves also
+enter the audit stream (key operations medium, subscription/query management low) —— the workbench
+shows traces of its own operations.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def _parse_risk(raw: str) -> tuple[str, ...]:
     levels = tuple(x.strip() for x in raw.split(",") if x.strip())
     invalid = [x for x in levels if x not in RISK_LEVELS]
     if invalid:
-        raise HTTPException(status_code=400, detail=f"未知风险等级: {invalid}")
+        raise HTTPException(status_code=400, detail=f"Unknown risk levels: {invalid}")
     return levels
 
 
@@ -58,7 +59,7 @@ def _parse_ts(raw: str) -> float:
     try:
         return float(raw)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f"时间参数需为 epoch 秒: {raw}") from None
+        raise HTTPException(status_code=400, detail=f"Time parameter must be epoch seconds: {raw}") from None
 
 
 def _audit(key: APIKey, action: str, resource_id: str = "", details: dict | None = None, risk: str = "low") -> None:
@@ -72,19 +73,19 @@ def _audit(key: APIKey, action: str, resource_id: str = "", details: dict | None
             risk_level=risk,
         )
     except Exception as e:
-        logger.warning(f"[Console] 审计记录失败: {e}")
+        logger.warning(f"[Console] audit logging failed: {e}")
 
 
 @router.get("/summary")
 def console_summary(key: APIKey = Depends(require_permission("system:manage"))):
-    logger.info(f"[Console] summary 请求 tenant={key.tenant_id} actor={key.name}")
+    logger.info(f"[Console] summary request tenant={key.tenant_id} actor={key.name}")
     return build_console_summary(key.tenant_id)
 
 
 @router.get("/tenants")
 def console_tenants(_=Depends(require_permission("system:manage"))):
     result = get_identity_admin_client().list_tenants()
-    logger.info(f"[Console] tenants 请求 available={result.get('available')} count={len(result.get('tenants', []))}")
+    logger.info(f"[Console] tenants request available={result.get('available')} count={len(result.get('tenants', []))}")
     return result
 
 
@@ -97,7 +98,7 @@ def _resolve_filters(
     end: str = "",
     saved_query_id: str = "",
 ) -> dict:
-    # 保存查询定义作为默认过滤;显式传参覆盖之(重放 = 不传参只给 saved_query_id)。
+    # Saved query definition acts as the default filters; explicit params override it (replay = pass only saved_query_id, no params).
     filters = {"search": search, "action": action, "risk": risk, "start": start, "end": end}
     if saved_query_id:
         db = get_session()
@@ -106,11 +107,11 @@ def _resolve_filters(
         finally:
             db.close()
         if q is None or q.tenant_id != key.tenant_id:
-            raise HTTPException(status_code=404, detail="保存查询不存在")
+            raise HTTPException(status_code=404, detail="Saved query not found")
         try:
             definition = json.loads(q.definition or "{}")
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="保存查询定义损坏") from None
+            raise HTTPException(status_code=400, detail="Saved query definition corrupted") from None
         for name in filters:
             if not filters[name]:
                 filters[name] = str(definition.get(name, ""))
@@ -124,7 +125,7 @@ def _resolve_filters(
 
 
 def _marked_keys(tenant_id: str) -> frozenset[str]:
-    # Issue #65: 租户已标记事件键集(标记表 → 过滤用)。
+    # Issue #65: tenant's marked event key set (mark table → used for filtering).
     db = get_session()
     try:
         rows = db.query(AuditMarkORM).filter(AuditMarkORM.tenant_id == tenant_id).all()
@@ -165,7 +166,7 @@ def audit_events(
         new_key, legacy = event_key_candidates(e)
         e["event_key"] = new_key
         e["marked"] = bool({new_key, legacy} & marks)
-    logger.info(f"[Console] audit 检索 tenant={key.tenant_id} total={total} marked={len(marks)} filters={filters}")
+    logger.info(f"[Console] audit search tenant={key.tenant_id} total={total} marked={len(marks)} filters={filters}")
     return {"items": entries, "total": total, "limit": limit, "offset": offset}
 
 
@@ -181,7 +182,7 @@ def audit_export(
     resource_id: str = "",
     key: APIKey = Depends(require_permission("system:manage")),
 ):
-    # 流式 CSV:逐行生成,不在内存攒全量(大时间窗不 OOM)。BOM 头保 Excel 中文。
+    # Streaming CSV: generated row by row, never accumulating the full set in memory (no OOM on large time windows). BOM header preserves Excel compatibility.
     filters = _resolve_filters(key, search, action, risk, start, end, saved_query_id)
     tenant_id = key.tenant_id
     _audit(key, "audit.export", details={"filters": {k: str(v) for k, v in filters.items()}}, risk="low")
@@ -298,7 +299,7 @@ def delete_saved_query(query_id: str, key: APIKey = Depends(require_permission("
     try:
         row = db.query(SavedQueryORM).filter(SavedQueryORM.id == query_id).first()
         if row is None or row.tenant_id != key.tenant_id:
-            raise HTTPException(status_code=404, detail="保存查询不存在")
+            raise HTTPException(status_code=404, detail="Saved query not found")
         db.delete(row)
         db.commit()
     finally:
@@ -314,12 +315,13 @@ class AuditMarkBody(BaseModel):
 
 @router.post("/audit/marks")
 def set_audit_mark(body: AuditMarkBody, key: APIKey = Depends(require_permission("system:manage"))):
-    # Issue #65: 标记复核 —— 审计 jsonl append-only,分诊态落 audit_review_marks 表,
-    # (tenant_id, event_key) 唯一,重复标记幂等。标记/取消均进审计流。
-    # Issue #68 R2: 拒绝悬空 event_key(拼写错/过期键)—— 不存在的键静默消失
-    # 会让"仅看已标记"无声丢项,这里 fail-fast 404。
+    # Issue #65: mark for review —— the audit jsonl is append-only, triage state lands in the
+    # audit_review_marks table, (tenant_id, event_key) unique, repeated marking idempotent.
+    # Mark/unmark both enter the audit stream.
+    # Issue #68 R2: reject dangling event_keys (typos/expired keys) —— silently ignoring missing
+    # keys would make "marked only" view silently drop items; fail-fast 404 here.
     if body.event_key not in _store().known_mark_keys(key.tenant_id):
-        raise HTTPException(status_code=404, detail="事件不存在或已被清理")
+        raise HTTPException(status_code=404, detail="Event not found or already purged")
     db = get_session()
     try:
         if body.marked:
@@ -340,7 +342,7 @@ def set_audit_mark(body: AuditMarkBody, key: APIKey = Depends(require_permission
         db.close()
     action = "audit.mark_review" if body.marked else "audit.unmark_review"
     _audit(key, action, body.event_key)
-    logger.info(f"[Console] 标记复核 {action} event_key={body.event_key} actor={key.name}")
+    logger.info(f"[Console] review mark {action} event_key={body.event_key} actor={key.name}")
     return {"ok": True, "marked": body.marked}
 
 
@@ -382,7 +384,7 @@ def list_alert_subscriptions(key: APIKey = Depends(require_permission("system:ma
 @router.post("/alerts/subscriptions")
 def create_alert_subscription(body: AlertSubscriptionBody, key: APIKey = Depends(require_permission("system:manage"))):
     if not body.event_class and not body.saved_query_id:
-        raise HTTPException(status_code=400, detail="event_class 与 saved_query_id 至少提供一项")
+        raise HTTPException(status_code=400, detail="At least one of event_class or saved_query_id is required")
     if body.risk_levels:
         _parse_risk(body.risk_levels)
     db = get_session()
@@ -410,7 +412,7 @@ def delete_alert_subscription(sub_id: str, key: APIKey = Depends(require_permiss
     try:
         row = db.query(AlertSubscriptionORM).filter(AlertSubscriptionORM.id == sub_id).first()
         if row is None or row.tenant_id != key.tenant_id:
-            raise HTTPException(status_code=404, detail="订阅不存在")
+            raise HTTPException(status_code=404, detail="Subscription not found")
         db.delete(row)
         db.commit()
     finally:
@@ -421,7 +423,7 @@ def delete_alert_subscription(sub_id: str, key: APIKey = Depends(require_permiss
 
 @router.get("/notifications")
 def console_notifications(key: APIKey = Depends(require_permission("system:manage"))):
-    # shell 🔔 轮询入口:先增量匹配订阅(拉取式"推送"),再返回告警表。
+    # Shell notification polling entry: incrementally match subscriptions first (pull-based "push"), then return the alert table.
     fired = match_new_alerts(key.tenant_id, _store())
     result = notification_items(key.tenant_id)
     logger.info(f"[Console] notifications tenant={key.tenant_id} fired={fired} count={result['count']}")
@@ -462,12 +464,12 @@ class RotateBody(BaseModel):
 
 @router.post("/keys/rotate")
 def rotate_key(body: RotateBody, key: APIKey = Depends(require_permission("api_key:manage"))):
-    # 轮换经 identity(旧版本进 grace 窗口);新 secret 只随响应返回一次,
-    # 不落库不落日志。前端展示后即不可再取。
+    # Rotation goes through identity (old version enters the grace window); the new secret is
+    # returned in the response once only, never persisted or logged. Unretrievable after frontend display.
     result = get_identity_admin_client().rotate_app_secret(body.app_id, body.grace_seconds)
     if not result.get("ok"):
         _audit(key, "key.rotate_failed", body.app_id, {"reason": result.get("reason", "")}, risk="medium")
-        raise HTTPException(status_code=502, detail=result.get("reason", "identity 轮换失败"))
+        raise HTTPException(status_code=502, detail=result.get("reason", "identity rotation failed"))
     _audit(
         key,
         "key.rotate",
@@ -475,7 +477,7 @@ def rotate_key(body: RotateBody, key: APIKey = Depends(require_permission("api_k
         {"grace_seconds": body.grace_seconds, "version": result.get("version")},
         risk="medium",
     )
-    logger.info(f"[Console] key 轮换 app={body.app_id} v={result.get('version')} actor={key.name}")
+    logger.info(f"[Console] key rotation app={body.app_id} v={result.get('version')} actor={key.name}")
     return result
 
 
@@ -495,7 +497,7 @@ def revoke_key(body: RevokeBody, key: APIKey = Depends(require_permission("api_k
             {"reason": result.get("reason", ""), "version": body.version},
             risk="medium",
         )
-        raise HTTPException(status_code=502, detail=result.get("reason", "identity 吊销失败"))
+        raise HTTPException(status_code=502, detail=result.get("reason", "identity revocation failed"))
     _audit(key, "key.revoke", body.app_id, {"version": body.version}, risk="medium")
     return {"ok": True}
 
@@ -513,13 +515,13 @@ def patch_local_key(key_id: str, body: LocalKeyPatchBody, key: APIKey = Depends(
     try:
         row = db.query(ApiKeyORM).filter(ApiKeyORM.id == key_id).first()
         if row is None or row.tenant_id != key.tenant_id:
-            raise HTTPException(status_code=404, detail="key 不存在")
+            raise HTTPException(status_code=404, detail="Key not found")
         if "expires_at" in body.model_fields_set:
             if body.expires_at:
                 try:
                     row.expires_at = datetime.fromisoformat(body.expires_at)
                 except ValueError:
-                    raise HTTPException(status_code=400, detail="expires_at 需为 ISO 格式") from None
+                    raise HTTPException(status_code=400, detail="expires_at must be ISO format") from None
             else:
                 row.expires_at = None
         if body.enabled is not None:
@@ -534,15 +536,15 @@ def patch_local_key(key_id: str, body: LocalKeyPatchBody, key: APIKey = Depends(
 
 @router.get("/sso")
 def sso_surface(key: APIKey = Depends(require_permission("system:manage"))):
-    # Issue #62: SSO 面按 identity 真实能力渲染 —— 可读且已配置 = enabled 状态;
-    # 未配置 = 明确引导;不可读(上游 #35 未上线)= disabled + roadmap 说明,
-    # 绝不出现假可用控件。
+    # Issue #62: the SSO surface renders according to identity's real capability —— readable and
+    # configured = enabled state; unconfigured = explicit guidance; unreadable (upstream #35 not
+    # shipped) = disabled + roadmap note, never fake-available controls.
     summary = get_identity_admin_client().idp_summary(key.tenant_id)
     if not summary.get("available"):
         return {
             "state": "unavailable",
             "reason": summary.get("reason", ""),
-            "detail": "SSO 聚合端点待上游提供(fusion-identity#35)",
+            "detail": "SSO aggregate endpoint pending upstream (fusion-identity#35)",
         }
     if summary.get("configured"):
         return {
@@ -553,6 +555,6 @@ def sso_surface(key: APIKey = Depends(require_permission("system:manage"))):
         }
     return {
         "state": "not_configured",
-        "reason": "租户未配置 IdP",
-        "detail": "在 fusion-identity 完成 IdP 配置后此处显示 SSO 状态",
+        "reason": "Tenant has no IdP configured",
+        "detail": "SSO status will show here once IdP configuration is completed in fusion-identity",
     }

@@ -50,7 +50,7 @@ def _finding(
         code_snippet=snippet[:200],
         rule_id=rule_id,
         cwe_id="CWE-250" if "PERM" in rule_id else "CWE-20",
-        fix_suggestion="限制声明范围、固定依赖版本、移除自动放行；确认误报可加入仓库级 allowlist",
+        fix_suggestion="Restrict declared scopes, pin dependency versions, remove auto-approve; confirmed false positives can be added to the repo-level allowlist",
     )
 
 
@@ -71,8 +71,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
             findings.append(
                 _finding(
                     "AGT-DESC-POISONING",
-                    f"工具描述投毒({server.name}/{tool.get('name', '?')})",
-                    f"工具声明文本包含注入模式 (families={fams})",
+                    f"Tool description poisoning ({server.name}/{tool.get('name', '?')})",
+                    f"Tool declaration text contains injection patterns (families={fams})",
                     "critical",
                     server.source_file,
                     text[:120],
@@ -86,8 +86,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
         findings.append(
             _finding(
                 "AGT-PERM-ENV",
-                f"环境变量过度声明({server.name})",
-                f"向 MCP 服务器进程传递敏感环境变量: {secret_env[:5]}",
+                f"Over-broad environment variable access ({server.name})",
+                f"Sensitive environment variables passed to the MCP server process: {secret_env[:5]}",
                 "high",
                 server.source_file,
                 ", ".join(secret_env[:5]),
@@ -101,8 +101,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
         findings.append(
             _finding(
                 "AGT-PERM-FS-WIDE",
-                f"文件系统范围过宽({server.name})",
-                f"声明了全盘/家目录级访问范围: {wide[:3]}",
+                f"Over-broad filesystem scope ({server.name})",
+                f"Whole-disk or home-directory level access scope declared: {wide[:3]}",
                 "high",
                 server.source_file,
                 " ".join(wide[:3]),
@@ -115,8 +115,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
         findings.append(
             _finding(
                 "AGT-AUTO-APPROVE",
-                f"工具自动放行({server.name})",
-                f"autoApprove 非空: {server.auto_approve[:5]} — 危险工具可无确认执行",
+                f"Tool auto-approve ({server.name})",
+                f"autoApprove is non-empty: {server.auto_approve[:5]} — dangerous tools can run without confirmation",
                 "high",
                 server.source_file,
                 ", ".join(server.auto_approve[:5]),
@@ -136,8 +136,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
             findings.append(
                 _finding(
                     "AGT-UNPINNED-DEP",
-                    f"未固定依赖版本({server.name})",
-                    f"{server.command} {joined} 未声明版本号，供应链不可复现且可被投毒",
+                    f"Unpinned dependency version ({server.name})",
+                    f"{server.command} {joined} declares no version; the supply chain is not reproducible and can be poisoned",
                     "medium",
                     server.source_file,
                     f"{server.command} {joined}"[:120],
@@ -151,8 +151,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
         findings.append(
             _finding(
                 "AGT-CMD-RISK",
-                f"危险命令模式({server.name})",
-                "启动命令包含管道执行/递归删除/eval 等高危模式",
+                f"Risky command pattern ({server.name})",
+                "Launch command contains high-risk patterns such as piped execution, recursive delete, or eval",
                 "high",
                 server.source_file,
                 joined_cmd[:120],
@@ -165,8 +165,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
         findings.append(
             _finding(
                 "AGT-SIGNATURE-MATCH",
-                f"命中恶意签名({server.name})",
-                f"命令/依赖命中本地签名库条目: {indicator}",
+                f"Malicious signature match ({server.name})",
+                f"Command/dependency matches a local signature library entry: {indicator}",
                 "critical",
                 server.source_file,
                 indicator,
@@ -178,8 +178,8 @@ def check_mcp_server(server: McpServer, sigs: SignatureLibrary) -> list[Vulnerab
             findings.append(
                 _finding(
                     "AGT-SIGNATURE-MATCH",
-                    f"命中恶意签名({server.name})",
-                    f"远程端点命中本地签名库条目: {indicator}",
+                    f"Malicious signature match ({server.name})",
+                    f"Remote endpoint matches a local signature library entry: {indicator}",
                     "critical",
                     server.source_file,
                     server.url[:120],
@@ -203,8 +203,8 @@ def check_skill(skill: SkillPackage, sigs: SignatureLibrary) -> list[Vulnerabili
             findings.append(
                 _finding(
                     "AGT-DESC-POISONING",
-                    f"技能文本投毒({skill.name}/{label})",
-                    f"技能{label}包含注入模式 (families={fams})",
+                    f"Skill text poisoning ({skill.name}/{label})",
+                    f"Skill {label} contains injection patterns (families={fams})",
                     "critical" if label == "description" else "high",
                     skill.source_file,
                     text[:120],
@@ -218,8 +218,8 @@ def check_skill(skill: SkillPackage, sigs: SignatureLibrary) -> list[Vulnerabili
             findings.append(
                 _finding(
                     "AGT-PERM-FS-WIDE",
-                    f"技能权限过宽({skill.name})",
-                    f"allowed-tools 声明了无限制工具: {tool}",
+                    f"Over-broad skill permissions ({skill.name})",
+                    f"allowed-tools declares an unrestricted tool: {tool}",
                     "high",
                     skill.source_file,
                     tool,
@@ -233,8 +233,8 @@ def check_skill(skill: SkillPackage, sigs: SignatureLibrary) -> list[Vulnerabili
             findings.append(
                 _finding(
                     "AGT-CMD-RISK",
-                    f"危险命令模式({skill.name})",
-                    "技能正文包含管道执行/递归删除/eval 等高危命令",
+                    f"Risky command pattern ({skill.name})",
+                    "Skill body contains high-risk commands such as piped execution, recursive delete, or eval",
                     "high",
                     skill.source_file,
                     line.strip()[:120],
@@ -245,8 +245,8 @@ def check_skill(skill: SkillPackage, sigs: SignatureLibrary) -> list[Vulnerabili
             findings.append(
                 _finding(
                     "AGT-UNPINNED-DEP",
-                    f"未固定依赖版本({skill.name})",
-                    "技能正文包含未固定版本的 pip install",
+                    f"Unpinned dependency version ({skill.name})",
+                    "Skill body contains a pip install without a pinned version",
                     "medium",
                     skill.source_file,
                     line.strip()[:120],
@@ -261,8 +261,8 @@ def check_skill(skill: SkillPackage, sigs: SignatureLibrary) -> list[Vulnerabili
         findings.append(
             _finding(
                 "AGT-SIGNATURE-MATCH",
-                f"命中恶意签名({skill.name})",
-                f"技能内容命中本地签名库条目: {indicator}",
+                f"Malicious signature match ({skill.name})",
+                f"Skill content matches a local signature library entry: {indicator}",
                 "critical",
                 skill.source_file,
                 indicator,

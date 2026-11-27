@@ -25,7 +25,7 @@ class ScanCache:
         self.max_entries = max_entries
         self.ttl_seconds = ttl_seconds
         self._cache: OrderedDict[str, tuple[float, list[Vulnerability]]] = OrderedDict()
-        # 路径 → 缓存键集合。invalidate 按路径反查键，避免遍历全部哈希键。
+        # Path → set of cache keys. invalidate looks up keys by path to avoid iterating all hash keys.
         self._path_index: dict[str, set[str]] = {}
         self._hits = 0
         self._misses = 0
@@ -110,7 +110,7 @@ class ScanTarget:
             candidate.resolve().relative_to(self._root.resolve())
             return True
         except ValueError:
-            logger.warning(f"路径越界扫描根, 跳过: {candidate}")
+            logger.warning(f"Path outside scan root, skipping: {candidate}")
             return False
 
     def discover(self, extensions: set[str] | None = None) -> list[Path]:
@@ -179,7 +179,7 @@ class ScanTarget:
                     if self._check_file_size(f):
                         self.files.append(f)
 
-        logger.info(f"发现 {len(self.files)} 个文件待扫描")
+        logger.info(f"Discovered {len(self.files)} files to scan")
         return self.files
 
     def discover_incremental(self, changed_files: list[str], extensions: set[str] | None = None) -> list[Path]:
@@ -219,14 +219,14 @@ class ScanTarget:
             if not p.is_absolute():
                 p = self.path / p
             if p.is_symlink():
-                logger.warning(f"增量扫描跳过 symlink: {cf}")
+                logger.warning(f"Incremental scan skipping symlink: {cf}")
                 continue
             if not self._is_within_root(p):
                 continue
             if p.suffix in extensions and p.exists() and self._check_file_size(p):
                 self.files.append(p)
 
-        logger.info(f"增量扫描: {len(self.files)} 个变更文件")
+        logger.info(f"Incremental scan: {len(self.files)} changed files")
         return self.files
 
     def _check_file_size(self, path: Path) -> bool:
@@ -241,7 +241,7 @@ class ScanResult:
         self.target = target
         self.scan: Scan | None = None
         self.vulnerabilities: list[Vulnerability] = []
-        # A-P0-1: pipeline 产出的 findings/patches 此前被 to_scan_result 丢弃,API 拿不到。
+        # A-P0-1: pipeline findings/patches were previously dropped by to_scan_result, so the API never saw them.
         self.findings: list[Any] = []
         self.patches: list[Any] = []
         self.files_scanned: int = 0
@@ -305,7 +305,7 @@ class Scanner:
         files = target.discover()
         result.files_scanned = len(files)
 
-        logger.info(f"开始扫描: {target.path} ({len(files)} 个文件)")
+        logger.info(f"Scan started: {target.path} ({len(files)} files)")
 
         async def scan_file(file_path: Path) -> list[Vulnerability]:
             try:
@@ -338,7 +338,7 @@ class Scanner:
                     self.cache.put(file_path, content, vulns)
                 return vulns
             except Exception as e:
-                logger.debug(f"扫描文件失败 {file_path}: {e}")
+                logger.debug(f"Failed to scan file {file_path}: {e}")
                 result.files_skipped += 1
                 return []
 
@@ -366,7 +366,9 @@ class Scanner:
         self._generate_summary(result)
 
         cache_info = f" cache={self.cache.stats}" if self.cache else ""
-        logger.info(f"扫描完成: {len(result.vulnerabilities)} 个漏洞 ({result.duration_ms:.0f}ms){cache_info}")
+        logger.info(
+            f"Scan finished: {len(result.vulnerabilities)} vulnerabilities ({result.duration_ms:.0f}ms){cache_info}"
+        )
         return result
 
     async def scan_incremental(
@@ -380,7 +382,7 @@ class Scanner:
         files = target.discover_incremental(changed_files)
         result.files_scanned = len(files)
 
-        logger.info(f"增量扫描: {target.path} ({len(files)} 个变更文件)")
+        logger.info(f"Incremental scan: {target.path} ({len(files)} changed files)")
 
         async def scan_file(file_path: Path) -> list[Vulnerability]:
             try:
@@ -413,7 +415,7 @@ class Scanner:
                     self.cache.put(file_path, content, vulns)
                 return vulns
             except Exception as e:
-                logger.debug(f"扫描文件失败 {file_path}: {e}")
+                logger.debug(f"Failed to scan file {file_path}: {e}")
                 result.files_skipped += 1
                 return []
 
@@ -449,7 +451,7 @@ class Scanner:
     def _generate_summary(self, result: ScanResult) -> None:
         total = len(result.vulnerabilities)
         if total == 0:
-            result.summary = "✅ 未发现安全漏洞"
+            result.summary = "✅ No security vulnerabilities found"
             return
 
         by_severity = {}
@@ -457,7 +459,7 @@ class Scanner:
             by_severity.setdefault(v.severity, 0)
             by_severity[v.severity] += 1
 
-        parts = [f"发现 {total} 个安全漏洞"]
+        parts = [f"Found {total} security vulnerabilities"]
         for sev in ["critical", "high", "medium", "low"]:
             if sev in by_severity:
                 parts.append(f"{sev}: {by_severity[sev]}")

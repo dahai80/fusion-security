@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 
 _AUTH = [Depends(get_current_key)]
 
-# Issue #40: gateway /shell 代理把 /shell/fusion-security/<rest> 转发到后端 /<rest>
-# (剥离模块前缀),所以 SPA 必须挂在后端根路径;同时保留 /shell/fusion-security/
-# 前缀挂载供直连访问。SPA 页面/静态资源无租户数据,对 TenantMiddleware 做
-# 前缀豁免 —— API (/api/v1/*) 的 fail-closed 租户语义完全不变。
+# Issue #40: the gateway /shell proxy forwards /shell/fusion-security/<rest> to backend /<rest>
+# (stripping the module prefix), so the SPA must be mounted at the backend root path; the
+# /shell/fusion-security/ prefix mount is kept for direct access. SPA pages/static assets carry no
+# tenant data, so TenantMiddleware gets a prefix exemption —— the fail-closed tenant semantics of
+# the API (/api/v1/*) are completely unchanged.
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 _SPA_EXACT_PATHS = frozenset({"/", "/dashboard", "/scans", "/vulnerabilities", "/projects", "/favicon.ico"})
@@ -36,8 +37,8 @@ _SPA_PREFIXES = ("/assets/", "/shell/fusion-security")
 
 
 class _SpaExemptPaths(frozenset):
-    # TenantMiddleware 只做 `path in exempt` 精确匹配;frozenset 子类改写
-    # __contains__ 支持前缀匹配,不动 fusion-core(上游包,见改造边界)。
+    # TenantMiddleware only does exact `path in exempt` matching; a frozenset subclass overrides
+    # __contains__ to support prefix matching, without touching fusion-core (upstream package).
     def __new__(cls, exact: frozenset, prefixes: tuple[str, ...]):
         obj = super().__new__(cls, exact)
         obj._prefixes = prefixes
@@ -48,10 +49,10 @@ class _SpaExemptPaths(frozenset):
 
 
 class SPAStaticFiles(StaticFiles):
-    # SPA 回退:客户端路由 (/dashboard 等) 未命中文件时回 index.html;
-    # API/docs 命名空间不回退,保持裸 404。Starlette 1.x 的 404 以
-    # starlette.exceptions.HTTPException 抛出(fastapi.HTTPException 是其
-    # 子类,接父类才接得住)。
+    # SPA fallback: client routes (/dashboard etc.) fall back to index.html when no file matches;
+    # API/docs namespaces do not fall back, keeping a bare 404. In Starlette 1.x the 404 is raised
+    # as starlette.exceptions.HTTPException (fastapi.HTTPException is a
+    # subclass; catching the parent class catches both).
     async def get_response(self, path: str, scope):
         from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -66,19 +67,19 @@ class SPAStaticFiles(StaticFiles):
 
 
 def _mount_spa(app: FastAPI, dist_dir: Path | None = None) -> bool:
-    # dist/ 由 `cd frontend && npm run build` 产出(不入库);未构建时跳过并记日志。
+    # dist/ is produced by `cd frontend && npm run build` (not committed); skip and log when not built.
     dist = dist_dir or _FRONTEND_DIST
     if not (dist / "index.html").exists():
-        logger.info(f"[Startup] SPA 静态托管跳过(frontend/dist 未构建): {dist}")
+        logger.info(f"[Startup] SPA static hosting skipped (frontend/dist not built): {dist}")
         return False
     app.mount("/shell/fusion-security", SPAStaticFiles(directory=dist, html=True), name="spa-prefixed")
     app.mount("/", SPAStaticFiles(directory=dist, html=True), name="spa")
-    logger.info(f"[Startup] SPA 已挂载: {dist} (/, /shell/fusion-security/)")
+    logger.info(f"[Startup] SPA mounted: {dist} (/, /shell/fusion-security/)")
     return True
 
 
 async def _dispatch_scheduled_scan(schedule) -> None:
-    # Feature 4 tick 回调:把计划扫描入队执行(复用 scans 队列路径)。
+    # Feature 4 tick callback: enqueue the scheduled scan (reusing the scans queue path).
     from ..engine.queue import ScanTask, TaskPriority
     from ..models.project import Scan
     from .routes import scans as _scans
@@ -110,25 +111,26 @@ async def _dispatch_scheduled_scan(schedule) -> None:
         )
         queue = _scans._get_queue()
         await queue.enqueue(task)
-        logger.info(f"[Scheduler] 计划 {schedule.id} 已入队 scan={orm.id}")
+        logger.info(f"[Scheduler] schedule {schedule.id} enqueued scan={orm.id}")
     finally:
         db.close()
 
 
 def set_process_title() -> None:
-    # Issue #49: 进程标题带产品名(start.sh 直接拉起 uvicorn 二进制;macOS
-    # homebrew Python 的 Python.app argv 会覆盖 exec -a,setproctitle 是唯一
-    # 可靠手段)。依赖缺失时静默降级,不影响启动。
+    # Issue #49: process title carries the product name (start.sh launches the uvicorn binary
+    # directly; on macOS homebrew Python the Python.app argv overrides exec -a, so setproctitle
+    # is the only reliable means). Degrades silently when the dependency is missing.
     try:
         import setproctitle
 
-        # Issue #52: 端口解析走 fusion_core.config.service_port(FUSION_SECURITY_PORT),
-        # 非整数 env 抛 ValueError 由下方 except 记警告,不再静默带错误标题。
+        # Issue #52: port resolution goes through fusion_core.config.service_port(FUSION_SECURITY_PORT);
+        # a non-integer env raises ValueError, caught by the except below to log a warning
+        # instead of silently setting a broken title.
         port = service_port("security", default=11454)
         setproctitle.setproctitle(f"fusion-security serve :{port}")
-        logger.info(f"[Startup] 进程标题已设置: fusion-security serve :{port}")
+        logger.info(f"[Startup] process title set: fusion-security serve :{port}")
     except Exception as e:
-        logger.warning(f"[Startup] setproctitle 设置失败(非致命): {e}")
+        logger.warning(f"[Startup] setproctitle failed (non-fatal): {e}")
 
 
 @asynccontextmanager
@@ -137,44 +139,47 @@ async def lifespan(app: FastAPI):
 
     set_process_title()
     init_db()
-    # S-P0-3: 绝不记录 master key 明文,只记录就绪状态。
+    # S-P0-3: never log the master key plaintext, only its readiness.
     auth_manager.ensure_master_key()
-    logger.info("Fusion-Security API 已启动, master key 已就绪")
+    logger.info("Fusion-Security API started, master key ready")
 
-    # Issue #53: gateway /shell 代理注入的模块服务 key 启动时落库为 admin。
-    # 此前无任何落库路径,手工插入默认 viewer,仪表盘 /system/health/detailed
-    # (system:manage)经 shell 代理每次加载 403。租户与前端透传的 X-Tenant-Id
-    # 对齐(VITE_TENANT_ID 默认 default),可用 FUSION_SECURITY_SHELL_TENANT 覆盖。
-    # key 绝不落日志。幂等 upsert,重复启动安全。
+    # Issue #53: the module service key injected by the gateway /shell proxy is persisted at
+    # startup as admin. Previously there was no persistence path: manually inserted viewer keys
+    # made dashboard /system/health/detailed (system:manage) 403 on every load via the shell
+    # proxy. The tenant aligns with the frontend-passed X-Tenant-Id (VITE_TENANT_ID defaults to
+    # default), overridable via FUSION_SECURITY_SHELL_TENANT. The key is never logged. Idempotent
+    # upsert, safe on repeated startups.
     from ..shell_registry import MODULE_KEY_ENV
 
     module_key = os.environ.get(MODULE_KEY_ENV, "").strip()
     if module_key:
         tenant = os.environ.get("FUSION_SECURITY_SHELL_TENANT", "default").strip() or "default"
         auth_manager.ensure_module_key(module_key, tenant)
-        logger.info(f"[Startup] shell 模块服务 key 已落库(role=admin, tenant={tenant})")
+        logger.info(f"[Startup] shell module service key persisted (role=admin, tenant={tenant})")
     else:
-        logger.info(f"[Startup] {MODULE_KEY_ENV} 未设置,跳过模块 key 落库")
+        logger.info(f"[Startup] {MODULE_KEY_ENV} not set, skipping module key persistence")
 
-    # Issue #32: 本地 TenantManager 已退役,租户注册归 fusion-identity。检查 identity 就绪。
+    # Issue #32: the local TenantManager is retired; tenant registration belongs to fusion-identity. Check identity readiness.
     import os as _os
 
     if _os.environ.get("FUSION_IDENTITY_SERVICE_TOKEN", "").strip():
-        logger.info("[Startup] fusion-identity 服务令牌已配置,JWT 校验启用")
+        logger.info("[Startup] fusion-identity service token configured, JWT verification enabled")
     else:
-        logger.warning("[Startup] FUSION_IDENTITY_SERVICE_TOKEN 未设置,JWT 校验不可用(仅 API Key 模式)")
+        logger.warning(
+            "[Startup] FUSION_IDENTITY_SERVICE_TOKEN not set, JWT verification unavailable (API Key mode only)"
+        )
 
-    # 自动启动 WorkerPool,否则入队扫描永久 PENDING;回收上次崩溃遗留的孤儿扫描。
+    # Auto-start the WorkerPool, otherwise enqueued scans stay PENDING forever; reclaim orphan scans left by a previous crash.
     try:
         from .routes import scans as _scans
 
         await _scans.startup_reconcile_scans()
         await _scans._get_pool().start()
-        logger.info("[Startup] WorkerPool 已自动启动")
+        logger.info("[Startup] WorkerPool auto-started")
     except Exception as e:
-        logger.error(f"[Startup] WorkerPool 自动启动失败: {e}")
+        logger.error(f"[Startup] WorkerPool auto-start failed: {e}")
 
-    # Feature 4: 启动定时扫描调度器(此前从未启动)。单例存于 routes/schedules 供 CRUD。
+    # Feature 4: start the scheduled-scan scheduler (never started before). The singleton lives in routes/schedules for CRUD.
     scheduler = None
     try:
         from ..engine.scheduler import ScanScheduler
@@ -183,23 +188,23 @@ async def lifespan(app: FastAPI):
         scheduler = ScanScheduler()
         _schedules.set_scheduler(scheduler)
         await scheduler.start(_dispatch_scheduled_scan)
-        logger.info("[Startup] ScanScheduler 已启动")
+        logger.info("[Startup] ScanScheduler started")
     except Exception as e:
-        logger.warning(f"[Startup] ScanScheduler 启动失败(非致命): {e}")
+        logger.warning(f"[Startup] ScanScheduler failed to start (non-fatal): {e}")
 
-    # Issue #35: union-web shell 模块注册 + 心跳(环境变量门控,未配置则跳过)。
+    # Issue #35: union-web shell module registration + heartbeat (env-gated, skipped when unconfigured).
     registry_task = None
     from ..shell_registry import run_shell_registry, shell_registration_enabled
 
     if shell_registration_enabled():
         registry_task = asyncio.create_task(run_shell_registry())
-        logger.info("[Startup] shell registry 任务已启动(manifest 注册/心跳)")
+        logger.info("[Startup] shell registry task started (manifest registration/heartbeat)")
     else:
-        logger.info("[Startup] shell registry 未启用(缺 FUSION_SHELL_GATEWAY_URL/FUSION_ADMIN_KEY)")
+        logger.info("[Startup] shell registry not enabled (missing FUSION_SHELL_GATEWAY_URL/FUSION_ADMIN_KEY)")
 
     yield
 
-    # 优雅停机:停注册心跳,停调度器,停工作池,在途任务带 timeout drain。
+    # Graceful shutdown: stop registry heartbeat, scheduler, and worker pool; drain in-flight tasks with timeout.
     if registry_task is not None:
         registry_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -216,7 +221,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Fusion-Security API",
-        description="本地 AI 代码安全审计工具 API — 100% 离线",
+        description="Local AI code security audit tool API — 100% offline",
         version=_PKG_VERSION,
         lifespan=lifespan,
     )
@@ -226,7 +231,7 @@ def create_app() -> FastAPI:
         for o in os.environ.get("FUSION_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
         if o.strip()
     ]
-    # P1-3: allow_credentials=True 时通配源非法且危险(任意源可携 cookie),显式拒绝。
+    # P1-3: wildcard origin is invalid and dangerous with allow_credentials=True (any origin can carry cookies), reject explicitly.
     if "*" in cors_origins:
         raise RuntimeError("FUSION_CORS_ORIGINS=* not allowed with allow_credentials=True")
     app.add_middleware(
@@ -237,15 +242,16 @@ def create_app() -> FastAPI:
         allow_headers=["X-API-Key", "X-Tenant-Id", "Content-Type"],
     )
 
-    # P0-6: 限流中间件注册(最外层,先于路由执行)。add_middleware 后注册先执行。
+    # P0-6: rate-limit middleware registration (outermost, runs before routes). Registered after add_middleware, executes first.
     from .middleware import rate_limit_middleware
 
     app.middleware("http")(rate_limit_middleware)
 
-    # Issue #53: 401/403 等错误响应补顶层 message 字段 —— web-shell 宿主客户端只读
-    # 顶层 message,缺失时把 RBAC 真实原因(如 权限不足: 需要 system:manage)泛化成
-    # "无权限访问该模块"。保留 detail 兼容既有客户端;接父类才能同时接住
-    # fastapi.HTTPException(SPAStaticFiles 的 404 回退同款约定)。
+    # Issue #53: error responses like 401/403 get a top-level message field —— the web-shell host
+    # client only reads the top-level message; without it the real RBAC reason (e.g. insufficient
+    # permission: system:manage required) gets generalized into "no permission to access this
+    # module". Keep detail for compatibility with existing clients; catching the parent class also
+    # catches fastapi.HTTPException (same convention as the SPAStaticFiles 404 fallback).
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
     @app.exception_handler(StarletteHTTPException)
@@ -253,9 +259,10 @@ def create_app() -> FastAPI:
         message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "message": message})
 
-    # Issue #32: 接入 fusion-identity。TenantMiddleware 强制 X-Tenant-Id 存在,
-    # 校验 Bearer JWT(tid↔header 匹配),fail-closed。require_jwt=False = 双模式:
-    # 纯 API Key 请求放行(由 get_principal 再做 fail-closed 租户校验),JWT 请求走 verify_jwt。
+    # Issue #32: integrate fusion-identity. TenantMiddleware enforces the presence of X-Tenant-Id
+    # and verifies the Bearer JWT (tid↔header match), fail-closed. require_jwt=False = dual mode:
+    # pure API Key requests pass through (get_principal then does the fail-closed tenant check),
+    # JWT requests go through verify_jwt.
     from fusion_core.tenant import install_tenant_middleware
 
     from ..identity import make_verify_jwt
@@ -269,7 +276,7 @@ def create_app() -> FastAPI:
         verify_jwt=make_verify_jwt(),
         require_jwt=False,
     )
-    logger.info("[Startup] TenantMiddleware 已接入 fusion-identity(SPA 静态路径豁免,API 不豁免)")
+    logger.info("[Startup] TenantMiddleware integrated with fusion-identity (SPA static paths exempt, API not exempt)")
 
     app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"], dependencies=_AUTH)
     app.include_router(system.public_router, prefix="/api/v1/system", tags=["System"])
@@ -282,8 +289,8 @@ def create_app() -> FastAPI:
     app.include_router(patches.router, prefix="/api/v1/patches", tags=["Patches"], dependencies=_AUTH)
     app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"], dependencies=_AUTH)
     app.include_router(schedules.router, prefix="/api/v1/schedules", tags=["Schedules"], dependencies=_AUTH)
-    # Issue #60: Admin Console 聚合面 —— system:manage 门禁在 route 内(require_permission),
-    # 挂 _AUTH 仅做 principal 解析,避免双重 403 语义。
+    # Issue #60: Admin Console aggregate surface —— system:manage gating lives inside the routes
+    # (require_permission); mounting with _AUTH only resolves the principal to avoid double 403 semantics.
     app.include_router(console.router, prefix="/api/v1/console", tags=["Console"])
     # Evolution plan P1.1: agent-security routes (injection detection).
     from .routes import agent as agent_routes
@@ -302,9 +309,9 @@ def create_app() -> FastAPI:
         role_list = [r.strip() for r in roles.split(",") if r.strip()]
         invalid = [r for r in role_list if r not in ROLES]
         if invalid:
-            raise HTTPException(status_code=400, detail=f"未知角色: {invalid}")
+            raise HTTPException(status_code=400, detail=f"Unknown roles: {invalid}")
         key = auth_manager.create_api_key(name, role_list)
-        # Issue #60: key 管理操作进审计流(中风险,工作台可见)。
+        # Issue #60: key management operations enter the audit stream (medium risk, visible in the workbench).
         try:
             from ..engine.tenant.audit import get_audit_logger
 
@@ -317,15 +324,15 @@ def create_app() -> FastAPI:
                 risk_level="medium",
             )
         except Exception as e:
-            logger.warning(f"[Startup] key.create 审计失败: {e}")
+            logger.warning(f"[Startup] key.create audit failed: {e}")
         return {"api_key": key, "name": name, "roles": role_list}
 
     @app.get("/api/v1/keys", tags=["Auth"], dependencies=[Depends(require_permission("api_key:manage"))])
     async def list_api_keys():
         return {"keys": auth_manager.list_keys()}
 
-    # Issue #40: SPA 挂载必须在所有路由之后 —— Mount "/" 会按注册顺序吞掉后续路径,
-    # 放前面会把 API 路由全部遮蔽。dist 未构建时静默跳过。
+    # Issue #40: SPA mounting must come after all routes —— Mount "/" swallows subsequent paths in
+    # registration order; mounting it first would shadow every API route. Skipped silently when dist is not built.
     _mount_spa(app)
 
     return app

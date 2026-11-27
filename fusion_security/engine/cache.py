@@ -22,17 +22,18 @@ def _vulns_to_json(vulns: list[Vulnerability]) -> str:
 
 
 def _json_to_vulns(data: str) -> list[Vulnerability]:
-    # schema 漂移/损坏 JSON 会让 Vulnerability(**item) 抛 TypeError,整条缓存不可用。
-    # 逐项 try/except + 字段过滤,坏项跳过并记录,不再整批崩溃。
+    # Schema drift / corrupted JSON makes Vulnerability(**item) raise TypeError and
+    # invalidates the whole cache entry. Per-item try/except plus field filtering:
+    # skip and log bad items instead of crashing the whole batch.
     if not data:
         return []
     try:
         items = json.loads(data)
     except json.JSONDecodeError as e:
-        logger.warning(f"[Cache] results_json 解析失败,返回空: {e}")
+        logger.warning(f"[Cache] results_json parse failed, returning empty: {e}")
         return []
     if not isinstance(items, list):
-        logger.warning("[Cache] results_json 非数组,返回空")
+        logger.warning("[Cache] results_json is not an array, returning empty")
         return []
     valid_fields = set(Vulnerability.__dataclass_fields__)
     vulns = []
@@ -42,7 +43,7 @@ def _json_to_vulns(data: str) -> list[Vulnerability]:
         try:
             vulns.append(Vulnerability(**{k: v for k, v in item.items() if k in valid_fields}))
         except Exception as e:
-            logger.warning(f"[Cache] 跳过损坏缓存项: {e}")
+            logger.warning(f"[Cache] skipping corrupted cache item: {e}")
     return vulns
 
 
@@ -62,16 +63,17 @@ class ProjectScanCache:
             .first()
         )
         if row:
-            logger.debug(f"缓存命中: project={project_id} file={file_path}")
+            logger.debug(f"cache hit: project={project_id} file={file_path}")
             return _json_to_vulns(row.results_json)
-        logger.debug(f"缓存未命中: project={project_id} file={file_path}")
+        logger.debug(f"cache miss: project={project_id} file={file_path}")
         return None
 
     def put(
         self, project_id: str, file_path: str, content: str, vulns: list[Vulnerability], commit: bool = True
     ) -> None:
-        # A-P1-4: (project_id, file_path) 唯一约束下,并发扫描同文件先 query-后-insert 存在竞态:
-        # 两线程都 query 未命中 -> 都 insert -> 第二个 IntegrityError。捕获后回退为 UPDATE。
+        # A-P1-4: with the (project_id, file_path) unique constraint, concurrent scans of
+        # the same file race between query-then-insert: both threads miss the query ->
+        # both insert -> the second hits IntegrityError. Catch it and fall back to UPDATE.
         from sqlalchemy.exc import IntegrityError
 
         ch = _content_hash(content)
@@ -86,7 +88,7 @@ class ProjectScanCache:
         if row:
             row.content_hash = ch
             row.results_json = _vulns_to_json(vulns)
-            logger.debug(f"缓存更新: project={project_id} file={file_path}")
+            logger.debug(f"cache updated: project={project_id} file={file_path}")
         else:
             row = ScanCacheORM(
                 project_id=project_id,
@@ -95,12 +97,13 @@ class ProjectScanCache:
                 results_json=_vulns_to_json(vulns),
             )
             self._db.add(row)
-            logger.debug(f"缓存写入: project={project_id} file={file_path}")
+            logger.debug(f"cache written: project={project_id} file={file_path}")
         if commit:
             try:
                 self._db.commit()
             except IntegrityError:
-                # 唯一约束冲突:另一并发写已插入同 (project_id, file_path)。回退为更新该行。
+                # Unique-constraint conflict: another concurrent write already inserted
+                # the same (project_id, file_path). Fall back to updating that row.
                 self._db.rollback()
                 existing = (
                     self._db.query(ScanCacheORM)
@@ -114,14 +117,15 @@ class ProjectScanCache:
                     existing.content_hash = ch
                     existing.results_json = _vulns_to_json(vulns)
                     self._db.commit()
-                    logger.debug(f"缓存竞态回退更新: project={project_id} file={file_path}")
+                    logger.debug(f"cache race fallback update: project={project_id} file={file_path}")
 
     def flush(self) -> None:
-        # 批量写后统一提交,避免 put 逐文件 commit 导致 N 次 fsync。空事务提交无副作用。
+        # Commit once after batch writes instead of per-file commits in put, avoiding
+        # N fsyncs. Committing an empty transaction has no side effects.
         try:
             self._db.commit()
         except Exception as e:
-            logger.warning(f"[Cache] flush 提交失败: {e}")
+            logger.warning(f"[Cache] flush commit failed: {e}")
             self._db.rollback()
 
     def get_multi(
@@ -137,7 +141,7 @@ class ProjectScanCache:
         return results
 
     def put_multi(self, project_id: str, results_map: dict[str, tuple]) -> None:
-        # 批量写:逐条 put 不 commit,最后一次 commit,避免 N 次 fsync。
+        # Batch write: put each item without commit, then commit once, avoiding N fsyncs.
         for fp, (content, vulns) in results_map.items():
             self.put(project_id, fp, content, vulns, commit=False)
         self._db.commit()
@@ -151,7 +155,7 @@ class ProjectScanCache:
             .delete()
         )
         self._db.commit()
-        logger.info(f"清理项目缓存: project={project_id} 删除={count}")
+        logger.info(f"project cache cleared: project={project_id} deleted={count}")
         return count
 
     def invalidate_file(self, project_id: str, file_path: str) -> None:
@@ -175,7 +179,7 @@ class ProjectScanCache:
             self._db.delete(r)
         if stale:
             self._db.commit()
-        logger.info(f"清理过期缓存: project={project_id} 删除={len(stale)}")
+        logger.info(f"stale cache cleaned: project={project_id} deleted={len(stale)}")
         return len(stale)
 
     def stats(self, project_id: str) -> dict[str, Any]:

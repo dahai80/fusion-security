@@ -47,7 +47,7 @@ class ProjectUpdate(BaseModel):
 
 
 def _project_tenant_scope(query, api_key: APIKey):
-    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    # Issue #32: fail-closed tenant isolation. get_principal guarantees a non-empty tenant_id; always filter.
     return query.filter(ProjectORM.tenant_id == api_key.tenant_id)
 
 
@@ -75,7 +75,7 @@ def create_project(
     db.add(orm)
     db.commit()
     db.refresh(orm)
-    logger.info(f"创建项目: {orm.name} ({orm.id})")
+    logger.info(f"project created: {orm.name} ({orm.id})")
     return ProjectResponse(
         id=orm.id,
         name=orm.name,
@@ -193,7 +193,7 @@ def project_scan_summary(
         .scalar()
     )
 
-    logger.info(f"项目扫描摘要: project={project_id} scans={total_scans}")
+    logger.info(f"project scan summary: project={project_id} scans={total_scans}")
     return {
         "project_id": project_id,
         "total_scans": total_scans,
@@ -250,7 +250,7 @@ def update_project(
         o.status = body.status
     db.commit()
     db.refresh(o)
-    logger.info(f"更新项目: {project_id}")
+    logger.info(f"project updated: {project_id}")
     return ProjectResponse(
         id=o.id,
         name=o.name,
@@ -273,5 +273,5 @@ def delete_project(
     _check_project_tenant(o, api_key)
     db.delete(o)
     db.commit()
-    logger.info(f"删除项目: {project_id}")
+    logger.info(f"project deleted: {project_id}")
     return {"status": "deleted"}

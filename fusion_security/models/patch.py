@@ -17,7 +17,7 @@ class Patch:
     status: str = "draft"  # draft | applied | verified | rejected
     strategy: str = "template"  # template | ai_generated | hybrid
     verified: bool = False
-    needs_review: bool = False  # AI 来源补丁需人工审核，模板补丁免审
+    needs_review: bool = False  # AI-sourced patches need human review; template patches are exempt
     created_at: str = ""
 
     def __post_init__(self):

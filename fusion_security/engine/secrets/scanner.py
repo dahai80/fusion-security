@@ -232,8 +232,8 @@ class SecretScanner:
 
 def finding_to_vulnerability_dict(f: SecretFinding, file_path: str) -> dict:
     return {
-        "title": f"硬编码密钥({f.kind})",
-        "description": f"检测到疑似敏感凭据 (confidence={f.confidence})",
+        "title": f"Hardcoded secret ({f.kind})",
+        "description": f"Suspicious sensitive credential detected (confidence={f.confidence})",
         "severity": f.severity,
         "confidence": 90 if f.confidence == "verified" else 75 if f.confidence == "likely" else 55,
         "file_path": file_path,
@@ -241,5 +241,5 @@ def finding_to_vulnerability_dict(f: SecretFinding, file_path: str) -> dict:
         "code_snippet": f.match,
         "rule_id": f.rule_id,
         "cwe_id": "CWE-798",
-        "fix_suggestion": "从环境变量或密钥管理服务加载敏感信息；确认后可将其加入 allowlist (path + content hash)",
+        "fix_suggestion": "Load sensitive values from environment variables or a secret manager; after confirmation add to the allowlist (path + content hash)",
     }

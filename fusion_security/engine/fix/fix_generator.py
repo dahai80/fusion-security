@@ -19,13 +19,13 @@ class FixGenerator:
         patched = self._apply_template_fix(vuln, original)
 
         if not patched or patched == original:
-            patched = f"// TODO: 修复 {vuln.title}\n// {vuln.description}\n// CWE: {vuln.cwe_id}\n{original}"
+            patched = f"// TODO: Fix {vuln.title}\n// {vuln.description}\n// CWE: {vuln.cwe_id}\n{original}"
 
         p = Patch()
         p.vuln_id = vuln.id
         p.original_code = original
         p.patched_code = patched
-        p.description = f"修复 {vuln.title}: {vuln.description}"
+        p.description = f"Fix {vuln.title}: {vuln.description}"
         p.strategy = "template"
         return p
 
@@ -40,18 +40,18 @@ class FixGenerator:
             p.vuln_id = vuln.id
             p.original_code = original
             p.patched_code = patched_code
-            p.description = f"修复 {vuln.title} ({strategy_name}): {vuln.description}"
+            p.description = f"Fix {vuln.title} ({strategy_name}): {vuln.description}"
             p.strategy = strategy_name
             patches.append(p)
         if not patches:
             p = Patch()
             p.vuln_id = vuln.id
             p.original_code = original
-            p.patched_code = f"// TODO: 修复 {vuln.title}\n// {vuln.description}\n{original}"
-            p.description = f"修复 {vuln.title}: {vuln.description}"
+            p.patched_code = f"// TODO: Fix {vuln.title}\n// {vuln.description}\n{original}"
+            p.description = f"Fix {vuln.title}: {vuln.description}"
             p.strategy = "placeholder"
             patches.append(p)
-        logger.info(f"生成 {len(patches)} 个修复方案: vuln={vuln.id}")
+        logger.info(f"Generated {len(patches)} fix candidate(s): vuln={vuln.id}")
         return patches
 
     def _get_all_strategies(self, vuln: Vulnerability, code: str) -> list[tuple]:
@@ -69,13 +69,14 @@ class FixGenerator:
 
     def _apply_safe_api_fix(self, vuln: Vulnerability, code: str) -> str:
         safe_fixes = {
-            "SQL001": code.replace("execute(", "execute_query(") + "\n# 使用参数化查询代替字符串拼接"
+            "SQL001": code.replace("execute(", "execute_query(")
+            + "\n# Use parameterized queries instead of string concatenation"
             if "execute(" in code
             else "",
             "CMD001": code.replace("os.system(", "subprocess.run(shlex.split(") + ", check=True)"
             if "os.system(" in code
             else "",
-            "XSS001": code.replace("innerHTML", "textContent") + "\n// 使用textContent避免XSS"
+            "XSS001": code.replace("innerHTML", "textContent") + "\n// Use textContent to avoid XSS"
             if "innerHTML" in code
             else "",
             "EVAL001": code.replace("eval(", "ast.literal_eval(") if "eval(" in code else "",
@@ -145,32 +146,32 @@ class FixGenerator:
             )
             enhanced = await self.ai_analyzer.generate_fix(dummy_vuln)
         except Exception as e:
-            logger.warning(f"AI 修复增强失败, 保留模板补丁 {patch.vuln_id}: {e}")
+            logger.warning(f"AI fix enhancement failed, keeping template patch {patch.vuln_id}: {e}")
             return patch
 
-        # AI 可能返回失败标记串 (generate_fix 异常时返回 "// 修复生成失败: ...")，
-        # 不得直接当作补丁内容落库。校验通过才采用，否则保留模板补丁。
+        # generate_fix may return a failure-marker string ("// fix generation failed" on exception);
+        # never persist it as patch content. Adopt only when validation passes, otherwise keep the template patch.
         if not enhanced or not self._is_valid_ai_patch(enhanced, patch.original_code):
-            logger.warning(f"AI 补丁内容非法或无效, 保留模板补丁 {patch.vuln_id}")
+            logger.warning(f"AI patch content invalid or unusable, keeping template patch {patch.vuln_id}")
             return patch
 
         patch.patched_code = enhanced
         patch.strategy = "ai_enhanced"
-        # AI 生成的补丁存在幻觉风险，必须标记人工审核后方可应用
+        # AI-generated patches carry hallucination risk; mark for human review before applying
         patch.needs_review = True
-        logger.info(f"AI 增强补丁生成 (需人工审核) {patch.vuln_id}")
+        logger.info(f"AI-enhanced patch generated (human review required) {patch.vuln_id}")
         return patch
 
     @staticmethod
     def _is_valid_ai_patch(candidate: str, original: str) -> bool:
         if not candidate or len(candidate) < 6:
             return False
-        # 拒绝 generate_fix 的失败标记串
-        if candidate.lstrip().startswith("// 修复生成失败"):
+        # Reject the generate_fix failure-marker string
+        if candidate.lstrip().startswith("// fix generation failed"):
             return False
-        # AI 返回原样未改动，无修复价值
+        # AI returned the original unchanged; no remediation value
         if candidate.strip() == original.strip():
             return False
-        # 纯解释性输出 (无代码行) 风险高，拒绝：需含换行或任一代码结构字符。
+        # Purely explanatory output (no code lines) is high risk; reject: require a newline or any code-structure character.
         stripped = candidate.strip()
         return "\n" in stripped or any(c in stripped for c in ("{", "(", "=", ";", "<"))

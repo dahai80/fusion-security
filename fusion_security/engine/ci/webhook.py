@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class _NullResolver:
-    # resolver 为 None(校验未提供 pinned_ips)时的占位上下文,什么都不做。
+    # Placeholder context for when resolver is None (validation found no pinned_ips); does nothing.
     def __enter__(self):
         return self
 
@@ -27,8 +27,9 @@ class _NullResolver:
 
 
 class _NoRedirectHandler(BaseHandler):
-    # P0-2: urllib 默认跟随 3xx 重定向,绕过 SSRF 校验(攻击者用 302 指向内网)。
-    # 该 handler 把 3xx 当作终态返回,不自动跟随;调用方再逐条校验 Location。
+    # P0-2: urllib follows 3xx redirects by default, which bypasses the SSRF check
+    # (an attacker can point at the intranet via 302). This handler treats 3xx as
+    # terminal and does not follow; the caller validates each Location itself.
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
@@ -63,11 +64,11 @@ def _host_of(url: str) -> str:
 class WebhookNotifier:
     def __init__(self, configs: list[WebhookConfig] | None = None):
         self.configs = configs or []
-        logger.info(f"[Webhook] 初始化 {len(self.configs)} 个 webhook")
+        logger.info(f"[Webhook] initialized {len(self.configs)} webhooks")
 
     def add_config(self, config: WebhookConfig) -> None:
         self.configs.append(config)
-        logger.info(f"[Webhook] 添加 webhook host={_host_of(config.url)}")
+        logger.info(f"[Webhook] added webhook host={_host_of(config.url)}")
 
     def notify(self, event: str, payload: dict[str, Any]) -> list[bool]:
         results = []
@@ -79,14 +80,14 @@ class WebhookNotifier:
                 success = self._send(config, event, payload)
                 results.append(success)
             except Exception as e:
-                logger.warning(f"[Webhook] 发送失败 host={_host_of(config.url)}: {e}")
+                logger.warning(f"[Webhook] send failed host={_host_of(config.url)}: {e}")
                 results.append(False)
         return results
 
     def _send(self, config: WebhookConfig, event: str, payload: dict[str, Any]) -> bool:
         guard, resolver = pin_url(config.url)
         if not guard.ok:
-            logger.warning(f"[Webhook] SSRF 校验拒绝 host={_host_of(config.url)}: {guard.reason}")
+            logger.warning(f"[Webhook] SSRF check rejected host={_host_of(config.url)}: {guard.reason}")
             return False
 
         body = json.dumps(
@@ -107,44 +108,46 @@ class WebhookNotifier:
             headers["X-Fusion-Security-Signature"] = f"sha256={signature}"
         headers.update(config.headers)
 
-        # P0-2: 不自动跟随重定向,逐跳校验 Location,防止 302 指向内网绕过 SSRF。
+        # P0-2: do not follow redirects automatically; validate Location hop-by-hop
+        # to prevent a 302 pointing at the intranet from bypassing the SSRF check.
         opener = build_opener(_NoRedirectHandler())
         target_url = guard.safe_url
         active_resolver = resolver
         max_redirects = 3
         for hop in range(max_redirects + 1):
-            # DNS pinning:urlopen 期间固定为校验通过的 IP,关闭 DNS-rebinding TOCTOU 窗口。
+            # DNS pinning: pin resolution to the validated IP for the duration of urlopen,
+            # closing the DNS-rebinding TOCTOU window.
             with active_resolver or _NullResolver():
                 try:
                     req = Request(target_url, data=body, headers=headers, method="POST")
                     with opener.open(req, timeout=10) as resp:
-                        logger.info(f"[Webhook] 发送成功 host={_host_of(target_url)} status={resp.status}")
+                        logger.info(f"[Webhook] send succeeded host={_host_of(target_url)} status={resp.status}")
                         return 200 <= resp.status < 300
                 except HTTPError as e:
                     if e.code in (301, 302, 307, 308) and hop < max_redirects:
                         loc = e.headers.get("Location") or ""
                         if not loc:
-                            logger.warning(f"[Webhook] {e.code} 无 Location,放弃 host={_host_of(target_url)}")
+                            logger.warning(f"[Webhook] {e.code} has no Location, giving up host={_host_of(target_url)}")
                             return False
-                        # 解析相对/绝对 Location,重新做 SSRF + DNS pin 校验。
+                        # Resolve relative/absolute Location and re-run SSRF + DNS pin validation.
                         loc = urllib.parse.urljoin(target_url, loc)
                         guard2, resolver2 = pin_url(loc)
                         if not guard2.ok:
-                            logger.warning(f"[Webhook] 重定向目标被 SSRF 拒绝: {loc} ({guard2.reason})")
+                            logger.warning(f"[Webhook] redirect target rejected by SSRF check: {loc} ({guard2.reason})")
                             return False
-                        logger.info(f"[Webhook] 跟随重定向 {e.code} -> {loc} (已校验)")
+                        logger.info(f"[Webhook] following redirect {e.code} -> {loc} (validated)")
                         target_url = guard2.safe_url
                         active_resolver = resolver2
                         continue
-                    logger.warning(f"[Webhook] HTTP错误 host={_host_of(target_url)}: {e.code} {e.reason}")
+                    logger.warning(f"[Webhook] HTTP error host={_host_of(target_url)}: {e.code} {e.reason}")
                     return False
                 except URLError as e:
-                    logger.warning(f"[Webhook] URL错误 host={_host_of(target_url)}: {e}")
+                    logger.warning(f"[Webhook] URL error host={_host_of(target_url)}: {e}")
                     return False
                 except Exception as e:
-                    logger.warning(f"[Webhook] 发送异常 host={_host_of(target_url)}: {e}")
+                    logger.warning(f"[Webhook] send exception host={_host_of(target_url)}: {e}")
                     return False
-        logger.warning(f"[Webhook] 超过最大重定向次数 {max_redirects} host={_host_of(config.url)}")
+        logger.warning(f"[Webhook] exceeded max redirects {max_redirects} host={_host_of(config.url)}")
         return False
 
     def notify_scan_complete(

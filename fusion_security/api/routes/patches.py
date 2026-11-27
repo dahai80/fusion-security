@@ -52,7 +52,7 @@ def _patch_orm_to_response(o: PatchORM) -> PatchResponse:
 
 
 def _patch_tenant_scope(query, db: Session, api_key: APIKey):
-    # Issue #32: fail-closed。PatchORM 无 tenant_id,通过 scan_id 关联 ScanORM.tenant_id 过滤。
+    # Issue #32: fail-closed. PatchORM has no tenant_id; filter via scan_id joined to ScanORM.tenant_id.
     tenant_id = api_key.tenant_id or ""
     scan_ids = [s.id for s in db.query(ScanORM.id).filter(ScanORM.tenant_id == tenant_id).all()]
     if not scan_ids:
@@ -61,7 +61,7 @@ def _patch_tenant_scope(query, db: Session, api_key: APIKey):
 
 
 def _check_patch_tenant(o: PatchORM, db: Session, api_key: APIKey) -> None:
-    # Issue #32: fail-closed。校验补丁关联扫描的租户归属,跨租户 404。
+    # Issue #32: fail-closed. Verify the tenant ownership of the scan a patch belongs to; cross-tenant is 404.
     tenant_id = api_key.tenant_id or ""
     if not o.scan_id:
         raise HTTPException(status_code=404, detail="Patch not found")
@@ -132,7 +132,7 @@ def apply_patch(
     o.status = "applied"
     db.commit()
     db.refresh(o)
-    logger.info(f"补丁已应用: {patch_id}")
+    logger.info(f"patch applied: {patch_id}")
     return _patch_orm_to_response(o)
 
 
@@ -156,7 +156,7 @@ def verify_patch(
     o.status = "verified" if o.verified else "failed"
     db.commit()
     db.refresh(o)
-    logger.info(f"补丁验证: {patch_id} -> {o.status}")
+    logger.info(f"patch verified: {patch_id} -> {o.status}")
     return _patch_orm_to_response(o)
 
 
@@ -167,7 +167,7 @@ def generate_patch(
     vuln_orm = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not vuln_orm:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
-    # Issue #32: fail-closed。生成补丁前校验漏洞租户归属。
+    # Issue #32: fail-closed. Verify vulnerability tenant ownership before generating a patch.
     tenant_id = api_key.tenant_id or ""
     if (vuln_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
@@ -193,5 +193,5 @@ def generate_patch(
         results.append({"id": orm.id, "strategy": orm.strategy})
 
     db.commit()
-    logger.info(f"生成补丁: vuln={vuln_id}, count={len(results)}")
+    logger.info(f"patch generated: vuln={vuln_id}, count={len(results)}")
     return {"patches": results}

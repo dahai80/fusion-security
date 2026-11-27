@@ -1,9 +1,10 @@
-"""fusion-identity admin 聚合客户端 —— Admin Console 四分区数据源(Issue #60/#62)。
+"""fusion-identity admin aggregation client — data source for the four Admin Console zones (Issue #60/#62).
 
-只走 identity 的 service-token 面(/api/v1/admin/*, /api/v1/apps/*)。成员/IdP
-summary 端点由上游 fusion-identity#35 提供;未上线前本客户端按约定契约调用,
-404/403 时返回 degraded 状态(available=False + reason),前端显示降级卡,
-绝不伪造数据。所有调用带超时,identity 不可达 = degraded 而非 500。
+Only hits identity's service-token surface (/api/v1/admin/*, /api/v1/apps/*). The member/IdP
+summary endpoints come from upstream fusion-identity#35; until they ship, this client calls
+them per the agreed contract and returns a degraded status (available=False + reason) on
+404/403 — the frontend renders a degraded card, never fabricated data. All calls carry a
+timeout; identity unreachable = degraded, not a 500.
 """
 
 from __future__ import annotations
@@ -28,19 +29,20 @@ class IdentityAdminClient:
         self._service_token = service_token or os.environ.get(IDENTITY_TOKEN_ENV, "").strip()
 
     def _available(self) -> bool:
-        # 无服务令牌时全部走 degraded(API-key-only 部署形态),不发请求。
+        # Without a service token everything degrades (API-key-only deployment), no requests sent.
         if not self._service_token:
-            logger.info("[IdentityAdmin] %s 未设置,成员/SSO/密钥聚合降级", IDENTITY_TOKEN_ENV)
+            logger.info("[IdentityAdmin] %s not set; member/SSO/key aggregation degrades", IDENTITY_TOKEN_ENV)
             return False
         return True
 
     def _headers(self, tenant_id: str = "default") -> dict[str, str]:
-        # identity 全局租户中间件对所有路由强制 X-Tenant-Id(含 /admin 服务面),
-        # 全局读固定 default 满足中间件,租户读传真实租户。
+        # identity's global tenant middleware enforces X-Tenant-Id on every route
+        # (including the /admin service surface). Global reads pin "default" to
+        # satisfy the middleware; tenant reads pass the real tenant.
         return {"Authorization": f"Bearer {self._service_token}", "X-Tenant-Id": tenant_id or "default"}
 
     def _get(self, path: str, tenant_id: str = "default") -> httpx.Response | None:
-        # 不可用/网络失败返回 None,由调用方落 degraded;不向上抛。
+        # Unavailable/network failure returns None; the caller records degraded — nothing raised.
         if not self._available():
             return None
         try:
@@ -50,17 +52,17 @@ class IdentityAdminClient:
                 timeout=_TIMEOUT,
             )
         except httpx.HTTPError as e:
-            logger.warning(f"[IdentityAdmin] 请求失败 {path}: {e}")
+            logger.warning(f"[IdentityAdmin] request failed {path}: {e}")
             return None
 
     def list_tenants(self) -> dict[str, Any]:
-        # 租户选择器数据源。GET /api/v1/admin/tenants(service-token 面,已存在)。
+        # Data source for the tenant selector. GET /api/v1/admin/tenants (service-token surface, exists).
         resp = self._get("/api/v1/admin/tenants")
         if resp is None:
-            return {"available": False, "reason": "identity 不可达或未配置服务令牌", "tenants": []}
+            return {"available": False, "reason": "identity unreachable or service token not configured", "tenants": []}
         if resp.status_code != 200:
-            logger.warning(f"[IdentityAdmin] list_tenants 非 200: {resp.status_code}")
-            return {"available": False, "reason": f"identity 响应 {resp.status_code}", "tenants": []}
+            logger.warning(f"[IdentityAdmin] list_tenants non-200: {resp.status_code}")
+            return {"available": False, "reason": f"identity responded with {resp.status_code}", "tenants": []}
         rows = resp.json()
         tenants = [
             {
@@ -75,15 +77,18 @@ class IdentityAdminClient:
         return {"available": True, "tenants": tenants}
 
     def member_summary(self, tenant_id: str) -> dict[str, Any]:
-        # 上游 fusion-identity#35 契约:/admin/tenants/{tid}/members/summary。
+        # Upstream fusion-identity#35 contract: /admin/tenants/{tid}/members/summary.
         resp = self._get(f"/api/v1/admin/tenants/{tenant_id}/members/summary", tenant_id)
         if resp is None:
-            return {"available": False, "reason": "identity 不可达或未配置服务令牌"}
+            return {"available": False, "reason": "identity unreachable or service token not configured"}
         if resp.status_code == 404:
-            return {"available": False, "reason": "identity 未提供成员聚合端点(fusion-identity#35)"}
+            return {
+                "available": False,
+                "reason": "identity does not provide the member aggregation endpoint (fusion-identity#35)",
+            }
         if resp.status_code != 200:
-            logger.warning(f"[IdentityAdmin] member_summary 非 200: {resp.status_code}")
-            return {"available": False, "reason": f"identity 响应 {resp.status_code}"}
+            logger.warning(f"[IdentityAdmin] member_summary non-200: {resp.status_code}")
+            return {"available": False, "reason": f"identity responded with {resp.status_code}"}
         data = resp.json()
         return {
             "available": True,
@@ -96,20 +101,24 @@ class IdentityAdminClient:
         }
 
     def idp_summary(self, tenant_id: str) -> dict[str, Any]:
-        # 上游 fusion-identity#35 契约:/admin/tenants/{tid}/idps/summary。
-        # SSO 面只读能力状态,不含任何 secret 材料。
+        # Upstream fusion-identity#35 contract: /admin/tenants/{tid}/idps/summary.
+        # The SSO surface only reads capability status — no secret material of any kind.
         resp = self._get(f"/api/v1/admin/tenants/{tenant_id}/idps/summary", tenant_id)
         if resp is None:
-            return {"available": False, "reason": "identity 不可达或未配置服务令牌", "configured": False}
+            return {
+                "available": False,
+                "reason": "identity unreachable or service token not configured",
+                "configured": False,
+            }
         if resp.status_code == 404:
             return {
                 "available": False,
-                "reason": "identity 未提供 SSO 聚合端点(fusion-identity#35)",
+                "reason": "identity does not provide the SSO aggregation endpoint (fusion-identity#35)",
                 "configured": False,
             }
         if resp.status_code != 200:
-            logger.warning(f"[IdentityAdmin] idp_summary 非 200: {resp.status_code}")
-            return {"available": False, "reason": f"identity 响应 {resp.status_code}", "configured": False}
+            logger.warning(f"[IdentityAdmin] idp_summary non-200: {resp.status_code}")
+            return {"available": False, "reason": f"identity responded with {resp.status_code}", "configured": False}
         data = resp.json()
         return {
             "available": True,
@@ -120,32 +129,41 @@ class IdentityAdminClient:
         }
 
     def app_secret_inventory(self) -> dict[str, Any]:
-        # 上游 fusion-identity#35 契约:/admin/app-secrets(全量 key 台账)。
+        # Upstream fusion-identity#35 contract: /admin/app-secrets (full key inventory).
         resp = self._get("/api/v1/admin/app-secrets")
         if resp is None:
-            return {"available": False, "reason": "identity 不可达或未配置服务令牌", "apps": []}
+            return {"available": False, "reason": "identity unreachable or service token not configured", "apps": []}
         if resp.status_code == 404:
-            return {"available": False, "reason": "identity 未提供全量 key 台账(fusion-identity#35)", "apps": []}
+            return {
+                "available": False,
+                "reason": "identity does not provide the full key inventory (fusion-identity#35)",
+                "apps": [],
+            }
         if resp.status_code != 200:
-            logger.warning(f"[IdentityAdmin] app_secret_inventory 非 200: {resp.status_code}")
-            return {"available": False, "reason": f"identity 响应 {resp.status_code}", "apps": []}
+            logger.warning(f"[IdentityAdmin] app_secret_inventory non-200: {resp.status_code}")
+            return {"available": False, "reason": f"identity responded with {resp.status_code}", "apps": []}
         return {"available": True, "apps": resp.json().get("apps", [])}
 
     def app_secrets(self, app_id: str) -> dict[str, Any]:
-        # 既有端点(无需上游改动):/apps/{app_id}/secrets —— 单 app 版本明细。
+        # Existing endpoint (no upstream change needed): /apps/{app_id}/secrets — per-app version detail.
         resp = self._get(f"/api/v1/apps/{app_id}/secrets")
         if resp is None:
-            return {"available": False, "reason": "identity 不可达或未配置服务令牌", "versions": []}
+            return {
+                "available": False,
+                "reason": "identity unreachable or service token not configured",
+                "versions": [],
+            }
         if resp.status_code != 200:
-            logger.warning(f"[IdentityAdmin] app_secrets({app_id}) 非 200: {resp.status_code}")
-            return {"available": False, "reason": f"identity 响应 {resp.status_code}", "versions": []}
+            logger.warning(f"[IdentityAdmin] app_secrets({app_id}) non-200: {resp.status_code}")
+            return {"available": False, "reason": f"identity responded with {resp.status_code}", "versions": []}
         return {"available": True, "versions": resp.json()}
 
     def rotate_app_secret(self, app_id: str, grace_seconds: int = 3600) -> dict[str, Any]:
-        # Issue #62: 轮换走 identity /apps/{app_id}/secrets/rotate(旧版本进
-        # grace 窗口);新 secret 只在本响应出现一次,绝不落库/日志。
+        # Issue #62: rotation goes through identity /apps/{app_id}/secrets/rotate (the old
+        # version enters the grace window); the new secret appears exactly once in this
+        # response and is never persisted/logged.
         if not self._available():
-            return {"ok": False, "reason": "identity 不可达或未配置服务令牌"}
+            return {"ok": False, "reason": "identity unreachable or service token not configured"}
         try:
             resp = httpx.post(
                 f"{self._base_url}/api/v1/apps/{app_id}/secrets/rotate",
@@ -154,11 +172,11 @@ class IdentityAdminClient:
                 timeout=_TIMEOUT,
             )
         except httpx.HTTPError as e:
-            logger.warning(f"[IdentityAdmin] rotate({app_id}) 失败: {e}")
-            return {"ok": False, "reason": f"identity 不可达: {e}"}
+            logger.warning(f"[IdentityAdmin] rotate({app_id}) failed: {e}")
+            return {"ok": False, "reason": f"identity unreachable: {e}"}
         if resp.status_code not in (200, 201):
-            logger.warning(f"[IdentityAdmin] rotate({app_id}) 非 2xx: {resp.status_code} {resp.text[:200]}")
-            return {"ok": False, "reason": f"identity 响应 {resp.status_code}"}
+            logger.warning(f"[IdentityAdmin] rotate({app_id}) non-2xx: {resp.status_code} {resp.text[:200]}")
+            return {"ok": False, "reason": f"identity responded with {resp.status_code}"}
         data = resp.json()
         return {
             "ok": True,
@@ -169,10 +187,11 @@ class IdentityAdminClient:
         }
 
     def revoke_app_secret(self, app_id: str, version: int) -> dict[str, Any]:
-        # 上游 fusion-identity#35 请求项 4:DELETE /apps/{app_id}/secrets/{version}。
-        # 未上线前 404 → 如实返回不可用,前端禁用按钮 + roadmap 说明,不伪造成功。
+        # Upstream fusion-identity#35 request item 4: DELETE /apps/{app_id}/secrets/{version}.
+        # Until it ships, 404 → honestly report unavailable; the frontend disables the
+        # button + shows the roadmap note, no fabricated success.
         if not self._available():
-            return {"ok": False, "reason": "identity 不可达或未配置服务令牌"}
+            return {"ok": False, "reason": "identity unreachable or service token not configured"}
         try:
             resp = httpx.delete(
                 f"{self._base_url}/api/v1/apps/{app_id}/secrets/{version}",
@@ -180,13 +199,13 @@ class IdentityAdminClient:
                 timeout=_TIMEOUT,
             )
         except httpx.HTTPError as e:
-            logger.warning(f"[IdentityAdmin] revoke({app_id}) 失败: {e}")
-            return {"ok": False, "reason": f"identity 不可达: {e}"}
+            logger.warning(f"[IdentityAdmin] revoke({app_id}) failed: {e}")
+            return {"ok": False, "reason": f"identity unreachable: {e}"}
         if resp.status_code == 404:
-            return {"ok": False, "reason": "identity 未提供 revoke 端点(fusion-identity#35)"}
+            return {"ok": False, "reason": "identity does not provide the revoke endpoint (fusion-identity#35)"}
         if resp.status_code not in (200, 204):
-            logger.warning(f"[IdentityAdmin] revoke({app_id} v{version}) 非 2xx: {resp.status_code}")
-            return {"ok": False, "reason": f"identity 响应 {resp.status_code}"}
+            logger.warning(f"[IdentityAdmin] revoke({app_id} v{version}) non-2xx: {resp.status_code}")
+            return {"ok": False, "reason": f"identity responded with {resp.status_code}"}
         return {"ok": True}
 
 

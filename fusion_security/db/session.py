@@ -43,8 +43,8 @@ def _is_sqlite(url: str) -> bool:
 
 
 def _resolve_url(db_path: str | None, db_url: str | None) -> str:
-    # 优先级: 显式 db_url > 显式 db_path > FUSION_SECURITY_DB_URL > FUSION_DB_PATH > 默认 SQLite 文件。
-    # 显式参数覆盖环境变量,保证测试/单调用可隔离;环境变量给多节点部署用。
+    # Priority: explicit db_url > explicit db_path > FUSION_SECURITY_DB_URL > FUSION_DB_PATH > default SQLite file.
+    # Explicit args override env vars so tests/single calls can isolate; env vars are for multi-node deployments.
     if db_url:
         return db_url
     if db_path:
@@ -67,9 +67,9 @@ def _to_async_url(url: str) -> str:
     base = driver.split("+")[0] if "+" in driver else driver
     async_driver = _ASYNC_DRIVER_MAP.get(driver) or _ASYNC_DRIVER_MAP.get(base)
     if not async_driver:
-        logger.warning(f"[DB] 无法推断异步驱动,原样使用: {url}")
+        logger.warning(f"[DB] cannot infer async driver, using as-is: {url}")
         return url
-    # URL 不可变,用 create 复制所有字段并替换 drivername。
+    # URL objects are immutable; use create to copy all fields and replace the drivername.
     new = URL.create(
         async_driver,
         username=parsed.username,
@@ -79,7 +79,7 @@ def _to_async_url(url: str) -> str:
         database=parsed.database,
         query=parsed.query,
     )
-    # str(url) 会把密码脱敏成 ***,这里需要真实凭据传给驱动,用 render_as_string。
+    # str(url) masks the password as ***; the driver needs real credentials here, so use render_as_string.
     return new.render_as_string(hide_password=False)
 
 
@@ -90,10 +90,12 @@ def init_db(db_path: str | None = None, echo: bool = False, db_url: str | None =
         url = _resolve_url(db_path, db_url)
         kwargs: dict = {"echo": echo}
         if _is_sqlite(url):
-            # SQLite 单文件:StaticPool 共享单连接(进程内并发安全靠 GIL+check_same_thread=False),
-            # WAL 提升并发读,parent 目录需预创建。多节点共享库不走这里。
-            # P0-4: 库文件含 key_hash/源码片段,落盘必须 0600。umask 在建引擎前生效,
-            # create_all 创建文件及 -wal/-shm 均受约束;已存在文件显式 chmod 收紧。
+            # SQLite single file: StaticPool shares one connection (in-process concurrency safety relies on
+            # the GIL + check_same_thread=False), WAL improves concurrent reads, and the parent directory
+            # must be pre-created. Multi-node shared databases do not go through here.
+            # P0-4: the DB file contains key_hash/source snippets, so on-disk permissions must be 0600.
+            # umask takes effect before engine creation — the file created by create_all and its -wal/-shm
+            # companions are all constrained; pre-existing files are tightened with an explicit chmod.
             path = Path(url.replace("sqlite:///", "").replace("sqlite+aiosqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,29 +133,32 @@ def init_db(db_path: str | None = None, echo: bool = False, db_url: str | None =
             _migrate_schema(_engine)
         else:
             _migrate_schema_portable(_engine)
-        # S-P1-6: 日志里绝不暴露密码,用 hide_password 脱敏。
+        # S-P1-6: never expose passwords in logs; mask with hide_password.
         safe_url = make_url(url).render_as_string(hide_password=True)
-        logger.info(f"数据库已初始化: {safe_url}")
+        logger.info(f"database initialized: {safe_url}")
 
 
 def _migrate_schema(engine) -> None:
-    # create_all 只建缺失的表,不会给已存在的表追加新列。
-    # 旧库升级时这里幂等补齐新增列,避免线上库缺列导致查询崩溃。SQLite 专用(PRAGMA)。
+    # create_all only creates missing tables; it never appends new columns to existing ones.
+    # On upgrades of old databases, idempotently backfill new columns here to avoid query crashes
+    # from missing columns in production. SQLite-only (PRAGMA).
     _ensure_column(engine, "patches", "needs_review", "BOOLEAN NOT NULL DEFAULT 0")
-    # A-P0-2 / 多租户 / 分布式认领: scans 表新增列。
+    # A-P0-2 / multi-tenant / distributed claiming: new columns on the scans table.
     _ensure_column(engine, "scans", "path", "VARCHAR(500) DEFAULT ''")
     _ensure_column(engine, "scans", "tenant_id", "VARCHAR(16) DEFAULT ''")
     _ensure_column(engine, "scans", "claimed_by", "VARCHAR(64) DEFAULT ''")
     _ensure_column(engine, "scans", "heartbeat", "FLOAT DEFAULT 0.0")
-    # 多租户: vulnerabilities 表新增 scan_id / tenant_id(索引在 create_all 建表时生效,旧库靠这里补列)。
+    # Multi-tenant: new scan_id / tenant_id on the vulnerabilities table (indexes apply when create_all
+    # creates the table; old databases get the columns backfilled here).
     _ensure_column(engine, "vulnerabilities", "scan_id", "VARCHAR(16) DEFAULT ''")
     _ensure_column(engine, "vulnerabilities", "tenant_id", "VARCHAR(16) DEFAULT ''")
     _ensure_column(engine, "api_keys", "expires_at", "DATETIME")
-    # Feature 4: scheduled_scans 表对齐 ScanScheduler.ScheduledScan 数据类。
+    # Feature 4: scheduled_scans table aligned with the ScanScheduler.ScheduledScan dataclass.
     _ensure_column(engine, "scheduled_scans", "project_path", "VARCHAR(500) DEFAULT ''")
     _ensure_column(engine, "scheduled_scans", "frequency", "VARCHAR(20) DEFAULT 'daily'")
     _ensure_column(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
-    # Issue #32: 多租户隔离补列。projects/webhooks 旧库缺 tenant_id,补齐后 fail-closed 过滤生效。
+    # Issue #32: multi-tenant isolation columns. Old databases lack tenant_id on projects/webhooks;
+    # once backfilled, the fail-closed filter takes effect.
     _ensure_column(engine, "projects", "tenant_id", "VARCHAR(16) DEFAULT ''")
     _ensure_column(engine, "webhooks", "tenant_id", "VARCHAR(16) DEFAULT ''")
 
@@ -163,14 +168,14 @@ def _ensure_column(engine, table: str, column: str, definition: str) -> None:
         cols = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
         if column in cols:
             return
-        logger.info(f"[Migration] 补齐列 {table}.{column}")
+        logger.info(f"[Migration] adding column {table}.{column}")
         conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         conn.commit()
 
 
 def _migrate_schema_portable(engine) -> None:
-    # 非 SQLite(PG/MySQL):用 information_schema 检测列是否存在,不存在则 ALTER ADD。
-    # 避免对共享库执行 PRAGMA(SQLite 方言,PG 上会语法报错)。
+    # Non-SQLite (PG/MySQL): use information_schema to detect column existence, ALTER ADD when missing.
+    # Avoid running PRAGMA against shared databases (SQLite dialect; it raises a syntax error on PG).
     _ensure_column_portable(engine, "patches", "needs_review", "BOOLEAN NOT NULL DEFAULT FALSE")
     _ensure_column_portable(engine, "scans", "path", "VARCHAR(500) DEFAULT ''")
     _ensure_column_portable(engine, "scans", "tenant_id", "VARCHAR(16) DEFAULT ''")
@@ -184,8 +189,9 @@ def _migrate_schema_portable(engine) -> None:
     _ensure_column_portable(engine, "scheduled_scans", "config_json", "TEXT DEFAULT ''")
     _ensure_column_portable(engine, "projects", "tenant_id", "VARCHAR(16) DEFAULT ''")
     _ensure_column_portable(engine, "webhooks", "tenant_id", "VARCHAR(16) DEFAULT ''")
-    # ID 列拓宽:String(16) → String(32)。Scan.id="scan_"+hex12(17),Project.id="proj_"+hex12(17),
-    # SQLite 静默截断,PG 严格校验报 StringDataRightTruncation(POST /scans 500)。旧库需 ALTER 拓宽。
+    # ID column widening: String(16) -> String(32). Scan.id="scan_"+hex12 (17), Project.id="proj_"+hex12 (17);
+    # SQLite silently truncates, PG strictly validates and raises StringDataRightTruncation (POST /scans 500).
+    # Old databases need an ALTER to widen.
     _widen_column_portable(engine, "scans", "id", "VARCHAR(32)")
     _widen_column_portable(engine, "scans", "project_id", "VARCHAR(32)")
     _widen_column_portable(engine, "vulnerabilities", "scan_id", "VARCHAR(32)")
@@ -218,7 +224,7 @@ def _widen_column_portable(engine, table: str, column: str, new_type: str) -> No
         tgt_len = _varchar_len(target)
         if cur_len is None or tgt_len is None or cur_len >= tgt_len:
             return
-        logger.info(f"[Migration] 拓宽列 {table}.{column}: {cur_type} -> {new_type}")
+        logger.info(f"[Migration] widening column {table}.{column}: {cur_type} -> {new_type}")
         conn.exec_driver_sql(f'ALTER TABLE "{table}" ALTER COLUMN {column} TYPE {new_type}')
         conn.commit()
 
@@ -237,7 +243,7 @@ def _ensure_column_portable(engine, table: str, column: str, definition: str) ->
         insp = inspect(conn)
         if column in {c["name"] for c in insp.get_columns(table)}:
             return
-        logger.info(f"[Migration] 补齐列 {table}.{column} (portable)")
+        logger.info(f"[Migration] adding column {table}.{column} (portable)")
         conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN {column} {definition}')
         conn.commit()
 
@@ -253,7 +259,7 @@ def init_async_db(db_path: str | None = None, echo: bool = False, db_url: str | 
             path = Path(url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", ""))
             if path.parent and str(path.parent) not in ("", "."):
                 path.parent.mkdir(parents=True, exist_ok=True)
-            # P0-4: 异步库同样收紧文件权限到 0600。
+            # P0-4: tighten the async database file permissions to 0600 as well.
             _old_umask = os.umask(0o077)
             try:
                 if path.exists():
@@ -272,7 +278,7 @@ def init_async_db(db_path: str | None = None, echo: bool = False, db_url: str | 
         from . import models  # noqa: F401
 
         safe_url = make_url(url).render_as_string(hide_password=True)
-        logger.info(f"异步数据库已初始化: {safe_url}")
+        logger.info(f"async database initialized: {safe_url}")
 
 
 def get_session() -> Session:

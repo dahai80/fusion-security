@@ -12,7 +12,7 @@ from ..auth import require_permission
 
 
 def _resolve_mlx_url() -> str:
-    # 与 analyzer.py 同一来源:MLX_BASE_URL 优先,回退 FUSION_AI_URL / FUSION_MLX_URL。
+    # Same source as analyzer.py: MLX_BASE_URL first, falling back to FUSION_AI_URL / FUSION_MLX_URL.
     for var in ("MLX_BASE_URL", "FUSION_AI_URL", "FUSION_MLX_URL"):
         val = os.environ.get(var, "").strip()
         if val:
@@ -46,8 +46,8 @@ def health_check():
 
 @router.get("/health/detailed")
 def health_detailed(_=Depends(require_permission("system:manage"))):
-    # S-P1: 此前挂在 public_router(无鉴权),泄露 DB/AI/CPU/磁盘状态。移到鉴权 router。
-    # 修复 next(get_session()) 误用 + s.execute("SELECT 1") 在 SA 2.x 报错(需 text())。
+    # S-P1: previously mounted on public_router (no auth), leaking DB/AI/CPU/disk status. Moved to the authenticated router.
+    # Also fixes next(get_session()) misuse + s.execute("SELECT 1") breaking on SA 2.x (requires text()).
     import httpx
     from sqlalchemy import text
 
@@ -62,7 +62,7 @@ def health_detailed(_=Depends(require_permission("system:manage"))):
             s.close()
     except Exception as e:
         db_ok = False
-        logger.warning(f"DB健康检查失败: {e}")
+        logger.warning(f"DB health check failed: {e}")
     ai_ok = False
     try:
         r = httpx.get(f"{_MLX_BASE_URL}/models", timeout=3)
@@ -101,8 +101,8 @@ def model_config(_=Depends(require_permission("system:manage"))):
             return {"available": True, "models": models, "default": models[0]["id"] if models else ""}
         return {"available": False, "models": [], "default": ""}
     except Exception as e:
-        # P1-4: 异常文本可能泄露内网拓扑/路径,日志保留明细,响应只回通用文案。
-        logger.warning(f"获取模型配置失败: {e}")
+        # P1-4: exception text may leak intranet topology/paths; keep details in logs, return a generic message in the response.
+        logger.warning(f"failed to get model config: {e}")
         return {"available": False, "models": [], "default": "", "error": "model backend unavailable"}
 
 
@@ -148,7 +148,7 @@ class ModelConfigUpdate(BaseModel):
 @router.put("/models")
 def update_model_config(body: ModelConfigUpdate, _=Depends(require_permission("system:manage"))):
     if not body.default_model:
-        raise HTTPException(status_code=400, detail="default_model 不能为空")
+        raise HTTPException(status_code=400, detail="default_model must not be empty")
     import httpx
 
     try:
@@ -158,11 +158,12 @@ def update_model_config(body: ModelConfigUpdate, _=Depends(require_permission("s
             model_ids = [m.get("id", m.get("model", "")) for m in models]
             if body.default_model not in model_ids:
                 raise HTTPException(
-                    status_code=400, detail=f"模型 {body.default_model} 不可用，可选: {', '.join(model_ids)}"
+                    status_code=400,
+                    detail=f"Model {body.default_model} unavailable, valid options: {', '.join(model_ids)}",
                 )
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"验证模型失败: {e}")
-    logger.info(f"模型配置更新: default_model={body.default_model}")
+        logger.warning(f"model verification failed: {e}")
+    logger.info(f"model config updated: default_model={body.default_model}")
     return {"status": "ok", "default_model": body.default_model}

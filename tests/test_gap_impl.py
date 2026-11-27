@@ -139,12 +139,12 @@ class TestAISemanticRules:
 
     def test_acl001_horizontal_privilege(self):
         rule = next(r for r in AI_SEMANTIC_RULES if r.prdid == "FUS-ACL-001")
-        assert "水平越权" in rule.name
+        assert "privilege escalation" in rule.name
         assert rule.cwe_id == "CWE-639"
 
     def test_logic001_payment_tampering(self):
         rule = next(r for r in AI_SEMANTIC_RULES if r.prdid == "FUS-LOGIC-001")
-        assert "支付" in rule.name or "金额" in rule.prompt_hint
+        assert "payment" in rule.name.lower() or "amount" in rule.prompt_hint.lower()
         assert rule.severity == "critical"
 
 

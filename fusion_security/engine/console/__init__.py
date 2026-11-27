@@ -1,7 +1,8 @@
-"""Console engine —— Admin Console 聚合层(Issue #60/#61/#62)。
+"""Console engine — Admin Console aggregation layer (Issue #60/#61/#62).
 
-audit_store:审计 jsonl 查询;identity_admin:identity 服务面聚合(可降级);
-posture:姿态 checklist;summary:四分区首页聚合。
+audit_store: audit jsonl query; identity_admin: identity service-plane
+aggregation (degradable); posture: posture checklist; summary: four-zone
+home aggregation.
 """
 
 from .audit_store import AuditStore

@@ -1,6 +1,6 @@
-# Issue #32: 本地租户注册已退役,鉴权归 fusion-identity。
-# TenantManager/Tenant 保留为报错桩,实例化即 RuntimeError,避免静默回退旧实现。
-# AuditLogger/AuditEntry 仍保留(审计路径独立,不依赖 TenantManager)。
+# Issue #32: local tenant registry retired, auth owned by fusion-identity.
+# TenantManager/Tenant are kept as error stubs; instantiating raises RuntimeError so the old local implementation is never silently used.
+# AuditLogger/AuditEntry are kept (the audit path is independent and does not rely on TenantManager).
 from .audit import AuditEntry, AuditLogger
 from .manager import Tenant, TenantManager
 

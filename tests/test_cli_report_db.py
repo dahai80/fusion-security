@@ -214,8 +214,8 @@ class TestReportGenerator:
         rg = ReportGenerator()
         result = self._make_result()
         md = rg.generate_markdown(result)
-        assert "代码安全审计报告" in md
-        assert "扫描摘要" in md
+        assert "Code Security Audit Report" in md
+        assert "Scan Summary" in md
 
     def test_generate_markdown_with_vulns(self):
         rg = ReportGenerator()
@@ -250,7 +250,7 @@ class TestReportGenerator:
         result = self._make_result()
         html = rg.generate_html(result)
         assert "<!DOCTYPE html>" in html
-        assert "代码安全审计报告" in html
+        assert "Code Security Audit Report" in html
 
     def test_generate_html_with_vulns(self):
         rg = ReportGenerator()
@@ -322,7 +322,7 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["rules"])
         assert result.exit_code == 0
-        assert "检测规则" in result.output
+        assert "Detection rules" in result.output
 
     def test_scan_no_ai(self):
         runner = CliRunner()

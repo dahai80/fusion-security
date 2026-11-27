@@ -1,11 +1,11 @@
-"""Fusion-Security CLI 入口。
+"""Fusion-Security CLI entry.
 
-引擎分工:
-- scan --pipeline / --sca  -> ScanPipeline(6 阶段:Recon→Discover→Verify→Triage→Patch→Retest),权威扫描路径。
-- scan(无 --pipeline)       -> Scanner(legacy 单遍并行批扫),保留兼容,结果与 pipeline 等价但无阶段/断点。
-- check / gate / sarif      -> Scanner(use_ai=False),CI 友好的轻量路径(纯规则+AST,无 AI,快速)。
-  这是刻意的 legacy 保留:CI 场景只需规则结果 + 退出码,不需要 AI 验证或补丁生成。
-  API(POST /scans)已统一走 ScanPipeline,CLI 的 check/gate/sarif 不经 pipeline。
+Engine split:
+- scan --pipeline / --sca  -> ScanPipeline (6 stages: Recon->Discover->Verify->Triage->Patch->Retest), authoritative scan path.
+- scan (no --pipeline)     -> Scanner (legacy single-pass parallel batch scan), kept for compatibility; results equal pipeline but without stages/checkpoints.
+- check / gate / sarif     -> Scanner(use_ai=False), CI-friendly lightweight path (rules+AST only, no AI, fast).
+  This legacy retention is deliberate: CI only needs rule results + exit code, no AI verification or patch generation.
+  API (POST /scans) already goes through ScanPipeline; CLI check/gate/sarif do not.
 """
 
 from __future__ import annotations
@@ -41,13 +41,13 @@ def _logs_to_stderr(machine_only: bool = False):
 
 
 @click.group()
-@click.option("--verbose", "-v", is_flag=True, help="详细输出")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.version_option(version=__version__, prog_name=__app_name__)
 def cli(verbose: bool):
-    """Fusion-Security — 本地 AI 代码安全审计工具。
+    """Fusion-Security - local AI code security audit tool.
 
-    100% 本地离线，基于 fusion-mlx，对标 Claude Security。
-    代码不出境，隐私绝对安全。
+    100% local and offline, powered by fusion-mlx, benchmarked against Claude Security.
+    Code never leaves the machine; privacy is absolute.
     """
     level = logging.DEBUG if verbose else logging.INFO
     setup_logger(level=level, verbose=verbose)
@@ -56,23 +56,33 @@ def cli(verbose: bool):
 @cli.command()
 @click.argument("path", default=".")
 @click.option(
-    "--severity", "-s", default="low", type=click.Choice(["critical", "high", "medium", "low"]), help="最低报告级别"
+    "--severity",
+    "-s",
+    default="low",
+    type=click.Choice(["critical", "high", "medium", "low"]),
+    help="Minimum severity to report",
 )
-@click.option("--output", "-o", default="", help="报告输出目录")
-@click.option("--format", "-f", "fmt", default="md", type=click.Choice(["md", "json", "html", "all"]), help="报告格式")
+@click.option("--output", "-o", default="", help="Report output directory")
+@click.option(
+    "--format", "-f", "fmt", default="md", type=click.Choice(["md", "json", "html", "all"]), help="Report format"
+)
 @click.option(
     "--compliance",
     default="",
     type=click.Choice(["", "dengbao", "iso27001", "pci_dss", "eu_ai_act"]),
-    help="报告附带合规对照段(P3.2 框架 profile)",
+    help="Attach compliance mapping section to the report (P3.2 framework profile)",
 )
-@click.option("--no-ai", is_flag=True, help="禁用 AI 分析")
-@click.option("--model", "-m", default="", help="fusion-mlx 模型名称")
-@click.option("--pipeline", is_flag=True, help="使用5阶段流水线扫描")
-@click.option("--sca", is_flag=True, help="启用 SCA 依赖漏洞扫描")
-@click.option("--osv", is_flag=True, help="启用 OSV.dev 云端依赖漏洞查询(会向 osv.dev 外发依赖清单，打破离线)")
-@click.option("--incremental", "-i", is_flag=True, help="增量扫描(仅扫描git diff变更文件)")
-@click.option("--base", "-b", default="", help="增量扫描基准commit(默认HEAD~1)")
+@click.option("--no-ai", is_flag=True, help="Disable AI analysis")
+@click.option("--model", "-m", default="", help="fusion-mlx model name")
+@click.option("--pipeline", is_flag=True, help="Scan with the 6-stage pipeline")
+@click.option("--sca", is_flag=True, help="Enable SCA dependency vulnerability scanning")
+@click.option(
+    "--osv",
+    is_flag=True,
+    help="Enable OSV.dev cloud dependency lookups (sends the dependency manifest to osv.dev, breaking offline mode)",
+)
+@click.option("--incremental", "-i", is_flag=True, help="Incremental scan (only files changed in git diff)")
+@click.option("--base", "-b", default="", help="Incremental scan base commit (default HEAD~1)")
 def scan(
     path: str,
     severity: str,
@@ -87,7 +97,7 @@ def scan(
     incremental: bool,
     base: str,
 ):
-    """扫描代码安全漏洞。"""
+    """Scan code for security vulnerabilities."""
     asyncio.run(
         _async_scan(path, severity, output, fmt, compliance, no_ai, model, pipeline, sca, osv, incremental, base)
     )
@@ -108,7 +118,7 @@ async def _async_scan(
     base: str,
 ):
     click.echo()
-    click.echo("🔒 Fusion-Security 代码安全审计")
+    click.echo("🔒 Fusion-Security code security audit")
     click.echo("=" * 50)
     click.echo()
 
@@ -120,22 +130,22 @@ async def _async_scan(
             base_ref = base or "HEAD~1"
             diff = git.get_changed_files(base=base_ref, head="HEAD")
             if not diff.changed_files:
-                click.echo("  ✅ 无代码变更，跳过扫描")
+                click.echo("  ✅ No code changes, skipping scan")
                 return
-            click.echo(f"  扫描模式: 🔄 增量扫描 ({base_ref}...HEAD)")
-            click.echo(f"  变更文件: {len(diff.changed_files)} 个")
+            click.echo(f"  Scan mode: 🔄 incremental ({base_ref}...HEAD)")
+            click.echo(f"  Changed files: {len(diff.changed_files)}")
             click.echo()
             incremental_files = [str(Path(path) / f) for f in diff.changed_files]
             target = ScanTarget(path, incremental_files=incremental_files)
             scanner = Scanner(use_ai=not no_ai, model=model)
-            with click.progressbar(length=100, label="增量扫描中...") as bar:
+            with click.progressbar(length=100, label="Incremental scanning...") as bar:
                 result = await scanner.scan_incremental(target, diff.changed_files, severity_threshold=severity)
                 bar.update(100)
         except ValueError as e:
-            click.echo(f"  ⚠️  {e}，回退到全量扫描")
+            click.echo(f"  ⚠️  {e}, falling back to full scan")
             incremental = False
         except Exception as e:
-            logger.warning(f"增量扫描失败: {e}，回退到全量扫描")
+            logger.warning(f"incremental scan failed: {e}, falling back to full scan")
             incremental = False
 
     if not incremental:
@@ -148,21 +158,23 @@ async def _async_scan(
                 enable_osv=osv,
             )
             pl = ScanPipeline(config)
-            click.echo(f"  扫描目标: {path}")
-            click.echo("  扫描模式: 🔄 5阶段流水线")
-            click.echo(f"  AI 分析:  {'✅ 已启用' if not no_ai else '❌ 已禁用'}")
-            click.echo(f"  SCA 扫描: {'✅ 已启用' if config.enable_sca else '❌ 已禁用'}")
-            click.echo(f"  OSV 云查: {'✅ 已启用(将外发依赖清单)' if config.enable_osv else '❌ 已禁用(离线)'}")
+            click.echo(f"  Scan target: {path}")
+            click.echo("  Scan mode: 🔄 6-stage pipeline")
+            click.echo(f"  AI analysis:  {'✅ enabled' if not no_ai else '❌ disabled'}")
+            click.echo(f"  SCA scan: {'✅ enabled' if config.enable_sca else '❌ disabled'}")
+            click.echo(
+                f"  OSV lookup: {'✅ enabled (sends dependency manifest)' if config.enable_osv else '❌ disabled (offline)'}"
+            )
             click.echo()
 
-            with click.progressbar(length=100, label="扫描中...") as bar:
+            with click.progressbar(length=100, label="Scanning...") as bar:
                 ctx = await pl.run(path)
                 bar.update(100)
 
             result = pl.to_scan_result(ctx)
 
             click.echo()
-            click.echo("  📊 阶段结果:")
+            click.echo("  📊 Stage results:")
             for stage, info in ctx.stage_results.items():
                 dur = info.get("duration_ms", 0)
                 click.echo(f"    {stage}: {dur:.0f}ms")
@@ -171,22 +183,22 @@ async def _async_scan(
             target = ScanTarget(path)
             scanner = Scanner(use_ai=not no_ai, model=model)
 
-            click.echo(f"  扫描目标: {target.path}")
-            click.echo(f"  AI 分析:  {'✅ 已启用' if not no_ai else '❌ 已禁用'}")
+            click.echo(f"  Scan target: {target.path}")
+            click.echo(f"  AI analysis:  {'✅ enabled' if not no_ai else '❌ disabled'}")
             click.echo()
 
-            with click.progressbar(length=100, label="扫描中...") as bar:
+            with click.progressbar(length=100, label="Scanning...") as bar:
                 result = await scanner.scan(target, severity_threshold=severity)
                 bar.update(100)
 
     click.echo()
     click.echo(f"  📊 {result.summary}")
-    click.echo(f"  扫描文件: {result.files_scanned} 个")
-    click.echo(f"  扫描耗时: {result.duration_ms:.0f}ms")
+    click.echo(f"  Files scanned: {result.files_scanned}")
+    click.echo(f"  Scan duration: {result.duration_ms:.0f}ms")
     click.echo()
 
     if result.vulnerabilities:
-        click.echo("  漏洞列表:")
+        click.echo("  Vulnerabilities:")
         for i, vuln in enumerate(result.vulnerabilities[:10], 1):
             sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
             icon = sev_color.get(vuln.severity, "⚪")
@@ -196,16 +208,16 @@ async def _async_scan(
                 click.echo(f"     💡 {vuln.fix_suggestion}")
 
         if len(result.vulnerabilities) > 10:
-            click.echo(f"     ... 还有 {len(result.vulnerabilities) - 10} 个漏洞")
+            click.echo(f"     ... and {len(result.vulnerabilities) - 10} more vulnerabilities")
 
-    # 生成报告
+    # Generate reports
     if output or fmt != "md":
         output_dir = output or "~/Desktop/fusion_security_reports"
         reporter = ReportGenerator()
         formats = ["md", "json", "html"] if fmt == "all" else [fmt]
         saved = reporter.save_report(result, output_dir, formats, compliance_framework=compliance)
         click.echo()
-        click.echo("  报告已保存:")
+        click.echo("  Reports saved:")
         for fmt_name, path in saved.items():
             click.echo(f"    📄 {fmt_name}: {path}")
 
@@ -215,12 +227,12 @@ async def _async_scan(
 @cli.command()
 @click.argument("path", default=".")
 def check(path: str):
-    """快速检查（仅输出结果，适合 CI）。"""
+    """Quick check (results only, CI-friendly)."""
     asyncio.run(_async_check(path))
 
 
 async def _async_check(path: str):
-    # CI 轻量路径:Scanner(use_ai=False) 纯规则+AST,不经 ScanPipeline。刻意的 legacy。
+    # CI lightweight path: Scanner(use_ai=False), rules+AST only, no ScanPipeline. Deliberate legacy retention.
     target = ScanTarget(path)
     scanner = Scanner(use_ai=False)
     result = await scanner.scan(target)
@@ -243,14 +255,14 @@ async def _async_check(path: str):
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def rules(ctx):
-    """检测规则管理（无子命令时列出全部规则）。"""
+    """Detection rule management (lists all rules when no subcommand)."""
     if ctx.invoked_subcommand is None:
         from .engine.rules.engine import RuleEngine
 
         engine = RuleEngine()
 
         click.echo()
-        click.echo(f"📋 检测规则 ({engine.get_rule_count()} 条)")
+        click.echo(f"📋 Detection rules ({engine.get_rule_count()})")
         click.echo("=" * 50)
         click.echo()
 
@@ -331,31 +343,31 @@ def rules_keygen(key_path: str, overwrite: bool):
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", help="监听地址")
-@click.option("--port", default=11454, help="监听端口")
+@click.option("--host", default="127.0.0.1", help="Listen address")
+@click.option("--port", default=11454, help="Listen port")
 def serve(host: str, port: int):
-    """启动 Web API 服务。"""
+    """Start the Web API server."""
     import uvicorn
 
     from .api.app import app
 
-    click.echo(f"🔒 Fusion-Security API 启动: http://{host}:{port}")
-    click.echo(f"   API 文档: http://{host}:{port}/docs")
+    click.echo(f"🔒 Fusion-Security API starting: http://{host}:{port}")
+    click.echo(f"   API docs: http://{host}:{port}/docs")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 @cli.command()
 @click.argument("path", default=".")
 @click.option(
-    "--policy", "-p", default="standard", type=click.Choice(["strict", "standard", "permissive"]), help="Gate 策略"
+    "--policy", "-p", default="standard", type=click.Choice(["strict", "standard", "permissive"]), help="Gate policy"
 )
 def gate(path: str, policy: str):
-    """安全质量门禁检查（适合 CI/CD）。"""
+    """Security quality gate check (CI/CD friendly)."""
     asyncio.run(_async_gate(path, policy))
 
 
 async def _async_gate(path: str, policy: str):
-    # CI 门禁:Scanner(use_ai=False) 纯规则,不经 pipeline。
+    # CI gate: Scanner(use_ai=False), rules only, no pipeline.
     from .engine.ci.gate import GatePolicy, SecurityGate
 
     target = ScanTarget(path)
@@ -371,21 +383,21 @@ async def _async_gate(path: str, policy: str):
 
 @cli.command()
 @click.argument("path", default=".")
-@click.option("--output", "-o", default="results.sarif", help="SARIF 输出文件")
+@click.option("--output", "-o", default="results.sarif", help="SARIF output file")
 def sarif(path: str, output: str):
-    """导出 SARIF 格式扫描结果。"""
+    """Export scan results in SARIF format."""
     asyncio.run(_async_sarif(path, output))
 
 
 async def _async_sarif(path: str, output: str):
-    # SARIF 导出:Scanner(use_ai=False) 纯规则,不经 pipeline。
+    # SARIF export: Scanner(use_ai=False), rules only, no pipeline.
     from .report.sarif import save_sarif
 
     target = ScanTarget(path)
     scanner = Scanner(use_ai=False)
     result = await scanner.scan(target)
     saved = save_sarif(result.vulnerabilities, output)
-    click.echo(f"📄 SARIF 报告已保存: {saved}")
+    click.echo(f"📄 SARIF report saved: {saved}")
 
 
 @cli.command(name="inject-scan")
