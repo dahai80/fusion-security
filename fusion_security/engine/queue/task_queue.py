@@ -57,7 +57,7 @@ class TaskQueue:
         async with self._lock:
             self._tasks[task.task_id] = task
         await self._queue.put(task)
-        logger.info(f"[TaskQueue] 入队: {task.task_id} priority={task.priority.name} path={task.project_path}")
+        logger.info(f"[TaskQueue] enqueued: {task.task_id} priority={task.priority.name} path={task.project_path}")
         return task.task_id
 
     async def dequeue(self, timeout: float = 30.0) -> ScanTask | None:
@@ -73,7 +73,7 @@ class TaskQueue:
                 self._tasks[task_id].status = status
                 for k, v in kwargs.items():
                     setattr(self._tasks[task_id], k, v)
-                logger.info(f"[TaskQueue] 状态更新: {task_id} -> {status}")
+                logger.info(f"[TaskQueue] status updated: {task_id} -> {status}")
         if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
             await self._cleanup_completed()
 
@@ -89,14 +89,15 @@ class TaskQueue:
         return tasks
 
     async def cancel_task(self, task_id: str) -> bool:
-        # 仅标记 CANCELLED。运行中任务的 asyncio.Task 中断由 WorkerPool.cancel_active 负责
-        # (TaskQueue 不持有 pool 引用,职责分离)。排队中任务 dequeue 后见 CANCELLED 即跳过。
+        # Only marks CANCELLED. Interrupting the asyncio.Task of a running task is
+        # WorkerPool.cancel_active's job (TaskQueue holds no pool reference; separation
+        # of concerns). Queued tasks are skipped once dequeued when seen as CANCELLED.
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
                 return False
             task.status = TaskStatus.CANCELLED
-            logger.info(f"[TaskQueue] 取消任务: {task_id}")
+            logger.info(f"[TaskQueue] task cancelled: {task_id}")
             return True
 
     @property
@@ -118,7 +119,7 @@ class TaskQueue:
                 remove = completed[: len(completed) - self._max_completed]
                 for tid in remove:
                     del self._tasks[tid]
-                logger.debug(f"[TaskQueue] 清理 {len(remove)} 个已完成任务")
+                logger.debug(f"[TaskQueue] cleaned up {len(remove)} completed tasks")
 
 
 class WorkerPool:
@@ -137,37 +138,40 @@ class WorkerPool:
         for i in range(self._workers):
             t = asyncio.create_task(self._worker_loop(i))
             self._tasks.append(t)
-        logger.info(f"[WorkerPool] 启动 {self._workers} 个工作线程")
+        logger.info(f"[WorkerPool] started {self._workers} workers")
 
     async def cancel_active(self, task_id: str) -> bool:
-        # 运行中任务中断其 asyncio.Task,触发 worker_loop 的 CancelledError 分支。
+        # Interrupt the asyncio.Task of a running task, triggering the CancelledError
+        # branch in worker_loop.
         at = self._active.get(task_id)
         if at is None:
             return False
         at.cancel()
-        logger.info(f"[WorkerPool] 中断运行中任务: {task_id}")
+        logger.info(f"[WorkerPool] interrupted running task: {task_id}")
         return True
 
     async def stop(self) -> None:
         self._running = False
         for t in self._tasks:
             t.cancel()
-        # 同时中断在跑任务(此前仅 cancel loop task,executor 内长调用继续跑完)。
+        # Also interrupt in-flight tasks (previously only the loop tasks were cancelled,
+        # letting long calls inside the executor run to completion).
         for at in self._active.values():
             at.cancel()
-        # 带超时 await 在跑任务,给在途 MLX 请求 drain 窗口,避免半写数据。
-        # 跨事件循环(TestClient lifespan 线程 vs 请求线程)时 gather 抛 ValueError,降级为仅 cancel。
+        # Await in-flight tasks with a timeout to give in-flight MLX requests a drain
+        # window and avoid half-written data. Across event loops (TestClient lifespan
+        # thread vs request thread) gather raises ValueError; degrade to cancel-only.
         if self._tasks:
             try:
                 await asyncio.wait_for(asyncio.gather(*self._tasks, return_exceptions=True), timeout=10.0)
             except (TimeoutError, ValueError) as e:
-                logger.warning(f"[WorkerPool] 停机 drain 跳过 ({type(e).__name__}): {e}")
+                logger.warning(f"[WorkerPool] shutdown drain skipped ({type(e).__name__}): {e}")
         self._tasks.clear()
         self._active.clear()
-        logger.info("[WorkerPool] 已停止")
+        logger.info("[WorkerPool] stopped")
 
     async def _worker_loop(self, worker_id: int) -> None:
-        logger.info(f"[Worker-{worker_id}] 启动")
+        logger.info(f"[Worker-{worker_id}] started")
         while self._running:
             task = await self._queue.dequeue(timeout=5.0)
             if task is None:
@@ -176,8 +180,9 @@ class WorkerPool:
                 continue
             task.status = TaskStatus.RUNNING
             task.started_at = time.time()
-            # P1-9: 先登记 _active 再 update_status。否则 cancel_active 在两步之间读到空,
-            # 无法取消已 RUNNING 的任务,造成取消竞态。
+            # P1-9: register in _active before update_status. Otherwise cancel_active
+            # reads an empty dict between the two steps, cannot cancel an already-RUNNING
+            # task, and a cancellation race occurs.
             self._active[task.task_id] = asyncio.current_task()
             await self._queue.update_status(task.task_id, TaskStatus.RUNNING)
             try:
@@ -192,7 +197,7 @@ class WorkerPool:
                         result=result,
                         completed_at=task.completed_at,
                     )
-                    logger.info(f"[Worker-{worker_id}] 完成: {task.task_id}")
+                    logger.info(f"[Worker-{worker_id}] completed: {task.task_id}")
                 else:
                     task.status = TaskStatus.FAILED
                     task.error = "No executor configured"
@@ -215,7 +220,7 @@ class WorkerPool:
                     error=str(e),
                     completed_at=task.completed_at,
                 )
-                logger.error(f"[Worker-{worker_id}] 任务失败: {task.task_id} error={e}")
+                logger.error(f"[Worker-{worker_id}] task failed: {task.task_id} error={e}")
             finally:
                 self._active.pop(task.task_id, None)
 

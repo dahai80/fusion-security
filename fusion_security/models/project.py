@@ -54,7 +54,7 @@ class Scan:
     branch: str = ""
     base_commit: str = ""
     head_commit: str = ""
-    # A-P0-2: 扫描目标原始路径,对账与队列恢复依赖。
+    # A-P0-2: original path of the scan target; reconciliation and queue resume depend on it.
     path: str = ""
     tenant_id: str = ""
     files_scanned: int = 0

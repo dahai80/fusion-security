@@ -20,7 +20,7 @@ class Rule:
     enabled: bool = True
     detection_type: str = "regex"  # regex | ast | taint | semantic
     source: str = "builtin"  # builtin | custom | imported
-    prdid: str = ""  # PRD规则编号，如 FUS-INJ-001
+    prdid: str = ""  # PRD rule ID, e.g. FUS-INJ-001
 
     def to_dict(self) -> dict[str, Any]:
         return {

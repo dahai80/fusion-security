@@ -77,7 +77,7 @@ class TestAIAnalyzer:
             code_snippet="old code",
         )
         result = await analyzer.generate_fix(vuln)
-        assert result == "// 修复生成失败"
+        assert result == "// fix generation failed"
 
     def test_parse_json_valid(self):
         from fusion_security.engine.ai.analyzer import AIAnalyzer
@@ -521,7 +521,7 @@ class TestModuleIntegrity:
 
         s = S(use_ai=False)
         s._generate_summary(result)
-        assert "2 个安全漏洞" in result.summary
+        assert "Found 2 security vulnerabilities" in result.summary
         assert "critical" in result.summary
 
 

@@ -1,12 +1,15 @@
-"""Alert engine —— 订阅匹配 + shell 🔔 通知源(Issue #61)。
+"""Alert engine — subscription matching + shell notification feed (Issue #61).
 
-匹配模型:拉取式。shell 通知中心按 30s 轮询 /console/notifications;每次轮询
-先对订阅做增量匹配(游标 last_matched_ts,只看新事件,不重放历史),命中落
-alert_records(dedup_key 幂等),再把最近未超期告警按 shell 契约返回:
-{count, items: [{id, title, level, route, ts}]},level ∈ info/warning/error。
+Pull-based model. The shell notification center polls /console/notifications
+every 30s; each poll first incrementally matches subscriptions (cursor
+last_matched_ts, new events only, no history replay), stores hits into
+alert_records (idempotent via dedup_key), then returns the latest
+non-expired alerts in the shell contract shape:
+{count, items: [{id, title, level, route, ts}]}, level in info/warning/error.
 
-密钥过期告警在同一次轮询里附带检查(本地 key expires_at 14 天窗口 + identity
-app secret grace_until),按 key+日期 dedup,每天至多提醒一次。
+Key expiry alerts are checked in the same poll (local key expires_at 14-day
+window + identity app secret grace_until), deduped by key+date so each key
+reminds at most once per day.
 """
 
 from __future__ import annotations
@@ -39,7 +42,8 @@ def _load_subscriptions(tenant_id: str) -> list:
 
 
 def _load_saved_query(subscription) -> dict:
-    # 订阅可引用保存查询:定义 JSON 与手输过滤同构,重放同一路径。
+    # A subscription may reference a saved query: its definition JSON is shaped
+    # like the manual filters and replays the same matching path.
     if not subscription.saved_query_id:
         return {}
     from ...db.models import SavedQueryORM
@@ -52,7 +56,7 @@ def _load_saved_query(subscription) -> dict:
         try:
             return json.loads(q.definition or "{}")
         except json.JSONDecodeError:
-            logger.warning(f"[AlertEngine] 保存查询 {q.id} 定义解析失败,按空过滤处理")
+            logger.warning(f"[AlertEngine] failed to parse saved query {q.id} definition; treating as empty filter")
             return {}
     finally:
         db.close()
@@ -67,7 +71,8 @@ def _entry_matches(rec: dict, subscription, saved_def: dict) -> bool:
     if risk_levels and rec["risk_level"] not in risk_levels:
         return False
     if not subscription.event_class:
-        # 无 event_class 时按保存查询的 search/action 过滤(全空 = 匹配全部)。
+        # Without event_class, filter by the saved query's search/action
+        # (all empty = match everything).
         search = (saved_def.get("search") or "").strip().lower()
         if search:
             haystack = f"{rec['action']} {rec['actor']} {rec['resource_type']} {rec['resource_id']}"
@@ -108,7 +113,8 @@ def _upsert_alert(
 
 
 def _check_key_expiry_alerts(tenant_id: str) -> None:
-    # 本地 key 即将过期(14 天窗)→ warning 告警;dedup 按 key+日期,每日一次。
+    # Local key expiring soon (14-day window) -> warning alert; dedup by
+    # key+date, at most one reminder per day.
     from ...db.models import AlertRecordORM, ApiKeyORM
 
     db = get_session()
@@ -132,7 +138,7 @@ def _check_key_expiry_alerts(tenant_id: str) -> None:
                         tenant_id=tenant_id,
                         subscription_id="",
                         dedup_key=dedup,
-                        title=f"API key 「{k.name}」即将过期({k.expires_at.strftime('%Y-%m-%d')})",
+                        title=f'API key "{k.name}" expires soon ({k.expires_at.strftime("%Y-%m-%d")})',
                         level="warning",
                         route="/keys",
                         event_action="key.expiring",
@@ -144,8 +150,10 @@ def _check_key_expiry_alerts(tenant_id: str) -> None:
 
 
 def match_new_alerts(tenant_id: str, store) -> int:
-    # 增量匹配:每个订阅只看 last_matched_ts 之后的新条目,命中落告警表。
-    # 返回新增告警数(日志用)。任何异常不向上抛 —— 通知轮询不能因匹配失败 500。
+    # Incremental matching: each subscription only sees entries newer than
+    # last_matched_ts; hits land in the alert table.
+    # Returns the number of new alerts (for logging). Exceptions are never
+    # re-raised — the notification poll must not 500 because matching failed.
     fired = 0
     try:
         subs = _load_subscriptions(tenant_id)
@@ -171,7 +179,7 @@ def match_new_alerts(tenant_id: str, store) -> int:
                     tenant_id,
                     sub.id,
                     dedup,
-                    f"安全告警: {rec['action']}({rec['actor']})",
+                    f"Security alert: {rec['action']} ({rec['actor']})",
                     level,
                     "/audit",
                     rec["action"],
@@ -192,12 +200,12 @@ def match_new_alerts(tenant_id: str, store) -> int:
                     db.close()
         _check_key_expiry_alerts(tenant_id)
     except Exception as e:
-        logger.warning(f"[AlertEngine] 匹配失败(忽略): {e}")
+        logger.warning(f"[AlertEngine] matching failed (ignored): {e}")
     return fired
 
 
 def notification_items(tenant_id: str, limit: int = 20) -> dict:
-    # shell 🔔 契约:{count, items: [{id, title, level, route, ts}]}。
+    # Shell notification contract: {count, items: [{id, title, level, route, ts}]}.
     from ...db.models import AlertRecordORM
 
     db = get_session()

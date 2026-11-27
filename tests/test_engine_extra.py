@@ -371,7 +371,7 @@ class TestSCAScanner:
         }
         v = scanner._osv_to_vulnerability(dep, osv_vuln)
         assert v is not None
-        assert "OSV 漏洞详情" in v.fix_suggestion
+        assert "OSV advisory" in v.fix_suggestion
 
     def test_osv_to_vulnerability_severity_from_score(self):
         scanner = SCAScanner(use_osv=False)
@@ -499,7 +499,7 @@ class TestAdversarialVerifier:
         vuln = _make_vuln()
         is_real, confidence, reason = await verifier.verify(vuln, [Path("test.py")])
         assert is_real is False
-        assert "防御反驳" in reason
+        assert "defense refutation" in reason
 
     async def test_verify_batch(self, mock_ai):
         mock_ai._chat.return_value = "irrelevant"
@@ -624,7 +624,7 @@ def execute_query(param):
         )
         sinks = tracker._find_sinks(ast_result)
         assert len(sinks) >= 1
-        assert sinks[0].sink_type == "SQL注入"
+        assert sinks[0].sink_type == "SQL injection"
 
     def test_find_sinks_base_name(self):
         tracker = TaintTracker()
@@ -635,7 +635,7 @@ def execute_query(param):
         )
         sinks = tracker._find_sinks(ast_result)
         assert len(sinks) >= 1
-        assert sinks[0].sink_type == "命令注入"
+        assert sinks[0].sink_type == "Command injection"
 
     def test_check_sanitization(self):
         tracker = TaintTracker()
@@ -827,7 +827,7 @@ class TestScanPipeline:
         ctx.stage_results = {"triage": {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "duration_ms": 10}}
         result = pipeline.to_scan_result(ctx)
         assert isinstance(result, ScanResult)
-        assert "未发现安全漏洞" in result.summary or len(result.vulnerabilities) == 0
+        assert "No security vulnerabilities found" in result.summary or len(result.vulnerabilities) == 0
 
     async def test_pipeline_verify_no_vulns(self, temp_project):
         config = PipelineConfig(
@@ -1387,7 +1387,7 @@ class TestScannerExtra:
 
 class TestGitHelper:
     def test_init_not_git_repo(self):
-        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="不是git仓库"):
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="not a git repository"):
             GitHelper(tmpdir)
 
     def test_get_current_branch(self):

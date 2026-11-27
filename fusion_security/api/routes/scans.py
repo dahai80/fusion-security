@@ -87,13 +87,13 @@ def _scan_orm_to_response(o: ScanORM) -> ScanResponse:
 
 
 def _scan_tenant_scope(query, api_key: APIKey):
-    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    # Issue #32: fail-closed tenant isolation. get_principal guarantees a non-empty tenant_id; always filter.
     tenant_id = api_key.tenant_id or ""
     return query.filter(ScanORM.tenant_id == tenant_id)
 
 
 def _check_scan_tenant(o: ScanORM, api_key: APIKey) -> None:
-    # Issue #32: fail-closed。tenant_id 必非空,跨租户访问一律 404。
+    # Issue #32: fail-closed. tenant_id is always non-empty; cross-tenant access is always 404.
     tenant_id = api_key.tenant_id or ""
     if (o.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -109,8 +109,8 @@ async def _run_scan(
     changed_files: list[str],
     tenant_id: str = "",
 ):
-    # Wave 3/4: pipeline 权威路径。Legacy Scanner 已从 API 退役(仅 CLI check/gate/sarif 保留)。
-    # 持久化 vulnerabilities + findings + patches,完成后触发 webhook(Feature 5)。
+    # Wave 3/4: pipeline is the authoritative path. Legacy Scanner retired from the API (only CLI check/gate/sarif kept).
+    # Persist vulnerabilities + findings + patches, then trigger webhooks on completion (Feature 5).
     from datetime import datetime
 
     from ...db.convert import finding_to_orm, patch_to_orm, vuln_to_orm
@@ -147,18 +147,18 @@ async def _run_scan(
         scan_orm.low = sum(1 for v in result.vulnerabilities if v.severity == "low")
         scan_orm.summary = result.summary
 
-        # pipeline 中断(stage 最终失败)记 failed/partial,不再无条件 completed。
+        # Pipeline interruption (stage final failure) records failed/partial instead of unconditionally completed.
         failed_stage = ctx.stage_results.get("pipeline", {}).get("failed_stage")
         if failed_stage:
             scan_orm.status = "failed" if failed_stage in ("recon", "discover") else "partial"
-            scan_orm.summary = f"流水线在 {failed_stage} 阶段失败: {'; '.join(ctx.errors[-3:])}"
+            scan_orm.summary = f"Pipeline failed at {failed_stage} stage: {'; '.join(ctx.errors[-3:])}"
         else:
             scan_orm.status = "completed"
         scan_orm.completed_at = datetime.utcnow()
 
-        # FK 顺序: vulnerabilities 先落库并 flush,再写 findings/patches(它们 FK 引用 vuln_id)。
-        # 单 commit 内 UoW 通常能按依赖排序,但跨表 FK + 无 relationship 关联时偶发 flush 乱序,
-        # 显式分两阶段提交更稳。
+        # FK ordering: persist vulnerabilities first and flush, then write findings/patches (they FK-reference vuln_id).
+        # Within a single commit the UoW usually sorts by dependency, but cross-table FKs without
+        # relationship associations occasionally flush out of order; an explicit two-phase commit is safer.
         for v in result.vulnerabilities:
             db.add(vuln_to_orm(v, scan_id=scan_id, tenant_id=tenant_id))
         db.flush()
@@ -169,10 +169,10 @@ async def _run_scan(
 
         db.commit()
         logger.info(
-            f"扫描完成: {scan_id}, vulns={len(result.vulnerabilities)} findings={len(result.findings)} patches={len(result.patches)}"
+            f"Scan completed: {scan_id}, vulns={len(result.vulnerabilities)} findings={len(result.findings)} patches={len(result.patches)}"
         )
 
-        # Issue #32: best-effort 用量上报到 fusion-identity(失败仅告警,不影响扫描完成)。
+        # Issue #32: best-effort usage reporting to fusion-identity (failure only warns, does not affect scan completion).
         with contextlib.suppress(Exception):
             from ...identity.client import get_identity_client
 
@@ -186,16 +186,16 @@ async def _run_scan(
                 },
             )
 
-        # Feature 5: 扫描完成后触发已启用 webhook(scan.completed 事件)。
+        # Feature 5: trigger enabled webhooks after scan completion (scan.completed event).
         with contextlib.suppress(Exception):
             await _notify_webhooks(scan_orm, ctx)
     except Exception as e:
-        logger.error(f"扫描失败 {scan_id}: {e}")
+        logger.error(f"Scan failed {scan_id}: {e}")
         try:
             scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
             if scan_orm:
                 scan_orm.status = "failed"
-                # P1-5: 异常文本不写入 summary(对外可见),日志已记明细。
+                # P1-5: exception text is not written into summary (externally visible); details are already logged.
                 scan_orm.summary = "scan failed: internal error"
                 db.commit()
         except Exception:
@@ -205,8 +205,8 @@ async def _run_scan(
 
 
 async def _notify_webhooks(scan_orm, ctx) -> None:
-    # Feature 5: 从 DB 加载启用的 webhook,过滤 scan.completed 事件后通知。
-    # P0-5: secret 从 Fernet 密文解密,传入 WebhookConfig 供 _send 计算 HMAC 签名。
+    # Feature 5: load enabled webhooks from the DB, filter for the scan.completed event, then notify.
+    # P0-5: secret is decrypted from Fernet ciphertext and passed into WebhookConfig for _send to compute the HMAC signature.
     import json
 
     from ...db.models import WebhookORM
@@ -229,7 +229,7 @@ async def _notify_webhooks(scan_orm, ctx) -> None:
         if not configs:
             return
         notifier = WebhookNotifier(configs)
-        # notify_scan_complete 是同步(urlopen);放线程池避免阻塞事件循环。
+        # notify_scan_complete is synchronous (urlopen); run in a thread pool to avoid blocking the event loop.
         import asyncio
 
         await asyncio.to_thread(
@@ -252,13 +252,15 @@ async def create_scan(
     db: Session = Depends(get_session),
     api_key: APIKey = Depends(require_permission("scan:run")),
 ):
-    # P0-6: 路由前先做租户并发配额校验,超限 409。
+    # P0-6: check the per-tenant concurrent quota before the route runs; over-limit returns 409.
     from ..middleware import enforce_scan_quota
 
     try:
         enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
-        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+        raise HTTPException(
+            status_code=409, detail="Tenant maximum concurrent scan limit reached, wait for existing scans to complete"
+        ) from None
 
     from ...engine.queue import ScanTask, TaskPriority
     from ...models.project import Scan
@@ -280,8 +282,8 @@ async def create_scan(
     db.commit()
     db.refresh(orm)
 
-    # P0-6: 不再用自由 BackgroundTasks 协程(绕过 WorkerPool 并发控制),
-    # 改为入队由 WorkerPool 统一调度,与 /queue 路径共用同一并发池。
+    # P0-6: no longer uses free BackgroundTasks coroutines (they bypass WorkerPool concurrency control);
+    # enqueue instead so the WorkerPool schedules uniformly, sharing the same concurrency pool as the /queue path.
     if body.path:
         task = ScanTask(
             priority=TaskPriority.NORMAL,
@@ -298,7 +300,7 @@ async def create_scan(
         )
         queue = _get_queue()
         await queue.enqueue(task)
-        logger.info(f"扫描已入队(直连路径): scan={orm.id} tenant={orm.tenant_id}")
+        logger.info(f"Scan enqueued (direct path): scan={orm.id} tenant={orm.tenant_id}")
 
     return _scan_orm_to_response(orm)
 
@@ -340,7 +342,7 @@ async def _scan_executor(task):
         task.config.get("changed_files", []),
         task.config.get("tenant_id", ""),
     )
-    # A-P0-2: 此前无条件返回 completed,与 DB 实际状态脱节。回查真实状态。
+    # A-P0-2: previously returned completed unconditionally, out of sync with the real DB state. Re-check the actual status.
     db = get_session()
     try:
         scan_orm = db.query(ScanORM).filter(ScanORM.id == task.config.get("scan_id", "")).first()
@@ -360,19 +362,21 @@ class QueueScanCreate(BaseModel):
     priority: int = 2
 
 
-@router.post("/queue", summary="提交扫描到队列")
+@router.post("/queue", summary="Submit a scan to the queue")
 async def enqueue_scan(
     body: QueueScanCreate,
     db: Session = Depends(get_session),
     api_key: APIKey = Depends(require_permission("scan:run")),
 ):
-    # P0-6: 租户并发配额校验,超限 409。
+    # P0-6: per-tenant concurrent quota check, over-limit returns 409.
     from ..middleware import enforce_scan_quota
 
     try:
         enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
-        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+        raise HTTPException(
+            status_code=409, detail="Tenant maximum concurrent scan limit reached, wait for existing scans to complete"
+        ) from None
 
     from ...engine.queue import ScanTask, TaskPriority
     from ...models.project import Scan
@@ -409,11 +413,11 @@ async def enqueue_scan(
     )
     queue = _get_queue()
     task_id = await queue.enqueue(task)
-    logger.info(f"扫描已入队: scan={orm.id} task={task_id} tenant={orm.tenant_id}")
+    logger.info(f"Scan enqueued: scan={orm.id} task={task_id} tenant={orm.tenant_id}")
     return {"scan_id": orm.id, "task_id": task_id, "status": "queued"}
 
 
-@router.get("/queue/status", summary="查询队列状态")
+@router.get("/queue/status", summary="Query queue status")
 async def queue_status(_=Depends(require_permission("scan:read"))):
     queue = _get_queue()
     pool = _get_pool()
@@ -431,7 +435,7 @@ async def queue_status(_=Depends(require_permission("scan:read"))):
     }
 
 
-@router.get("/queue/tasks", summary="列出队列任务")
+@router.get("/queue/tasks", summary="List queue tasks")
 async def list_queue_tasks(status: str | None = None, _=Depends(require_permission("scan:read"))):
     queue = _get_queue()
     tasks = await queue.list_tasks(status=status)
@@ -450,11 +454,11 @@ async def list_queue_tasks(status: str | None = None, _=Depends(require_permissi
     }
 
 
-@router.post("/queue/{task_id}/cancel", summary="取消队列任务")
+@router.post("/queue/{task_id}/cancel", summary="Cancel a queue task")
 async def cancel_queue_task(
     task_id: str, db: Session = Depends(get_session), api_key: APIKey = Depends(require_permission("scan:run"))
 ):
-    # A-P0: 此前仅标队列任务 CANCELLED,不更新 ScanORM.status,运行中任务也不中断。
+    # A-P0: previously only marked the queue task CANCELLED without updating ScanORM.status, and running tasks were not interrupted.
     queue = _get_queue()
     pool = _get_pool()
     task = await queue.get_task(task_id)
@@ -463,28 +467,28 @@ async def cancel_queue_task(
     await queue.cancel_task(task_id)
     with contextlib.suppress(Exception):
         await pool.cancel_active(task_id)
-    # 同步 ScanORM 状态:cancelled(若存在对应 scan)。
+    # Sync ScanORM status: cancelled (if a matching scan exists).
     scan_id = task.config.get("scan_id", "")
     if scan_id:
         scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
         if scan_orm and scan_orm.status not in ("completed", "failed"):
-            # P1-1: 跨租户不可取消他人扫描。
+            # P1-1: cross-tenant cancellation of someone else's scan is not allowed.
             _check_scan_tenant(scan_orm, api_key)
             scan_orm.status = "cancelled"
-            scan_orm.summary = "用户取消"
+            scan_orm.summary = "Cancelled by user"
             db.commit()
-            logger.info(f"取消扫描: scan={scan_id} task={task_id}")
+            logger.info(f"Scan cancelled: scan={scan_id} task={task_id}")
     return {"task_id": task_id, "status": "cancelled"}
 
 
-@router.post("/queue/pool/start", summary="启动工作池")
+@router.post("/queue/pool/start", summary="Start the worker pool")
 async def start_pool(_=Depends(require_permission("system:manage"))):
     pool = _get_pool()
     await pool.start()
     return {"status": "started", "workers": pool._workers}
 
 
-@router.post("/queue/pool/stop", summary="停止工作池")
+@router.post("/queue/pool/stop", summary="Stop the worker pool")
 async def stop_pool(_=Depends(require_permission("system:manage"))):
     pool = _get_pool()
     await pool.stop()
@@ -492,8 +496,9 @@ async def stop_pool(_=Depends(require_permission("system:manage"))):
 
 
 async def startup_reconcile_scans() -> dict:
-    # 进程重启后回收孤儿扫描:running 是上次崩溃遗留(无在途执行器),queued 需重入队。
-    # 不回收 running 会导致 dashboard 永远显示一个假扫描;不重入队 queued 则任务永久挂起。
+    # Reclaim orphan scans after a process restart: running ones are leftovers from a previous crash
+    # (no in-flight executor), queued ones need re-enqueueing. Not reclaiming running scans leaves a
+    # phantom scan on the dashboard forever; not re-enqueueing queued ones hangs tasks permanently.
     from ...db import get_session
     from ...db.models import ScanORM
     from ...engine.queue import ScanTask, TaskPriority
@@ -505,14 +510,14 @@ async def startup_reconcile_scans() -> dict:
         running = db.query(ScanORM).filter(ScanORM.status == "running").all()
         for s in running:
             s.status = "failed"
-            s.summary = "进程重启回收:上次异常退出未完成"
+            s.summary = "Reclaimed after process restart: previous abnormal exit"
             failed += 1
         db.commit()
 
         queued = db.query(ScanORM).filter(ScanORM.status == "queued").all()
         queue = _get_queue()
         for s in queued:
-            # A-P0-2: 用 ScanORM.path 重入队,此前 project_path="" 导致执行器空路径扫描。
+            # A-P0-2: re-enqueue using ScanORM.path; previously project_path="" made the executor scan an empty path.
             task = ScanTask(
                 priority=TaskPriority.NORMAL,
                 project_path=getattr(s, "path", "") or "",
@@ -529,13 +534,13 @@ async def startup_reconcile_scans() -> dict:
             await queue.enqueue(task)
             revived += 1
         if revived or failed:
-            logger.info(f"[Startup] 孤儿扫描回收: running->failed={failed} queued->reenqueue={revived}")
+            logger.info(f"[Startup] orphan scan reclaim: running->failed={failed} queued->reenqueue={revived}")
     finally:
         db.close()
     return {"failed": failed, "reenqueued": revived}
 
 
-@router.get("/checkpoints", summary="列出所有断点")
+@router.get("/checkpoints", summary="List all checkpoints")
 def list_checkpoints(_=Depends(require_permission("system:manage"))):
     from ...engine.resume import CheckpointManager
 
@@ -561,20 +566,22 @@ class ResumeRequest(BaseModel):
     changed_files: list[str] = []
 
 
-@router.post("/resume", summary="断点续扫")
+@router.post("/resume", summary="Resume a scan from checkpoint")
 def resume_scan(
     body: ResumeRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
     api_key: APIKey = Depends(require_permission("scan:run")),
 ):
-    # P0-6: 续扫也占用并发槽位,先做配额校验。
+    # P0-6: resume also occupies a concurrency slot; run the quota check first.
     from ..middleware import enforce_scan_quota
 
     try:
         enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
-        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+        raise HTTPException(
+            status_code=409, detail="Tenant maximum concurrent scan limit reached, wait for existing scans to complete"
+        ) from None
 
     from ...engine.resume import CheckpointManager
 
@@ -586,7 +593,7 @@ def resume_scan(
     scan_orm = db.query(ScanORM).filter(ScanORM.id == body.scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    # P1-1 IDOR: 跨租户不可续扫他人扫描。
+    # P1-1 IDOR: cross-tenant resume of someone else's scan is not allowed.
     _check_scan_tenant(scan_orm, api_key)
     scan_orm.status = "running"
     scan_orm.path = body.path
@@ -619,7 +626,7 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
         ctx = await pipeline.run(path, changed_files=changed_files or None, scan_id=scan_id)
         result = pipeline.to_scan_result(ctx)
 
-        # 续扫同 scan_id:先删旧漏洞/findings/patches,避免新旧结果叠加产生重复计数。
+        # Resume with the same scan_id: delete old vulnerabilities/findings/patches first to avoid double counting from stacked results.
         from ...db.models import FindingORM, PatchORM, VulnerabilityORM
 
         db.query(VulnerabilityORM).filter(VulnerabilityORM.scan_id == scan_id).delete()
@@ -639,7 +646,7 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
         failed_stage = ctx.stage_results.get("pipeline", {}).get("failed_stage")
         scan_orm.status = "failed" if failed_stage else "completed"
         if failed_stage:
-            scan_orm.summary = f"续扫在 {failed_stage} 阶段失败"
+            scan_orm.summary = f"Resume failed at {failed_stage} stage"
         scan_orm.completed_at = datetime.utcnow()
 
         for v in result.vulnerabilities:
@@ -650,9 +657,9 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
             db.add(patch_to_orm(p))
 
         db.commit()
-        logger.info(f"续扫完成: {scan_id}, vulns={len(result.vulnerabilities)}")
+        logger.info(f"Resume completed: {scan_id}, vulns={len(result.vulnerabilities)}")
 
-        # Issue #32: best-effort 用量上报到 fusion-identity。
+        # Issue #32: best-effort usage reporting to fusion-identity.
         with contextlib.suppress(Exception):
             from ...identity.client import get_identity_client
 
@@ -667,12 +674,12 @@ async def _run_pipeline_resume(scan_id: str, path: str, changed_files: list[str]
                 },
             )
     except Exception as e:
-        logger.error(f"续扫失败 {scan_id}: {e}")
+        logger.error(f"Resume failed {scan_id}: {e}")
         try:
             scan_orm = db.query(ScanORM).filter(ScanORM.id == scan_id).first()
             if scan_orm:
                 scan_orm.status = "failed"
-                # P1-5: 异常文本不写入 summary(对外可见),日志已记明细。
+                # P1-5: exception text is not written into summary (externally visible); details are already logged.
                 scan_orm.summary = "scan failed: internal error"
                 db.commit()
         except Exception:
@@ -728,13 +735,15 @@ def create_incremental_scan(
     db: Session = Depends(get_session),
     api_key: APIKey = Depends(require_permission("scan:run")),
 ):
-    # P0-6: 增量扫描同样占用并发槽位,先做配额校验。
+    # P0-6: incremental scans also occupy a concurrency slot; run the quota check first.
     from ..middleware import enforce_scan_quota
 
     try:
         enforce_scan_quota(api_key.tenant_id or "")
     except Exception:
-        raise HTTPException(status_code=409, detail="已达到租户最大并发扫描数,请等待现有扫描完成") from None
+        raise HTTPException(
+            status_code=409, detail="Tenant maximum concurrent scan limit reached, wait for existing scans to complete"
+        ) from None
 
     try:
         from ...engine.vcs.git import GitHelper
@@ -742,8 +751,8 @@ def create_incremental_scan(
         git = GitHelper(body.path)
         diff = git.get_changed_files(base=body.base, head=body.head)
     except ValueError as e:
-        # P1-6: 不回显内部路径/错误,日志保留明细。
-        logger.warning(f"incremental scan 路径非法: {e}")
+        # P1-6: do not echo internal paths/errors back; details stay in the log.
+        logger.warning(f"invalid incremental scan path: {e}")
         raise HTTPException(status_code=400, detail="invalid scan path or not a git repository") from e
 
     from ...models.project import Scan
@@ -781,7 +790,7 @@ def create_incremental_scan(
         )
     else:
         orm.status = "completed"
-        orm.summary = "无代码变更"
+        orm.summary = "No code changes"
         db.commit()
 
     return _scan_orm_to_response(orm)

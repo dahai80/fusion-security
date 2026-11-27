@@ -21,8 +21,9 @@ class CircuitState(StrEnum):
 
 @dataclass
 class StageCheckpoint:
-    # version 用于拒绝旧 schema 的断点文件:老结构(无 version 字段或主版本不符)直接拒绝,
-    # 避免静默用错误数据续扫。from_dict 在主版本不匹配时抛 ValueError。
+    # version is used to reject checkpoint files with an old schema: old structures (no version
+    # field or mismatched major version) are rejected outright so a resume never silently runs on
+    # wrong data. from_dict raises ValueError on major-version mismatch.
     scan_id: str = ""
     project_path: str = ""
     completed_stage: str = ""
@@ -57,7 +58,7 @@ class CheckpointManager:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(cp.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
-        logger.info(f"[Checkpoint] 保存 scan_id={cp.scan_id} stage={cp.completed_stage}")
+        logger.info(f"[Checkpoint] Saved scan_id={cp.scan_id} stage={cp.completed_stage}")
         return path
 
     def load(self, scan_id: str) -> StageCheckpoint | None:
@@ -68,15 +69,16 @@ class CheckpointManager:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             cp = StageCheckpoint.from_dict(data)
-            logger.info(f"[Checkpoint] 加载 scan_id={scan_id} stage={cp.completed_stage}")
+            logger.info(f"[Checkpoint] Loaded scan_id={scan_id} stage={cp.completed_stage}")
             return cp
         except Exception as e:
-            # 破坏性删除会丢失断点 + 已付 AI 算力证据。改为移到 .corrupt sidecar 保留现场,
-            # 大声报错;调用方按 None 处理为全新扫描。
+            # Deleting destructively would lose the checkpoint plus evidence of already-spent AI
+            # compute. Move it to a .corrupt sidecar to preserve the scene and fail loudly; the
+            # caller treats None as a fresh scan.
             corrupt = path.with_suffix(".json.corrupt")
             with contextlib.suppress(Exception):
                 path.replace(corrupt)
-            logger.error(f"[Checkpoint] 加载失败,已移至 .corrupt scan_id={scan_id}: {e}")
+            logger.error(f"[Checkpoint] Load failed, moved to .corrupt scan_id={scan_id}: {e}")
             return None
 
     def remove(self, scan_id: str) -> bool:
@@ -84,7 +86,7 @@ class CheckpointManager:
         path = self.checkpoint_dir / f"{safe_id}.json"
         if path.exists():
             path.unlink()
-            logger.info(f"[Checkpoint] 删除 scan_id={scan_id}")
+            logger.info(f"[Checkpoint] Removed scan_id={scan_id}")
             return True
         return False
 
@@ -95,8 +97,8 @@ class CheckpointManager:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 results.append(StageCheckpoint.from_dict(data))
             except Exception as e:
-                # 损坏 checkpoint 静默跳过会让运维误以为无断点;记录可见日志。
-                logger.warning(f"[Checkpoint] 跳过损坏断点文件 {path.name}: {e}")
+                # Silently skipping corrupt checkpoints would make operators believe no checkpoint exists; log it visibly.
+                logger.warning(f"[Checkpoint] Skipping corrupt checkpoint file {path.name}: {e}")
         return results
 
 
@@ -151,7 +153,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._half_open_calls = 0
-        logger.info("[CircuitBreaker] 重置")
+        logger.info("[CircuitBreaker] Reset")
 
 
 @dataclass

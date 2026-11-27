@@ -139,7 +139,7 @@ class TestCli:
     def test_bare_rules_still_lists(self):
         result = CliRunner().invoke(cli, ["rules"])
         assert result.exit_code == 0
-        assert "检测规则" in result.output
+        assert "Detection rules" in result.output
 
     def test_keygen_package_install_flow(self, tmp_path):
         runner = CliRunner()

@@ -26,7 +26,7 @@ class _NullResolver:
 
 
 class _NoRedirectHandler(BaseHandler):
-    # P0-2: 阻止 3xx 自动跟随,逐跳校验 Location,防止重定向绕过 SSRF。
+    # P0-2: block automatic 3xx following, validate Location hop-by-hop to prevent redirect-based SSRF bypass.
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
@@ -70,7 +70,7 @@ class DingTalkConfig:
 def _urllib_post(url: str, data: bytes, headers: dict[str, str], timeout: int = 10) -> bool:
     guard, resolver = pin_url(url)
     if not guard.ok:
-        logger.warning(f"[Notifier] SSRF 校验拒绝 host={_host_of(url)}: {guard.reason}")
+        logger.warning(f"[Notifier] SSRF check rejected host={_host_of(url)}: {guard.reason}")
         return False
     opener = build_opener(_NoRedirectHandler())
     target_url = guard.safe_url
@@ -83,34 +83,34 @@ def _urllib_post(url: str, data: bytes, headers: dict[str, str], timeout: int = 
                 with opener.open(req, timeout=timeout) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                     if body.get("code", body.get("errcode", 0)) != 0:
-                        logger.warning(f"[Notifier] 响应错误 host={_host_of(target_url)}: {body}")
+                        logger.warning(f"[Notifier] response error host={_host_of(target_url)}: {body}")
                         return False
-                    logger.info(f"[Notifier] 发送成功 host={_host_of(target_url)} status={resp.status}")
+                    logger.info(f"[Notifier] send succeeded host={_host_of(target_url)} status={resp.status}")
                     return True
             except HTTPError as e:
                 if e.code in (301, 302, 307, 308) and hop < max_redirects:
                     loc = e.headers.get("Location") or ""
                     if not loc:
-                        logger.warning(f"[Notifier] {e.code} 无 Location,放弃 host={_host_of(target_url)}")
+                        logger.warning(f"[Notifier] {e.code} has no Location, giving up host={_host_of(target_url)}")
                         return False
                     loc = urllib.parse.urljoin(target_url, loc)
                     guard2, resolver2 = pin_url(loc)
                     if not guard2.ok:
-                        logger.warning(f"[Notifier] 重定向目标被 SSRF 拒绝: {loc} ({guard2.reason})")
+                        logger.warning(f"[Notifier] redirect target rejected by SSRF check: {loc} ({guard2.reason})")
                         return False
-                    logger.info(f"[Notifier] 跟随重定向 {e.code} -> {loc} (已校验)")
+                    logger.info(f"[Notifier] following redirect {e.code} -> {loc} (validated)")
                     target_url = guard2.safe_url
                     active_resolver = resolver2
                     continue
-                logger.warning(f"[Notifier] HTTP错误 host={_host_of(target_url)}: {e.code} {e.reason}")
+                logger.warning(f"[Notifier] HTTP error host={_host_of(target_url)}: {e.code} {e.reason}")
                 return False
             except URLError as e:
-                logger.warning(f"[Notifier] URL错误 host={_host_of(target_url)}: {e}")
+                logger.warning(f"[Notifier] URL error host={_host_of(target_url)}: {e}")
                 return False
             except Exception as e:
-                logger.warning(f"[Notifier] 发送异常 host={_host_of(target_url)}: {e}")
+                logger.warning(f"[Notifier] send exception host={_host_of(target_url)}: {e}")
                 return False
-    logger.warning(f"[Notifier] 超过最大重定向次数 {max_redirects} host={_host_of(url)}")
+    logger.warning(f"[Notifier] exceeded max redirects {max_redirects} host={_host_of(url)}")
     return False
 
 
@@ -147,6 +147,7 @@ class FeishuNotifier:
             return True
 
         color = "green" if gate_passed else "red"
+        # i18n: user-facing
         status_text = "通过" if gate_passed else "未通过"
         mention = "<at user_id='all'></at>" if self.config.mention_all else ""
 
@@ -155,6 +156,7 @@ class FeishuNotifier:
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
+                    # i18n: user-facing
                     "content": f"**扫描ID:** {scan_id}\n**安全门禁:** {status_text}\n**漏洞总数:** {total}",
                 },
             },
@@ -173,6 +175,7 @@ class FeishuNotifier:
             "msg_type": "interactive",
             "card": {
                 "header": {
+                    # i18n: user-facing
                     "title": {"tag": "plain_text", "content": f"Fusion-Security 扫描报告 - {status_text}"},
                     "template": color,
                 },
@@ -217,6 +220,7 @@ class DingTalkNotifier:
         if event not in self.config.events:
             return True
 
+        # i18n: user-facing
         status_text = "通过 ✅" if gate_passed else "未通过 ❌"
 
         at_dict: dict[str, Any] = {"isAtAll": self.config.mention_all}
@@ -226,14 +230,16 @@ class DingTalkNotifier:
         markdown_body = {
             "msgtype": "markdown",
             "markdown": {
+                # i18n: user-facing
                 "title": f"Fusion-Security 扫描报告 - {status_text}",
+                # i18n: user-facing
                 "text": (
-                    f"### Fusion-Security 扫描报告 - {status_text}\n\n"
-                    f"- 扫描ID: {scan_id}\n"
-                    f"- 安全门禁: {status_text}\n"
-                    f"- 漏洞总数: {total}\n\n"
-                    f"#### 严重级别分布\n"
-                    f"| 级别 | 数量 |\n|------|------|\n"
+                    f"### Fusion-Security 扫描报告 - {status_text}\n\n"  # i18n: user-facing
+                    f"- 扫描ID: {scan_id}\n"  # i18n: user-facing
+                    f"- 安全门禁: {status_text}\n"  # i18n: user-facing
+                    f"- 漏洞总数: {total}\n\n"  # i18n: user-facing
+                    f"#### 严重级别分布\n"  # i18n: user-facing
+                    f"| 级别 | 数量 |\n|------|------|\n"  # i18n: user-facing
                     f"| Critical | {critical} |\n| High | {high} |\n| Medium | {medium} |\n| Low | {low} |\n"
                 ),
             },
@@ -252,11 +258,11 @@ class NotificationDispatcher:
 
     def add_feishu(self, config: FeishuConfig) -> None:
         self.feishu_notifiers.append(FeishuNotifier(config))
-        logger.info(f"[Notifier] 添加飞书通知 host={_host_of(config.webhook_url)}")
+        logger.info(f"[Notifier] added Feishu notifier host={_host_of(config.webhook_url)}")
 
     def add_dingtalk(self, config: DingTalkConfig) -> None:
         self.dingtalk_notifiers.append(DingTalkNotifier(config))
-        logger.info(f"[Notifier] 添加钉钉通知 host={_host_of(config.webhook_url)}")
+        logger.info(f"[Notifier] added DingTalk notifier host={_host_of(config.webhook_url)}")
 
     def notify(
         self,

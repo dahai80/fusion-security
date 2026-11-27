@@ -12,10 +12,10 @@ import { consoleApi } from '../services/api';
 import { useT } from '../i18n';
 import { severityTagColor } from '../severity';
 
-// Issue #61(CS-2):审计工作台 —— 全文搜索 + 时间窗/类型/风险过滤 + 保存查询
-// (重放同结果集) + CSV 导出(流式) + 告警订阅(shell 🔔) + 事件详情(trace-id)。
-// Issue #65:标记复核(持久化分诊态 + 仅看已标记)+ 关联事件跳转(同 trace_id,
-// 缺省回退 resource_id,命中行高亮)。
+// Issue #61 (CS-2): audit workbench — full-text search + time window/type/risk filters + saved queries
+// (replay the same result set) + CSV export (streaming) + alert subscription (shell bell) + event detail (trace-id).
+// Issue #65: mark for review (persisted triage state + marked-only filter) + related-event navigation (same trace_id,
+// fallback to resource_id, matching row highlighted).
 
 const { RangePicker } = DatePicker;
 
@@ -60,7 +60,7 @@ export default function AuditWorkbench() {
     const [highlightKey, setHighlightKey] = useState('');
     const navigate = useNavigate();
     const t = useT();
-    // 规范 S1:标记星色走 theme token,暗色自适应。
+// Spec S1: mark star color uses the theme token, dark-mode adaptive.
     const { token } = antdTheme.useToken();
 
     const currentFilters = () => {
@@ -88,7 +88,7 @@ export default function AuditWorkbench() {
             setEvents(res.data.items || []);
             setTotal(res.data.total || 0);
         } catch (e: any) {
-            message.error(e.message || t('加载失败', 'Failed to load'));
+            message.error(e.message || t('加载失败', 'Failed to load')); // i18n: user-facing
         } finally {
             setLoading(false);
         }
@@ -112,7 +112,7 @@ export default function AuditWorkbench() {
 
     const exportCsv = () => {
         const params = new URLSearchParams(currentFilters()).toString();
-        // 流式导出走浏览器原生下载(独立模式同源;嵌入模式经 gateway 代理同源)。
+// Streaming export uses the browser's native download (same-origin in standalone mode; embedded mode is same-origin via the gateway proxy).
         const base = location.pathname.includes('/shell/fusion-security/')
             ? '/shell/fusion-security/api/v1'
             : '/api/v1';
@@ -124,12 +124,12 @@ export default function AuditWorkbench() {
         const f = currentFilters();
         try {
             await consoleApi.createSavedQuery({ name: saveName.trim(), ...f });
-            message.success(t('已保存', 'Saved'));
+            message.success(t('已保存', 'Saved')); // i18n: user-facing
             setSaveOpen(false);
             setSaveName('');
             loadSaved();
         } catch (e: any) {
-            message.error(e.message || t('保存失败', 'Save failed'));
+            message.error(e.message || t('保存失败', 'Save failed')); // i18n: user-facing
         }
     };
 
@@ -146,9 +146,9 @@ export default function AuditWorkbench() {
             setEvents(res.data.items || []);
             setTotal(res.data.total || 0);
             setPage(1);
-            message.info(`${q.name}: ${res.data.total} ${t('条', 'events')}`);
+            message.info(`${q.name}: ${res.data.total} ${t('条', 'events')}`); // i18n: user-facing
         } catch (e: any) {
-            message.error(e.message || t('重放失败', 'Replay failed'));
+            message.error(e.message || t('重放失败', 'Replay failed')); // i18n: user-facing
         }
     };
 
@@ -156,28 +156,28 @@ export default function AuditWorkbench() {
         if (!subName.trim()) return;
         try {
             await consoleApi.createSubscription({ name: subName.trim(), event_class: action, risk_levels: subRisk });
-            message.success(t('已订阅,匹配事件将推送到 shell 通知中心', 'Subscribed — matches push to the shell bell'));
+            message.success(t('已订阅,匹配事件将推送到 shell 通知中心', 'Subscribed — matches push to the shell bell')); // i18n: user-facing
             setSubOpen(false);
             setSubName('');
         } catch (e: any) {
-            message.error(e.message || t('订阅失败', 'Subscribe failed'));
+            message.error(e.message || t('订阅失败', 'Subscribe failed')); // i18n: user-facing
         }
     };
 
     const toggleMark = async (e: AuditEvent) => {
-        // Issue #65:标记/取消复核 —— 后端幂等,(tenant, event_key) 唯一。
+// Issue #65: mark/unmark review — backend is idempotent, (tenant, event_key) unique.
         try {
             await consoleApi.setAuditMark({ event_key: e.event_key, marked: !e.marked });
-            message.success(e.marked ? t('已取消标记', 'Mark removed') : t('已标记复核', 'Marked for review'));
+            message.success(e.marked ? t('已取消标记', 'Mark removed') : t('已标记复核', 'Marked for review')); // i18n: user-facing
             load(page);
         } catch (err: any) {
-            message.error(err.message || t('标记失败', 'Mark failed'));
+            message.error(err.message || t('标记失败', 'Mark failed')); // i18n: user-facing
         }
     };
 
     const openRelated = (e: AuditEvent) => {
-        // Issue #65:同 trace_id 关联事件;缺 trace_id 时回退 resource_id。
-        // state 更新异步,查询用 overrides 立即生效,避免读到旧过滤。
+// Issue #65: related events share the same trace_id; fall back to resource_id when trace_id is missing.
+// State updates are async; the query uses overrides to take effect immediately, avoiding stale filters.
         if (e.trace_id) {
             setTraceId(e.trace_id);
             setResourceId('');
@@ -191,27 +191,27 @@ export default function AuditWorkbench() {
             setPage(1);
             load(1, { resource_id: e.resource_id, trace_id: '' });
         } else {
-            message.info(t('该事件无 trace_id / resource_id 可关联', 'No trace_id / resource_id to relate'));
+            message.info(t('该事件无 trace_id / resource_id 可关联', 'No trace_id / resource_id to relate')); // i18n: user-facing
         }
     };
 
     const columns: ColumnsType<AuditEvent> = [
         {
-            title: t('时间', 'Time'),
+            title: t('时间', 'Time'), // i18n: user-facing
             dataIndex: 'timestamp',
             width: 170,
             render: (ts: number) => new Date(ts * 1000).toLocaleString(),
         },
         {
-            title: t('风险', 'Risk'),
+            title: t('风险', 'Risk'), // i18n: user-facing
             dataIndex: 'risk_level',
             width: 90,
             render: (r: string) => <Tag color={severityTagColor(r)}>{r}</Tag>,
         },
-        { title: t('事件', 'Event'), dataIndex: 'action' },
-        { title: t('操作者', 'Actor'), dataIndex: 'actor', width: 140 },
+        { title: t('事件', 'Event'), dataIndex: 'action' }, // i18n: user-facing
+        { title: t('操作者', 'Actor'), dataIndex: 'actor', width: 140 }, // i18n: user-facing
         {
-            title: t('资源', 'Resource'),
+            title: t('资源', 'Resource'), // i18n: user-facing
             width: 220,
             render: (_: any, e: AuditEvent) => (
                 <span>
@@ -221,7 +221,7 @@ export default function AuditWorkbench() {
             ),
         },
         {
-            title: t('复核', 'Review'),
+            title: t('复核', 'Review'), // i18n: user-facing
             width: 70,
             render: (_: any, e: AuditEvent) => (
                 <Button
@@ -237,12 +237,12 @@ export default function AuditWorkbench() {
 
     return (
         <div>
-            <h2>{t('审计工作台', 'Audit workbench')}</h2>
+            <h2>{t('审计工作台', 'Audit workbench')}</h2>{/* i18n: user-facing */}
             <Space wrap style={{ marginBottom: 16 }}>
                 <Input
                     allowClear
                     prefix={<SearchOutlined />}
-                    placeholder={t('搜索事件/操作者/资源', 'Search event / actor / resource')}
+                    placeholder={t('搜索事件/操作者/资源', 'Search event / actor / resource')} // i18n: user-facing
                     style={{ width: 260 }}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -250,7 +250,7 @@ export default function AuditWorkbench() {
                 />
                 <Input
                     allowClear
-                    placeholder={t('事件类型前缀(auth. / key.)', 'Event class prefix (auth. / key.)')}
+                    placeholder={t('事件类型前缀(auth. / key.)', 'Event class prefix (auth. / key.)')} // i18n: user-facing
                     style={{ width: 220 }}
                     value={action}
                     onChange={(e) => setAction(e.target.value)}
@@ -258,7 +258,7 @@ export default function AuditWorkbench() {
                 />
                 <Select
                     allowClear
-                    placeholder={t('风险等级', 'Risk level')}
+                    placeholder={t('风险等级', 'Risk level')} // i18n: user-facing
                     style={{ width: 140 }}
                     value={risk || undefined}
                     onChange={(v) => setRisk(v || '')}
@@ -266,16 +266,16 @@ export default function AuditWorkbench() {
                 />
                 <RangePicker showTime value={range} onChange={setRange} />
                 <Button type="primary" onClick={() => { setPage(1); load(1); }}>
-                    {t('查询', 'Search')}
+                    {t('查询', 'Search')}{/* i18n: user-facing */}
                 </Button>
                 <Button icon={<DownloadOutlined />} onClick={exportCsv}>
-                    {t('导出 CSV', 'Export CSV')}
+                    {t('导出 CSV', 'Export CSV')}{/* i18n: user-facing */}
                 </Button>
                 <Button icon={<SaveOutlined />} onClick={() => setSaveOpen(true)}>
-                    {t('保存查询', 'Save query')}
+                    {t('保存查询', 'Save query')}{/* i18n: user-facing */}
                 </Button>
                 <Button icon={<BellOutlined />} onClick={() => setSubOpen(true)}>
-                    {t('订阅告警', 'Subscribe')}
+                    {t('订阅告警', 'Subscribe')}{/* i18n: user-facing */}
                 </Button>
                 <Checkbox
                     checked={markedOnly}
@@ -285,7 +285,7 @@ export default function AuditWorkbench() {
                         load(1, { marked_only: ev.target.checked ? 'true' : '' });
                     }}
                 >
-                    {t('仅看已标记', 'Marked only')}
+                    {t('仅看已标记', 'Marked only')}{/* i18n: user-facing */}
                 </Checkbox>
                 {traceId && (
                     <Tag
@@ -323,7 +323,7 @@ export default function AuditWorkbench() {
                             {q.name}
                         </Button>
                         <Popconfirm
-                            title={t('删除该保存查询?', 'Delete this saved query?')}
+                            title={t('删除该保存查询?', 'Delete this saved query?')} // i18n: user-facing
                             onConfirm={async () => {
                                 await consoleApi.deleteSavedQuery(q.id);
                                 loadSaved();
@@ -367,7 +367,7 @@ export default function AuditWorkbench() {
                                 )}
                             </Descriptions.Item>
                             <Descriptions.Item label="IP">{e.ip_address || '-'}</Descriptions.Item>
-                            <Descriptions.Item label={t('详情', 'Details')} span={2}>
+                            <Descriptions.Item label={t('详情', 'Details')} span={2}>{/* i18n: user-facing */}
                                 <Typography.Text code style={{ whiteSpace: 'pre-wrap' }}>
                                     {JSON.stringify(e.details, null, 2)}
                                 </Typography.Text>
@@ -375,11 +375,11 @@ export default function AuditWorkbench() {
                             <Descriptions.Item span={2}>
                                 <Space>
                                     <Button size="small" icon={<LinkOutlined />} onClick={() => openRelated(e)}>
-                                        {t('关联事件', 'Related events')}
+                                        {t('关联事件', 'Related events')}{/* i18n: user-facing */}
                                     </Button>
                                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                                         {t(
-                                            '按同一 trace_id(缺省回退 resource_id)过滤并高亮本源事件',
+                                            '按同一 trace_id(缺省回退 resource_id)过滤并高亮本源事件', // i18n: user-facing
                                             'Filter by the same trace_id (fallback resource_id) and highlight the source row',
                                         )}
                                     </Typography.Text>
@@ -391,34 +391,34 @@ export default function AuditWorkbench() {
             />
 
             <Modal
-                title={t('保存当前过滤为查询', 'Save current filters as a query')}
+                title={t('保存当前过滤为查询', 'Save current filters as a query')} // i18n: user-facing
                 open={saveOpen}
                 onOk={saveQuery}
                 onCancel={() => setSaveOpen(false)}
-                okText={t('保存', 'Save')}
+                okText={t('保存', 'Save')} // i18n: user-facing
             >
                 <Input
-                    placeholder={t('查询名称', 'Query name')}
+                    placeholder={t('查询名称', 'Query name')} // i18n: user-facing
                     value={saveName}
                     onChange={(e) => setSaveName(e.target.value)}
                 />
             </Modal>
 
             <Modal
-                title={t('订阅告警(推送 shell 通知中心)', 'Subscribe to alerts (pushes to the shell bell)')}
+                title={t('订阅告警(推送 shell 通知中心)', 'Subscribe to alerts (pushes to the shell bell)')} // i18n: user-facing
                 open={subOpen}
                 onOk={subscribe}
                 onCancel={() => setSubOpen(false)}
-                okText={t('订阅', 'Subscribe')}
+                okText={t('订阅', 'Subscribe')} // i18n: user-facing
             >
                 <Space direction="vertical" style={{ width: '100%' }}>
                     <Input
-                        placeholder={t('订阅名称', 'Subscription name')}
+                        placeholder={t('订阅名称', 'Subscription name')} // i18n: user-facing
                         value={subName}
                         onChange={(e) => setSubName(e.target.value)}
                     />
                     <Typography.Text type="secondary">
-                        {t('事件类型前缀', 'Event class prefix')}: <b>{action || t('(全部)', '(all)')}</b>
+                        {t('事件类型前缀', 'Event class prefix')}: <b>{action || t('(全部)', '(all)')}</b>{/* i18n: user-facing */}
                     </Typography.Text>
                     <Input
                         placeholder="risk levels"
@@ -426,7 +426,7 @@ export default function AuditWorkbench() {
                         onChange={(e) => setSubRisk(e.target.value)}
                     />
                     <Button type="link" size="small" onClick={() => navigate('/console')}>
-                        {t('告警也可在管理台查看', 'Alerts also surface on the console home')}
+                        {t('告警也可在管理台查看', 'Alerts also surface on the console home')}{/* i18n: user-facing */}
                     </Button>
                 </Space>
             </Modal>

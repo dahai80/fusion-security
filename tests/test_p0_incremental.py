@@ -34,7 +34,7 @@ class TestGitHelper:
     def test_init_invalid_repo(self, tmp_path):
         not_repo = tmp_path / "not_repo"
         not_repo.mkdir()
-        with pytest.raises(ValueError, match="不是git仓库"):
+        with pytest.raises(ValueError, match="not a git repository"):
             GitHelper(str(not_repo))
 
     def test_get_changed_files_no_diff(self, tmp_path):

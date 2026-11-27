@@ -31,7 +31,7 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const t = useT();
-    // 规范 S1:状态色走 AntD theme token,随暗色算法自适应,禁硬编码 hex。
+// Spec S1: status colors use AntD theme tokens, adaptive with the dark algorithm; no hardcoded hex.
     const { token } = antdTheme.useToken();
 
     useEffect(() => {
@@ -49,7 +49,7 @@ export default function Dashboard() {
             if (statsRes.status === 'fulfilled') setStats(statsRes.value.data);
             if (healthRes.status === 'fulfilled') setHealth(healthRes.value.data);
         } catch (e: any) {
-            setError(e.message || t('加载数据失败', 'Failed to load data'));
+            setError(e.message || t('加载数据失败', 'Failed to load data')); // i18n: user-facing
         } finally {
             setLoading(false);
         }
@@ -60,46 +60,46 @@ export default function Dashboard() {
 
     return (
         <div>
-            <h2>{t('安全概览', 'Security overview')}</h2>
+            <h2>{t('安全概览', 'Security overview')}</h2>{/* i18n: user-facing */}
             <Row gutter={[16, 16]}>
                 <Col span={6}>
                     <Card>
-                        <Statistic title={t('总扫描次数', 'Total scans')} value={stats?.total_scans ?? 0} prefix={<CheckCircleOutlined />} />
+                        <Statistic title={t('总扫描次数', 'Total scans')} value={stats?.total_scans ?? 0} prefix={<CheckCircleOutlined />} />{/* i18n: user-facing */}
                     </Card>
                 </Col>
                 <Col span={6}>
                     <Card>
-                        <Statistic title={t('发现漏洞', 'Vulnerabilities')} value={stats?.total_vulns ?? 0} prefix={<BugOutlined />} valueStyle={{ color: token.colorWarning }} />
+                        <Statistic title={t('发现漏洞', 'Vulnerabilities')} value={stats?.total_vulns ?? 0} prefix={<BugOutlined />} valueStyle={{ color: token.colorWarning }} />{/* i18n: user-facing */}
                     </Card>
                 </Col>
                 <Col span={6}>
                     <Card>
-                        <Statistic title={t('高危漏洞', 'High severity')} value={stats?.high_severity ?? 0} prefix={<WarningOutlined />} valueStyle={{ color: token.colorError }} />
+                        <Statistic title={t('高危漏洞', 'High severity')} value={stats?.high_severity ?? 0} prefix={<WarningOutlined />} valueStyle={{ color: token.colorError }} />{/* i18n: user-facing */}
                     </Card>
                 </Col>
                 <Col span={6}>
                     <Card>
-                        <Statistic title={t('已修复', 'Fixed')} value={stats?.fixed ?? 0} prefix={<CheckCircleOutlined />} valueStyle={{ color: token.colorSuccess }} />
+                        <Statistic title={t('已修复', 'Fixed')} value={stats?.fixed ?? 0} prefix={<CheckCircleOutlined />} valueStyle={{ color: token.colorSuccess }} />{/* i18n: user-facing */}
                     </Card>
                 </Col>
             </Row>
 
-            <h2 style={{ marginTop: 24 }}>{t('系统健康', 'System health')}</h2>
+            <h2 style={{ marginTop: 24 }}>{t('系统健康', 'System health')}</h2>{/* i18n: user-facing */}
             <Row gutter={[16, 16]}>
                 {(() => {
-                    // 后端 /health/detailed 返回扁平结构,非 components 嵌套。
+// Backend /health/detailed returns a flat structure, not nested components.
                     const comps: Array<[string, string, string | null]> = [
-                        [t('状态', 'Status'), health?.status ?? 'unknown', null],
-                        [t('数据库', 'Database'), health?.database ?? 'unknown', null],
-                        [t('AI 后端', 'AI backend'), health?.ai_backend ?? 'unknown', null],
-                        [t('内存', 'Memory'), health?.memory_percent != null ? `${health.memory_percent.toFixed(1)}%` : 'N/A', null],
+                        [t('状态', 'Status'), health?.status ?? 'unknown', null], // i18n: user-facing
+                        [t('数据库', 'Database'), health?.database ?? 'unknown', null], // i18n: user-facing
+                        [t('AI 后端', 'AI backend'), health?.ai_backend ?? 'unknown', null], // i18n: user-facing
+                        [t('内存', 'Memory'), health?.memory_percent != null ? `${health.memory_percent.toFixed(1)}%` : 'N/A', null], // i18n: user-facing
                         [t('CPU', 'CPU'), health?.cpu_percent != null ? `${health.cpu_percent.toFixed(1)}%` : 'N/A', null],
-                        [t('磁盘', 'Disk'), health?.disk_percent != null ? `${health.disk_percent.toFixed(1)}%` : 'N/A', null],
+                        [t('磁盘', 'Disk'), health?.disk_percent != null ? `${health.disk_percent.toFixed(1)}%` : 'N/A', null], // i18n: user-facing
                     ];
                     return comps.map(([name, status]) => {
-                        const ok = status === 'ok' || status === 'degraded' || name === t('状态', 'Status');
+                        const ok = status === 'ok' || status === 'degraded' || name === t('状态', 'Status'); // i18n: user-facing
                         const numeric = status.endsWith('%') && parseFloat(status) < 80;
-                        const healthy = name === t('状态', 'Status') ? status !== 'degraded' : (status.endsWith('%') ? numeric : status === 'ok');
+                        const healthy = name === t('状态', 'Status') ? status !== 'degraded' : (status.endsWith('%') ? numeric : status === 'ok'); // i18n: user-facing
                         return (
                             <Col span={8} key={name}>
                                 <Card size="small">
@@ -114,7 +114,7 @@ export default function Dashboard() {
                         );
                     });
                 })()}
-                {!health && <Col><Tag>{t('无法获取健康状态', 'Health status unavailable')}</Tag></Col>}
+                {!health && <Col><Tag>{t('无法获取健康状态', 'Health status unavailable')}</Tag></Col>}{/* i18n: user-facing */}
             </Row>
         </div>
     );

@@ -67,8 +67,8 @@ class PipelineConfig:
     enable_sca: bool = True
     # P1.2: secrets module (entropy + provider validators), offline by default.
     enable_secrets: bool = True
-    # OSV.dev 是云端依赖漏洞库，默认关闭以保持 100% 离线承诺。
-    # 开启后会向 https://osv.dev 外发依赖清单，需用户显式同意。
+    # OSV.dev is a cloud dependency vulnerability database; disabled by default to keep the 100% offline promise.
+    # Enabling it sends the dependency manifest to https://osv.dev and requires explicit user consent.
     enable_osv: bool = False
     enable_patch: bool = True
     batch_size: int = 50
@@ -96,7 +96,7 @@ class ScanPipeline:
     ):
         self.config = config or PipelineConfig()
         self.tenant_id = tenant_id
-        # Feature 1: 加载租户自定义规则注入 RuleEngine(加载失败不阻断扫描,降级内置规则)。
+        # Feature 1: load tenant custom rules into the RuleEngine (load failure does not block the scan; falls back to built-in rules).
         custom_rules = self._load_custom_rules(tenant_id)
         self.rule_engine = RuleEngine(custom_rules=custom_rules)
         self.ast_parser = ASTParser()
@@ -119,7 +119,8 @@ class ScanPipeline:
             self._project_cache = ProjectScanCache(db)
 
     def _load_custom_rules(self, tenant_id: str = ""):
-        # Feature 1: 从 CustomRuleStore 加载租户启用的自定义规则。加载失败降级内置规则,不阻断扫描。
+        # Feature 1: load tenant-enabled custom rules from CustomRuleStore.
+        # On load failure fall back to built-in rules without blocking the scan.
         if not tenant_id:
             return []
         try:
@@ -127,10 +128,10 @@ class ScanPipeline:
 
             store = CustomRuleStore()
             active = store.get_active_rules(tenant_id)
-            logger.info(f"[Pipeline] 租户 {tenant_id} 加载 {len(active)} 条自定义规则")
+            logger.info(f"[Pipeline] tenant {tenant_id} loaded {len(active)} custom rules")
             return active
         except Exception as e:
-            logger.warning(f"[Pipeline] 加载自定义规则失败,降级内置规则: {e}")
+            logger.warning(f"[Pipeline] custom rule load failed, falling back to built-in rules: {e}")
             return []
 
     async def run(
@@ -141,7 +142,7 @@ class ScanPipeline:
             cp = self.checkpoint_mgr.load(scan_id)
             if cp and cp.completed_stage:
                 resume_from = cp.completed_stage
-                logger.info(f"[Pipeline] 断点续扫 scan_id={scan_id} 从 {resume_from} 恢复")
+                logger.info(f"[Pipeline] resumable scan scan_id={scan_id} resumed from {resume_from}")
 
         ctx = PipelineContext(project_path=path)
         if scan_id:
@@ -157,14 +158,14 @@ class ScanPipeline:
                 ctx.findings = [Finding.from_dict(f) for f in cp.stage_data.get("findings", [])]
                 ctx.patches = [Patch.from_dict(p) for p in cp.stage_data.get("patches", [])]
                 logger.info(
-                    f"[Pipeline] 恢复状态 vulns={len(ctx.vulnerabilities)} "
+                    f"[Pipeline] restored state vulns={len(ctx.vulnerabilities)} "
                     f"findings={len(ctx.findings)} patches={len(ctx.patches)}"
                 )
         else:
             self.circuit_breaker.reset()
-            logger.debug("[Pipeline] 熔断器已重置 (新扫描)")
+            logger.debug("[Pipeline] circuit breaker reset (new scan)")
 
-        logger.info(f"[Pipeline] 开始 scan_id={ctx.scan_id} resume_from={resume_from}")
+        logger.info(f"[Pipeline] start scan_id={ctx.scan_id} resume_from={resume_from}")
 
         stage_methods = {
             PipelineStage.RECON: lambda: self._stage_recon(ctx, changed_files),
@@ -184,8 +185,8 @@ class ScanPipeline:
 
         for stage in STAGE_ORDER[start_idx:]:
             if not self.circuit_breaker.allow_request():
-                logger.error(f"[Pipeline] 熔断器开启，跳过 stage={stage.value}")
-                ctx.errors.append(f"熔断器开启，跳过 {stage.value}")
+                logger.error(f"[Pipeline] circuit breaker open, skipping stage={stage.value}")
+                ctx.errors.append(f"circuit breaker open, skipped {stage.value}")
                 break
 
             success = False
@@ -214,16 +215,16 @@ class ScanPipeline:
                     break
                 except Exception as e:
                     last_error = e
-                    logger.warning(f"[Pipeline] stage={stage.value} 失败 attempt={attempt + 1}: {e}")
+                    logger.warning(f"[Pipeline] stage={stage.value} failed attempt={attempt + 1}: {e}")
                     self.circuit_breaker.record_failure()
                     if attempt < self.retry_policy.max_retries:
                         delay = self.retry_policy.get_delay(attempt)
-                        logger.info(f"[Pipeline] 重试等待 {delay:.1f}s")
+                        logger.info(f"[Pipeline] retry wait {delay:.1f}s")
                         await asyncio.sleep(delay)
 
             if not success:
-                # F-P0: stage 耗尽重试后必须停链路,此前仅记 error 后继续跑后续 stage,失败被静默吞掉。
-                logger.error(f"[Pipeline] stage={stage.value} 最终失败,终止流水线: {last_error}")
+                # F-P0: after retries are exhausted a stage must stop the pipeline; previously only an error was logged and later stages kept running, silently swallowing the failure.
+                logger.error(f"[Pipeline] stage={stage.value} final failure, terminating pipeline: {last_error}")
                 ctx.errors.append(f"{stage.value}: {last_error}")
                 ctx.stage_results.setdefault("pipeline", {})["failed_stage"] = stage.value
                 break
@@ -231,13 +232,13 @@ class ScanPipeline:
         if self.ai_analyzer:
             await self.ai_analyzer.aclose()
         self.checkpoint_mgr.remove(ctx.scan_id)
-        logger.info(f"[Pipeline] 完成 scan_id={ctx.scan_id} vulns={len(ctx.vulnerabilities)}")
+        logger.info(f"[Pipeline] done scan_id={ctx.scan_id} vulns={len(ctx.vulnerabilities)}")
         return ctx
 
     async def _stage_recon(self, ctx: PipelineContext, changed_files: list[str] | None = None) -> None:
         ctx.current_stage = PipelineStage.RECON
         start = time.time()
-        logger.info("[Recon] 侦察阶段开始")
+        logger.info("[Recon] recon stage started")
 
         target = ScanTarget(ctx.project_path, max_files=self.config.max_files, max_file_size=self.config.max_file_size)
         if changed_files:
@@ -276,13 +277,13 @@ class ScanPipeline:
             "duration_ms": (time.time() - start) * 1000,
         }
         logger.info(
-            f"[Recon] 完成 files={len(ctx.files)} langs={list(ctx.language_stats.keys())} deps={len(ctx.dependency_files)}"
+            f"[Recon] done files={len(ctx.files)} langs={list(ctx.language_stats.keys())} deps={len(ctx.dependency_files)}"
         )
 
     async def _stage_discover(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.DISCOVER
         start = time.time()
-        logger.info("[Discover] 漏洞发现阶段开始")
+        logger.info("[Discover] vulnerability discovery stage started")
 
         all_vulns: list[Vulnerability] = []
         scan_failed = 0
@@ -292,15 +293,15 @@ class ScanPipeline:
             nonlocal scan_failed
             try:
                 content = f.read_text(encoding="utf-8", errors="ignore")
-                # 命中 DB 缓存则跳过规则/污点重算,续扫重跑 Discover 时不重复消耗算力。
+                # Skip rule/taint recomputation on DB cache hits so a resumed scan re-running Discover does not burn compute twice.
                 if self._project_cache:
                     rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
                     cached = self._project_cache.get(self.project_id, rel, content)
                     if cached is not None:
                         return cached
                 vulns = self.rule_engine.scan_file(f, content)
-                # A-P0-1: pipeline 此前只跑 regex(scan_file),丢掉 Scanner 的 AST 覆盖。
-                # 统一走 scan_file_full(regex+AST),与已退役 Scanner 等价,避免漏报。
+                # A-P0-1: the pipeline previously ran regex only (scan_file), losing the Scanner's AST coverage.
+                # Use scan_file_full (regex+AST) uniformly, equivalent to the retired Scanner, to avoid misses.
                 vulns.extend(self.rule_engine.scan_file_ast(f, content))
                 if self.config.enable_taint:
                     taint_result = self.taint_tracker.analyze(f, content)
@@ -308,8 +309,8 @@ class ScanPipeline:
                         if not tp.is_sanitized:
                             v = Vulnerability(
                                 id=f"V-{uuid.uuid4().hex[:8]}",
-                                title=f"污点追踪: {tp.source} → {tp.sink}",
-                                description=f"数据流从 {tp.source} 传播到危险操作 {tp.sink}，未经适当清洗",
+                                title=f"Taint tracking: {tp.source} → {tp.sink}",
+                                description=f"Data flows from {tp.source} to the dangerous operation {tp.sink} without proper sanitization",
                                 severity="high",
                                 confidence=70,
                                 file_path=str(f),
@@ -332,7 +333,7 @@ class ScanPipeline:
                 return vulns
             except Exception as e:
                 scan_failed += 1
-                logger.warning(f"[Discover] 扫描失败 {f}: {e}")
+                logger.warning(f"[Discover] scan failed {f}: {e}")
                 return []
 
         for i in range(0, len(ctx.files), self.config.batch_size):
@@ -343,8 +344,8 @@ class ScanPipeline:
                     all_vulns.extend(findings)
 
         if scan_failed:
-            ctx.errors.append(f"discover {scan_failed} 个文件扫描失败")
-            logger.warning(f"[Discover] 共 {scan_failed} 个文件扫描失败")
+            ctx.errors.append(f"discover {scan_failed} file scan failures")
+            logger.warning(f"[Discover] {scan_failed} files failed to scan in total")
 
         if self._project_cache:
             self._project_cache.flush()
@@ -354,18 +355,18 @@ class ScanPipeline:
                 semantic = await self.ai_analyzer.semantic_scan(ctx.files)
                 all_vulns.extend(semantic)
             except Exception as e:
-                logger.warning(f"[Discover] AI语义扫描失败: {e}")
-                ctx.errors.append(f"discover AI 语义扫描失败: {e}")
+                logger.warning(f"[Discover] AI semantic scan failed: {e}")
+                ctx.errors.append(f"discover AI semantic scan failed: {e}")
                 self.circuit_breaker.record_failure()
 
         if self.sca_scanner and ctx.dependency_files:
             try:
                 sca_vulns = self.sca_scanner.scan(ctx.project_path)
                 all_vulns.extend(sca_vulns)
-                logger.info(f"[Discover] SCA发现 {len(sca_vulns)} 个依赖漏洞")
+                logger.info(f"[Discover] SCA found {len(sca_vulns)} dependency vulnerabilities")
             except Exception as e:
-                logger.warning(f"[Discover] SCA扫描失败: {e}")
-                ctx.errors.append(f"discover SCA 扫描失败: {e}")
+                logger.warning(f"[Discover] SCA scan failed: {e}")
+                ctx.errors.append(f"discover SCA scan failed: {e}")
                 self.circuit_breaker.record_failure()
 
         ctx.vulnerabilities = all_vulns
@@ -374,12 +375,12 @@ class ScanPipeline:
             "files_skipped": scan_failed,
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Discover] 完成 vulns={len(all_vulns)} files_skipped={scan_failed}")
+        logger.info(f"[Discover] done vulns={len(all_vulns)} files_skipped={scan_failed}")
 
     async def _stage_verify(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.VERIFY
         start = time.time()
-        logger.info(f"[Verify] 对抗性验证阶段开始 vulns={len(ctx.vulnerabilities)}")
+        logger.info(f"[Verify] adversarial verification stage started vulns={len(ctx.vulnerabilities)}")
 
         if not ctx.vulnerabilities:
             ctx.stage_results["verify"] = {"verified": 0, "duration_ms": 0}
@@ -391,54 +392,56 @@ class ScanPipeline:
                 ctx.vulnerabilities = await self.ai_analyzer.verify_findings(ctx.vulnerabilities, ctx.files)
             except Exception as e:
                 verify_ok = False
-                logger.warning(f"[Verify] AI验证失败: {e}")
-                ctx.errors.append(f"verify AI 验证失败: {e}")
+                logger.warning(f"[Verify] AI verification failed: {e}")
+                ctx.errors.append(f"verify AI verification failed: {e}")
                 self.circuit_breaker.record_failure()
 
         if self.adversarial and ctx.vulnerabilities:
             try:
                 file_contents = {}
-                # P-P1: 静默截断到前 100 文件,跨文件对抗验证覆盖率受限,显式记日志避免误以为全量。
+                # P-P1: silently truncated to the first 100 files, limiting cross-file adversarial verification coverage; log explicitly to avoid assuming full coverage.
                 sample_files = ctx.files[:100]
                 if len(ctx.files) > len(sample_files):
-                    logger.warning(f"[Verify] 对抗验证仅采样前 {len(sample_files)}/{len(ctx.files)} 文件")
+                    logger.warning(
+                        f"[Verify] adversarial verification sampled only first {len(sample_files)}/{len(ctx.files)} files"
+                    )
                 for f in sample_files:
                     with contextlib.suppress(Exception):
                         file_contents[str(f)] = f.read_text(encoding="utf-8", errors="ignore")
                 ctx.vulnerabilities = await self.adversarial.verify_batch(ctx.vulnerabilities, file_contents)
             except Exception as e:
                 verify_ok = False
-                logger.warning(f"[Verify] 对抗验证失败: {e}")
-                ctx.errors.append(f"verify 对抗验证失败: {e}")
+                logger.warning(f"[Verify] adversarial verification failed: {e}")
+                ctx.errors.append(f"verify adversarial verification failed: {e}")
                 self.circuit_breaker.record_failure()
 
-        # 仅当验证实际成功才标记 verified;失败时保留 verified=False,避免未验证漏洞被报为已验证。
+        # Only mark verified when verification actually succeeded; keep verified=False on failure so unverified vulns are not reported as verified.
         if verify_ok:
             for v in ctx.vulnerabilities:
                 v.verified = True
         else:
-            logger.warning("[Verify] 验证未成功完成,漏洞保留 verified=False")
+            logger.warning("[Verify] verification did not complete successfully, vulnerabilities keep verified=False")
 
         ctx.stage_results["verify"] = {
             "verified": len(ctx.vulnerabilities),
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Verify] 完成 verified={len(ctx.vulnerabilities)}")
+        logger.info(f"[Verify] done verified={len(ctx.vulnerabilities)}")
 
     async def _stage_triage(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.TRIAGE
         start = time.time()
-        logger.info("[Triage] 分诊分级阶段开始")
+        logger.info("[Triage] triage stage started")
 
-        # Feature 2: 先用反馈库过滤误报(此前漏接,误报漏洞重复进 triage)。
-        # filter_vulnerabilities 内部无 DB 依赖,失败降级为不过滤。
+        # Feature 2: filter false positives via the feedback store first (previously unwired, so duplicate false positives re-entered triage).
+        # filter_vulnerabilities has no DB dependency internally; on failure degrade to no filtering.
         before_fp = len(ctx.vulnerabilities)
         try:
             from .feedback.loop import FeedbackStore
 
             ctx.vulnerabilities = FeedbackStore().filter_vulnerabilities(ctx.vulnerabilities)
         except Exception as e:
-            logger.warning(f"[Triage] 反馈过滤失败,降级为不过滤: {e}")
+            logger.warning(f"[Triage] feedback filtering failed, degrading to no filtering: {e}")
         filtered_fp = before_fp - len(ctx.vulnerabilities)
 
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -478,12 +481,12 @@ class ScanPipeline:
             "deduped": len(seen),
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Triage] 完成 total={len(ctx.vulnerabilities)}")
+        logger.info(f"[Triage] done total={len(ctx.vulnerabilities)}")
 
     async def _stage_patch(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.PATCH
         start = time.time()
-        logger.info("[Patch] 补丁生成阶段开始")
+        logger.info("[Patch] patch generation stage started")
 
         if not self.config.enable_patch or not ctx.vulnerabilities:
             ctx.stage_results["patch"] = {"patches": 0, "duration_ms": 0}
@@ -498,23 +501,23 @@ class ScanPipeline:
                         try:
                             patch = await self.fix_generator.ai_enhance_fix(patch)
                         except Exception as e:
-                            logger.warning(f"[Patch] AI 增强失败,保留模板补丁 {v.id}: {e}")
+                            logger.warning(f"[Patch] AI enhancement failed, keeping template patch {v.id}: {e}")
                     patch.vuln_id = v.id
                     patch.scan_id = ctx.scan_id
                     ctx.patches.append(patch)
             except Exception as e:
-                logger.debug(f"[Patch] 生成补丁失败 {v.id}: {e}")
+                logger.debug(f"[Patch] patch generation failed {v.id}: {e}")
 
         ctx.stage_results["patch"] = {
             "patches": len(ctx.patches),
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Patch] 完成 patches={len(ctx.patches)}")
+        logger.info(f"[Patch] done patches={len(ctx.patches)}")
 
     async def _stage_retest(self, ctx: PipelineContext) -> None:
         ctx.current_stage = PipelineStage.RETEST
         start = time.time()
-        logger.info("[Retest] 修复后复测阶段开始")
+        logger.info("[Retest] post-fix retest stage started")
 
         if not ctx.patches:
             ctx.stage_results["retest"] = {"retested": 0, "passed": 0, "failed": 0, "duration_ms": 0}
@@ -548,8 +551,8 @@ class ScanPipeline:
                     patch.verified = False
                     failed += 1
             except Exception as e:
-                # 正则异常(灾难回溯/非法转义)不得 fail-open 标通过,否则坏补丁以"已验证"发布。
-                logger.warning(f"[Retest] 复测正则异常,判失败 {patch.vuln_id}: {e}")
+                # Regex exceptions (catastrophic backtracking/invalid escapes) must not fail-open and pass, otherwise a bad patch ships as "verified".
+                logger.warning(f"[Retest] retest regex exception, judged failed {patch.vuln_id}: {e}")
                 patch.verified = False
                 failed += 1
 
@@ -559,7 +562,7 @@ class ScanPipeline:
             "failed": failed,
             "duration_ms": (time.time() - start) * 1000,
         }
-        logger.info(f"[Retest] 完成 retested={retested} passed={passed} failed={failed}")
+        logger.info(f"[Retest] done retested={retested} passed={passed} failed={failed}")
 
     def _sanitize_stage_result(self, data: Any) -> Any:
         if isinstance(data, dict):
@@ -600,11 +603,11 @@ class ScanPipeline:
         target.files = ctx.files
         result = ScanResult(target)
         result.vulnerabilities = ctx.vulnerabilities
-        # A-P0-1: 此前 findings/patches 被丢弃,API 拿不到。现透传至 ScanResult 供路由持久化。
+        # A-P0-1: findings/patches were previously dropped and unreachable from the API. Now passed through to ScanResult for route persistence.
         result.findings = ctx.findings
         result.patches = ctx.patches
         result.files_scanned = len(ctx.files)
-        # Discover 阶段记录的扫描失败计数透传(files_skipped 此前恒为 0,对账失真)。
+        # Pass through the scan failure count recorded in Discover (files_skipped was previously always 0, skewing reconciliation).
         result.files_skipped = ctx.stage_results.get("discover", {}).get("files_skipped", 0)
 
         triage = ctx.stage_results.get("triage", {})
@@ -613,9 +616,9 @@ class ScanPipeline:
 
         t = triage.get("total", len(ctx.vulnerabilities))
         if t == 0:
-            result.summary = "✅ 未发现安全漏洞"
+            result.summary = "✅ No security vulnerabilities found"
         else:
-            parts = [f"发现 {t} 个安全漏洞"]
+            parts = [f"Found {t} security vulnerabilities"]
             for sev in ("critical", "high", "medium", "low"):
                 c = triage.get(sev, 0)
                 if c:

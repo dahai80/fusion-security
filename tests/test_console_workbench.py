@@ -137,7 +137,7 @@ class TestAlertSubscriptions:
         assert item["title"]
         assert item["level"] in ("info", "warning", "error")
         assert item["route"] == "/audit"
-        assert "auth.permission_denied" in item["title"] or "安全告警" in item["title"]
+        assert "auth.permission_denied" in item["title"] or "Security alert" in item["title"]
 
         # 第二次轮询不重复(dedup + 游标)。
         second = client.get("/api/v1/console/notifications", headers=h)
@@ -498,7 +498,7 @@ class TestAuditMarkKeyIntegrity:
             "/api/v1/console/audit/marks", json={"event_key": "mk_does_not_exist"}, headers=_admin_headers()
         )
         assert resp.status_code == 404
-        assert "不存在" in resp.json()["detail"]
+        assert "not found" in resp.json()["detail"]
 
     def test_legacy_key_still_accepted(self, monkeypatch, tmp_path):
         # 迁移兼容:存量标记用旧键,标记解析两侧都要认。

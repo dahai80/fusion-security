@@ -1,19 +1,20 @@
-"""Union Web shell 模块注册 + 心跳(PRD §5.2 / Issue #35)。
+"""Union Web shell module registration + heartbeat (PRD §5.2 / Issue #35).
 
-启动时把 frontend/manifest.json 注册到 fusion-gateway shell 注册中心
-(POST /api/v1/shell/manifests,Bearer admin key),之后按固定间隔心跳保活,
-超时未心跳的模块在 shell 菜单被标记 unreachable(置灰,不删除)。
+On startup, registers frontend/manifest.json into the fusion-gateway shell registry
+(POST /api/v1/shell/manifests, Bearer admin key), then keeps it alive with heartbeats
+at a fixed interval; modules whose heartbeat times out are marked unreachable (grayed
+out, not deleted) in the shell menu.
 
-环境变量开关 —— 需同时设置:
-- FUSION_SHELL_GATEWAY_URL: gateway 基址,如 http://127.0.0.1:11432
-- FUSION_ADMIN_KEY: 有 /api/v1/shell/manifests 权限的 gateway key(经 fusion_core.config.admin_key 解析)
+Environment switches — both must be set:
+- FUSION_SHELL_GATEWAY_URL: gateway base URL, e.g. http://127.0.0.1:11432
+- FUSION_ADMIN_KEY: gateway key with /api/v1/shell/manifests permission (resolved via fusion_core.config.admin_key)
 
-可选:
-- FUSION_SHELL_MANIFEST: manifest 路径覆盖(默认仓内 frontend/manifest.json)
+Optional:
+- FUSION_SHELL_MANIFEST: manifest path override (defaults to in-repo frontend/manifest.json)
 
-/shell/fusion-security/ 反向代理本身是 gateway 静态配置
-(web_shell.modules.fusion-security.upstream/api_key),动态 manifest 只驱动
-菜单/entry。gateway 侧接线见 fusion-gateway 仓 issue。
+The /shell/fusion-security/ reverse proxy itself is static gateway configuration
+(web_shell.modules.fusion-security.upstream/api_key); the dynamic manifest only drives
+the menu/entry. Gateway-side wiring is tracked in a fusion-gateway repo issue.
 """
 
 from __future__ import annotations
@@ -33,12 +34,13 @@ logger = logging.getLogger(__name__)
 GATEWAY_URL_ENV = "FUSION_SHELL_GATEWAY_URL"
 ADMIN_KEY_ENV = "FUSION_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
-# Issue #40: 模块 api_key —— 设置后在注册体携带 api_key 字段。不设时 gateway 会
-# 签发 fm- key 且代理优先用动态注册凭证,fusion-security 侧 401,自注册必须停用。
+# Issue #40: module api_key — when set, the api_key field is carried in the registration body. When unset, the
+# gateway issues an fm- key and the proxy prefers the dynamically registered credential, and fusion-security gets
+# 401; self-registration must be disabled.
 MODULE_KEY_ENV = "FUSION_SECURITY_SHELL_API_KEY"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
-# 心跳每 15s 一次 —— gateway 掉线/拒绝时不能每个 tick 刷一条告警(告警限频)。
+# Heartbeat every 15s — when the gateway is down/rejecting, do not log an alert on every tick (alert rate limiting).
 FAILURE_LOG_INTERVAL_SECONDS = 300.0
 
 
@@ -47,9 +49,10 @@ def _default_manifest_path() -> Path:
 
 
 def _gateway_admin_key() -> str:
-    # Issue #57: admin key 单点解析走 fusion_core.config.admin_key(规范名
-    # FUSION_ADMIN_KEY,prod 缺失 RuntimeError 在 fusion-core 内收敛)。裸装无
-    # fusion-core 时回退只认规范名,不在本仓重复别名链(模式:fusion-cowork #204)。
+    # Issue #57: admin key resolution is centralized in fusion_core.config.admin_key (canonical name
+    # FUSION_ADMIN_KEY; the prod missing-key RuntimeError is contained inside fusion-core). In bare installs
+    # without fusion-core, the fallback only accepts the canonical name; no alias chain duplicated in this
+    # repo (pattern: fusion-cowork #204).
     try:
         from fusion_core.config import admin_key
 
@@ -57,13 +60,15 @@ def _gateway_admin_key() -> str:
     except ImportError:
         key = os.environ.get(ADMIN_KEY_ENV, "")
         if not key:
-            logger.warning(f"{ADMIN_KEY_ENV} 未设置: shell 网关注册不可用(向 fusion-gateway admin API 索取)")
+            logger.warning(
+                f"{ADMIN_KEY_ENV} not set: shell gateway registration unavailable (request a key from the fusion-gateway admin API)"
+            )
         return key
 
 
 def shell_registration_enabled() -> bool:
-    # URL 未配置时短路,不触发 admin key 解析(prod 缺 key 的 RuntimeError 只在
-    # 明确要注册时才是配置错误)。
+    # Short-circuit when the URL is not configured, without triggering admin key resolution (the prod
+    # missing-key RuntimeError is only a configuration error when registration is explicitly requested).
     if not os.environ.get(GATEWAY_URL_ENV, "").strip():
         return False
     return bool(_gateway_admin_key().strip())
@@ -72,18 +77,18 @@ def shell_registration_enabled() -> bool:
 def _load_manifest() -> dict[str, Any]:
     path = Path(os.environ.get(MANIFEST_PATH_ENV, "").strip() or _default_manifest_path())
     if not path.exists():
-        raise FileNotFoundError(f"shell manifest 不存在: {path}")
+        raise FileNotFoundError(f"shell manifest not found: {path}")
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if not manifest.get("id"):
-        raise ValueError(f"shell manifest 缺少 id: {path}")
+        raise ValueError(f"shell manifest missing id: {path}")
     return manifest
 
 
 async def register_once() -> tuple[bool, str]:
-    # 单次注册/心跳往返。gateway 接受返回 (True, ""),否则 (False, 原因)。
-    # Issue #40: FUSION_SECURITY_SHELL_API_KEY 设置时在注册体带 api_key 字段
-    # (manifest.json 的 api_key_env 提示对应此变量),gateway 代理优先使用该
-    # 凭证注入上游;key 绝不落日志。
+    # Single registration/heartbeat round trip. Returns (True, "") if the gateway accepts, otherwise (False, reason).
+    # Issue #40: when FUSION_SECURITY_SHELL_API_KEY is set, the api_key field is included in the registration
+    # body (the api_key_env in manifest.json points to this variable); the gateway proxy prefers this
+    # credential when injecting upstream; the key is never logged.
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
     gw_key = _gateway_admin_key().strip()
     manifest = _load_manifest()
@@ -93,8 +98,8 @@ async def register_once() -> tuple[bool, str]:
         body["api_key"] = module_key
     else:
         logger.warning(
-            "[ShellRegistry] %s 未设置:注册体不带 api_key,gateway 将签发 fm- key;"
-            "签发结果(raw_key)会在注册响应后自动落库(issue #97)",
+            "[ShellRegistry] %s not set: registration body carries no api_key; the gateway will issue an fm- key;"
+            " the issued result (raw_key) is persisted automatically after the registration response (issue #97)",
             MODULE_KEY_ENV,
         )
     url = f"{gateway}/api/v1/shell/manifests"
@@ -104,13 +109,13 @@ async def register_once() -> tuple[bool, str]:
     if resp.status_code in (200, 201, 204):
         _persist_issued_key(resp)
         return True, ""
-    return False, f"注册失败 {url} -> {resp.status_code} {resp.text[:200]}"
+    return False, f"registration failed {url} -> {resp.status_code} {resp.text[:200]}"
 
 
 def _persist_issued_key(resp: httpx.Response) -> None:
-    # Issue #97: gateway 在签发/轮换 fm- key 时于 2xx 响应体返回 raw_key,且仅此一次。
-    # 必须落库到本模块 key store,否则代理注入的 Bearer 永远 401。幂等 upsert
-    # (同 hash 更新角色/租户),key 明文绝不落日志。
+    # Issue #97: when issuing/rotating the fm- key, the gateway returns raw_key in the 2xx response body,
+    # and only once. It must be persisted to this module's key store, otherwise the proxy-injected Bearer
+    # always gets 401. Idempotent upsert (same hash updates role/tenant); the key plaintext is never logged.
     try:
         payload = resp.json() if hasattr(resp, "json") else {}
     except ValueError:
@@ -125,15 +130,16 @@ def _persist_issued_key(resp: httpx.Response) -> None:
         auth_manager.create_api_key_from_raw("shell-module", raw_key, ["admin"], tenant_id=tenant)
         logger.info("[ShellRegistry] gateway-issued service key persisted to module key store")
     except Exception as e:
-        # 落库失败不拖垮注册心跳:下个间隔 gateway 重发(或人工配置静态 key)。
+        # A persist failure must not take down the registration heartbeat: the gateway resends next
+        # interval (or a static key is configured manually).
         logger.error("[ShellRegistry] failed to persist gateway-issued key: %s", e)
 
 
 async def run_shell_registry() -> None:
-    # lifespan 常驻任务:注册 + 心跳直到被取消。永不抛异常 —— gateway 挂掉
-    # 不能拖垮安全服务,每次失败记日志后下个间隔重试。
+    # Long-lived lifespan task: register + heartbeat until cancelled. Never raises — the gateway being
+    # down must not take down the security service; log each failure and retry next interval.
     logger.info(
-        "shell registry: 已启用 gateway=%s manifest=%s",
+        "shell registry: enabled gateway=%s manifest=%s",
         os.environ.get(GATEWAY_URL_ENV, ""),
         os.environ.get(MANIFEST_PATH_ENV, "") or _default_manifest_path(),
     )
@@ -148,10 +154,10 @@ async def run_shell_registry() -> None:
         except Exception as e:
             ok = False
             exc = e
-            reason = f"往返失败: {type(e).__name__}: {e}"
+            reason = f"round trip failed: {type(e).__name__}: {e}"
         if ok:
             if consecutive_failures:
-                logger.info("shell registry: 在 %d 次失败后恢复", consecutive_failures)
+                logger.info("shell registry: recovered after %d failures", consecutive_failures)
             consecutive_failures = 0
         else:
             consecutive_failures += 1

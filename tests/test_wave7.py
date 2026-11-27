@@ -461,7 +461,7 @@ class TestUrlGuard:
 
         r = validate_outbound_url("file:///etc/passwd")
         assert r.ok is False
-        assert "协议" in r.reason
+        assert "scheme" in r.reason
 
     def test_no_hostname_rejected(self):
         from fusion_security.engine.ci._url_guard import validate_outbound_url
@@ -478,7 +478,7 @@ class TestUrlGuard:
         monkeypatch.setattr(_url_guard.socket, "getaddrinfo", fake_getaddrinfo)
         r = _url_guard.validate_outbound_url("http://evil.example.com/x")
         assert r.ok is False
-        assert "禁止外发" in r.reason
+        assert "forbidden" in r.reason
 
     def test_public_ip_allowed(self, monkeypatch):
         from fusion_security.engine.ci import _url_guard
@@ -1016,7 +1016,7 @@ class TestPipelineStages:
 
         ctx = PipelineContext(project_path="/tmp/x")
         result = pipeline.to_scan_result(ctx)
-        assert "未发现安全漏洞" in result.summary
+        assert "No security vulnerabilities found" in result.summary
 
     def test_to_scan_result_summary_with_vulns(self, pipeline):
         # 609-615: total>0 → 汇总各 severity。
@@ -1039,7 +1039,7 @@ class TestPipelineStages:
         ]
         ctx.stage_results["triage"] = {"total": 1, "high": 1, "critical": 0, "medium": 0, "low": 0}
         result = pipeline.to_scan_result(ctx)
-        assert "发现 1 个安全漏洞" in result.summary
+        assert "Found 1 security vulnerabilities" in result.summary
         assert "high" in result.summary
 
     def test_load_custom_rules_empty_tenant(self, pipeline):
@@ -1244,7 +1244,7 @@ class TestAIAnalyzer:
             rule_id="SQL001",
         )
         result = await analyzer.generate_fix(vuln)
-        assert "修复生成失败" in result
+        assert "fix generation failed" in result
 
     def test_parse_json_dict(self):
         # 250-262: 正常 dict 解析。
@@ -1493,7 +1493,7 @@ class TestFixGenerator:
         from fusion_security.engine.fix.fix_generator import FixGenerator
 
         analyzer = MagicMock()
-        analyzer.generate_fix = AsyncMock(return_value="// 修复生成失败: boom")
+        analyzer.generate_fix = AsyncMock(return_value="// fix generation failed: boom")
         fg = FixGenerator(ai_analyzer=analyzer)
         patch = Patch(vuln_id="V1", patched_code="x = 1", strategy="template")
         out = await fg.ai_enhance_fix(patch)
@@ -1521,7 +1521,7 @@ class TestFixGenerator:
     def test_is_valid_ai_patch_rejects_failure_marker(self):
         from fusion_security.engine.fix.fix_generator import FixGenerator
 
-        assert FixGenerator._is_valid_ai_patch("// 修复生成失败: x", "orig") is False
+        assert FixGenerator._is_valid_ai_patch("// fix generation failed: x", "orig") is False
 
     def test_is_valid_ai_patch_rejects_unchanged(self):
         from fusion_security.engine.fix.fix_generator import FixGenerator
@@ -1542,7 +1542,7 @@ class TestPatchVerifier:
         pv = PatchVerifier()
         r = pv.verify(Patch())
         assert r.is_valid is False
-        assert "空补丁" in r.errors
+        assert "empty patch" in r.errors
 
     def test_verify_diff_applies_and_syntax(self):
         # 33-43: diff_content 路径 + syntax_ok。
@@ -1565,7 +1565,7 @@ class TestPatchVerifier:
         pv = PatchVerifier()
         r = pv.verify(patch, original_code="a = 1\n")
         assert r.is_valid is False
-        assert "补丁无法应用" in r.errors
+        assert "patch could not be applied" in r.errors
 
     def test_verify_patched_code_directly(self):
         # 32: patched_code 直给,跳过 diff。
@@ -1720,7 +1720,7 @@ class TestScannerLegacy:
         (tmp_path / "clean.py").write_text("x = 1\n", encoding="utf-8")
         scanner = Scanner(use_ai=False, enable_cache=False)
         result = await scanner.scan(ScanTarget(str(tmp_path)))
-        assert "未发现" in result.summary
+        assert "No security vulnerabilities" in result.summary
 
     @pytest.mark.asyncio
     async def test_scan_incremental_path(self, tmp_path):

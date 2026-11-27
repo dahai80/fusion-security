@@ -78,7 +78,7 @@ def _orm_to_schedule(o) -> ScheduledScan:
 
 def _schedule_to_orm(o, schedule: ScheduledScan) -> None:
     o.name = schedule.name
-    # 空 project_id 写 NULL,避免 FK 约束失败(path-only 计划)。
+    # Write NULL for an empty project_id to avoid an FK constraint failure (path-only schedule).
     o.project_id = schedule.project_id or None
     o.project_path = schedule.project_path
     o.frequency = schedule.frequency.value
@@ -91,8 +91,9 @@ def _schedule_to_orm(o, schedule: ScheduledScan) -> None:
 
 
 class ScanScheduler:
-    # Feature 4: 计划扫描此前仅内存,重启即丢。现以 ScheduledScanORM 持久化,
-    # start() 从 DB 载入 enabled 计划,tick 执行后回写 last_run/next_run。
+    # Feature 4: scheduled scans used to be memory-only and were lost on restart.
+    # Now persisted via ScheduledScanORM; start() loads enabled schedules from the
+    # DB, and tick writes back last_run/next_run after each execution.
     def __init__(self, db=None):
         self.schedules: dict[str, ScheduledScan] = {}
         self._running = False
@@ -107,20 +108,21 @@ class ScanScheduler:
         return get_session()
 
     def _owns_db(self) -> bool:
-        # 未注入 db 时,每次操作自行开/关 session;注入时由调用方管理生命周期。
+        # When no db is injected, each operation opens/closes its own session;
+        # when injected, the caller manages the lifecycle.
         return self._db is None
 
     def add_schedule(self, schedule: ScheduledScan) -> None:
         schedule.next_run = schedule.compute_next_run()
         self.schedules[schedule.id] = schedule
         self._persist(schedule)
-        logger.info(f"[Scheduler] 添加计划扫描: {schedule.id} freq={schedule.frequency.value}")
+        logger.info(f"[Scheduler] schedule added: {schedule.id} freq={schedule.frequency.value}")
 
     def remove_schedule(self, schedule_id: str) -> bool:
         removed = self.schedules.pop(schedule_id, None) is not None
         db_deleted = self._delete_persisted(schedule_id)
         if removed or db_deleted:
-            logger.info(f"[Scheduler] 删除计划扫描: {schedule_id}")
+            logger.info(f"[Scheduler] schedule removed: {schedule_id}")
             return True
         return False
 
@@ -141,7 +143,7 @@ class ScanScheduler:
         ]
 
     def load_from_db(self) -> int:
-        # 从 DB 载入 enabled 计划到内存(供 start 调用)。
+        # Load enabled schedules from the DB into memory (called by start).
         from ..db.models import ScheduledScanORM
 
         db = self._get_db()
@@ -155,9 +157,9 @@ class ScanScheduler:
                     sched.next_run = sched.compute_next_run()
                 self.schedules[sched.id] = sched
                 count += 1
-            logger.info(f"[Scheduler] 从 DB 载入 {count} 个 enabled 计划")
+            logger.info(f"[Scheduler] loaded {count} enabled schedules from DB")
         except Exception as e:
-            logger.warning(f"[Scheduler] 载入计划失败: {e}")
+            logger.warning(f"[Scheduler] failed to load schedules: {e}")
         finally:
             if owns:
                 db.close()
@@ -176,7 +178,7 @@ class ScanScheduler:
             _schedule_to_orm(row, schedule)
             db.commit()
         except Exception as e:
-            logger.warning(f"[Scheduler] 持久化计划失败 {schedule.id}: {e}")
+            logger.warning(f"[Scheduler] failed to persist schedule {schedule.id}: {e}")
             if owns:
                 db.rollback()
         finally:
@@ -196,7 +198,7 @@ class ScanScheduler:
                 db.commit()
                 deleted = True
         except Exception as e:
-            logger.warning(f"[Scheduler] 删除持久化计划失败 {schedule_id}: {e}")
+            logger.warning(f"[Scheduler] failed to delete persisted schedule {schedule_id}: {e}")
             if owns:
                 db.rollback()
         finally:
@@ -205,7 +207,7 @@ class ScanScheduler:
         return deleted
 
     def _mark_run(self, schedule: ScheduledScan) -> None:
-        # tick 执行后回写 last_run/next_run,保持内存与 DB 一致。
+        # Write back last_run/next_run after each tick to keep memory and DB consistent.
         self._persist(schedule)
 
     async def start(self, scan_callback: Callable | None = None) -> None:
@@ -214,14 +216,14 @@ class ScanScheduler:
         self.load_from_db()
         self._running = True
         self._task = asyncio.create_task(self._run_loop(scan_callback))
-        logger.info("[Scheduler] 启动计划扫描服务")
+        logger.info("[Scheduler] scheduled-scan service started")
 
     async def stop(self) -> None:
         self._running = False
         if self._task:
             self._task.cancel()
             self._task = None
-        logger.info("[Scheduler] 停止计划扫描服务")
+        logger.info("[Scheduler] scheduled-scan service stopped")
 
     async def _run_loop(self, scan_callback: Callable | None = None) -> None:
         while self._running:
@@ -230,7 +232,7 @@ class ScanScheduler:
                 if not schedule.enabled:
                     continue
                 if now >= schedule.next_run:
-                    logger.info(f"[Scheduler] 执行计划扫描: {sid}")
+                    logger.info(f"[Scheduler] executing scheduled scan: {sid}")
                     schedule.last_run = now
                     schedule.next_run = schedule.compute_next_run()
                     self._mark_run(schedule)
@@ -238,5 +240,5 @@ class ScanScheduler:
                         try:
                             await scan_callback(schedule)
                         except Exception as e:
-                            logger.warning(f"[Scheduler] 扫描回调失败: {e}")
+                            logger.warning(f"[Scheduler] scan callback failed: {e}")
             await asyncio.sleep(60)

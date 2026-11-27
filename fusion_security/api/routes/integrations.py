@@ -26,12 +26,12 @@ dashboard = DashboardAggregator()
 
 
 def _check_webhook_tenant(row, api_key: APIKey) -> None:
-    # Issue #32: fail-closed。Webhook 跨租户 404。
+    # Issue #32: fail-closed. Cross-tenant webhook access returns 404.
     if (getattr(row, "tenant_id", "") or "") != (api_key.tenant_id or ""):
-        raise HTTPException(status_code=404, detail="Webhook不存在")
+        raise HTTPException(status_code=404, detail="Webhook not found")
 
 
-@router.post("/gate", summary="安全质量门禁")
+@router.post("/gate", summary="Security quality gate")
 async def evaluate_gate(
     vulnerabilities: list[dict[str, Any]], policy: str = "standard", _=Depends(require_permission("scan:read"))
 ):
@@ -57,7 +57,7 @@ async def evaluate_gate(
     return result.to_dict()
 
 
-@router.post("/cvss", summary="CVSS 3.1 评分")
+@router.post("/cvss", summary="CVSS 3.1 scoring")
 async def calculate_cvss(
     av: str = "N",
     ac: str = "L",
@@ -74,7 +74,7 @@ async def calculate_cvss(
     return {"vector": result.vector, "base_score": result.base_score, "severity": result.severity}
 
 
-@router.post("/compliance", summary="合规映射")
+@router.post("/compliance", summary="Compliance mapping")
 async def map_compliance(vulnerabilities: list[dict[str, Any]], _=Depends(require_permission("scan:read"))):
     mapper = ComplianceMapper()
     from ...models.vulnerability import Vulnerability
@@ -97,7 +97,7 @@ async def map_compliance(vulnerabilities: list[dict[str, Any]], _=Depends(requir
     return mapper.map_vulnerabilities(vulns)
 
 
-@router.post("/feedback", summary="提交误报反馈")
+@router.post("/feedback", summary="Submit false-positive feedback")
 async def add_feedback(
     vuln_id: str,
     rule_id: str,
@@ -119,12 +119,12 @@ async def add_feedback(
     return {"status": "ok", "vuln_id": vuln_id}
 
 
-@router.get("/feedback/stats", summary="反馈统计")
+@router.get("/feedback/stats", summary="Feedback statistics")
 async def feedback_stats(_=Depends(require_permission("scan:read"))):
     return feedback_store.get_stats()
 
 
-@router.post("/rules", summary="创建自定义规则")
+@router.post("/rules", summary="Create a custom rule")
 async def create_custom_rule(
     id: str,
     name: str,
@@ -138,7 +138,7 @@ async def create_custom_rule(
     return {"status": "ok", "rule_id": id}
 
 
-@router.get("/rules", summary="列出自定义规则")
+@router.get("/rules", summary="List custom rules")
 async def list_custom_rules(enabled_only: bool = False, _=Depends(require_permission("scan:read"))):
     rules = custom_rule_store.list_rules(enabled_only)
     return {
@@ -149,14 +149,14 @@ async def list_custom_rules(enabled_only: bool = False, _=Depends(require_permis
     }
 
 
-@router.delete("/rules/{rule_id}", summary="删除自定义规则")
+@router.delete("/rules/{rule_id}", summary="Delete a custom rule")
 async def delete_custom_rule(rule_id: str, _=Depends(require_permission("rule:manage"))):
     if custom_rule_store.delete_rule(rule_id):
         return {"status": "ok"}
-    raise HTTPException(status_code=404, detail="规则不存在")
+    raise HTTPException(status_code=404, detail="Rule not found")
 
 
-@router.get("/dashboard", summary="仪表盘统计")
+@router.get("/dashboard", summary="Dashboard statistics")
 async def dashboard_stats(_=Depends(require_permission("scan:read"))):
     stats = dashboard.get_stats()
     return stats.to_dict()
@@ -166,7 +166,7 @@ async def dashboard_stats(_=Depends(require_permission("scan:read"))):
 
 
 def _webhook_orm_to_dict(row) -> dict:
-    # S-P0: secret_hash 永不出库。响应只暴露非敏感字段。
+    # S-P0: secret_hash never leaves the store. The response only exposes non-sensitive fields.
     import json
 
     return {
@@ -183,17 +183,17 @@ def _validate_outbound(url: str) -> None:
 
     result = validate_outbound_url(url)
     if not result.ok:
-        raise HTTPException(status_code=400, detail=f"URL 校验失败: {result.reason}")
+        raise HTTPException(status_code=400, detail=f"URL validation failed: {result.reason}")
 
 
-@router.post("/webhooks", summary="创建Webhook")
+@router.post("/webhooks", summary="Create a webhook")
 async def create_webhook(
     url: str,
     events: list[str] = None,
     secret: str = "",
     api_key: APIKey = Depends(require_permission("system:manage")),
 ):
-    # P0-5: secret 用 Fernet 可逆加密存储(签名需回放),明文不落库也不回显。
+    # P0-5: secret is stored with reversible Fernet encryption (needed for signature replay); plaintext is never persisted or echoed.
     import json
     import uuid
 
@@ -217,13 +217,13 @@ async def create_webhook(
         db.add(row)
         db.commit()
         db.refresh(row)
-        logger.info(f"创建Webhook: {row.id} -> {url}")
+        logger.info(f"Webhook created: {row.id} -> {url}")
         return _webhook_orm_to_dict(row)
     finally:
         db.close()
 
 
-@router.get("/webhooks", summary="列出Webhooks")
+@router.get("/webhooks", summary="List webhooks")
 async def list_webhooks(api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
@@ -236,7 +236,7 @@ async def list_webhooks(api_key: APIKey = Depends(require_permission("system:man
         db.close()
 
 
-@router.get("/webhooks/{webhook_id}", summary="获取Webhook")
+@router.get("/webhooks/{webhook_id}", summary="Get a webhook")
 async def get_webhook(webhook_id: str, api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
@@ -245,7 +245,7 @@ async def get_webhook(webhook_id: str, api_key: APIKey = Depends(require_permiss
     try:
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
-            raise HTTPException(status_code=404, detail="Webhook不存在")
+            raise HTTPException(status_code=404, detail="Webhook not found")
         _check_webhook_tenant(row, api_key)
         return _webhook_orm_to_dict(row)
     finally:
@@ -258,7 +258,7 @@ class WebhookUpdate(BaseModel):
     enabled: bool | None = None
 
 
-@router.patch("/webhooks/{webhook_id}", summary="更新Webhook")
+@router.patch("/webhooks/{webhook_id}", summary="Update a webhook")
 async def update_webhook(
     webhook_id: str, body: WebhookUpdate, api_key: APIKey = Depends(require_permission("system:manage"))
 ):
@@ -271,7 +271,7 @@ async def update_webhook(
     try:
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
-            raise HTTPException(status_code=404, detail="Webhook不存在")
+            raise HTTPException(status_code=404, detail="Webhook not found")
         _check_webhook_tenant(row, api_key)
         if body.url is not None:
             _validate_outbound(body.url)
@@ -287,7 +287,7 @@ async def update_webhook(
         db.close()
 
 
-@router.delete("/webhooks/{webhook_id}", summary="删除Webhook")
+@router.delete("/webhooks/{webhook_id}", summary="Delete a webhook")
 async def delete_webhook(webhook_id: str, api_key: APIKey = Depends(require_permission("system:manage"))):
     from ...db import get_session
     from ...db.models import WebhookORM
@@ -296,7 +296,7 @@ async def delete_webhook(webhook_id: str, api_key: APIKey = Depends(require_perm
     try:
         row = db.query(WebhookORM).filter(WebhookORM.id == webhook_id).first()
         if not row:
-            raise HTTPException(status_code=404, detail="Webhook不存在")
+            raise HTTPException(status_code=404, detail="Webhook not found")
         _check_webhook_tenant(row, api_key)
         db.delete(row)
         db.commit()
@@ -334,7 +334,7 @@ class DingTalkConfigModel(BaseModel):
     events: list[str] = ["scan.completed", "gate.failed"]
 
 
-@router.post("/notify/feishu", summary="添加飞书通知")
+@router.post("/notify/feishu", summary="Add a Feishu notifier")
 async def add_feishu_notifier(body: FeishuConfigModel, _=Depends(require_permission("system:manage"))):
     from ...engine.ci.notifier import FeishuConfig
 
@@ -348,7 +348,7 @@ async def add_feishu_notifier(body: FeishuConfigModel, _=Depends(require_permiss
     return {"status": "ok", "type": "feishu"}
 
 
-@router.post("/notify/dingtalk", summary="添加钉钉通知")
+@router.post("/notify/dingtalk", summary="Add a DingTalk notifier")
 async def add_dingtalk_notifier(body: DingTalkConfigModel, _=Depends(require_permission("system:manage"))):
     from ...engine.ci.notifier import DingTalkConfig
 
@@ -374,11 +374,11 @@ class NotifyRequest(BaseModel):
     gate_passed: bool = True
 
 
-@router.post("/notify/send", summary="发送通知")
+@router.post("/notify/send", summary="Send a notification")
 async def send_notification(body: NotifyRequest, _=Depends(require_permission("system:manage"))):
     dispatcher = _get_dispatcher()
     if not dispatcher.feishu_notifiers and not dispatcher.dingtalk_notifiers:
-        raise HTTPException(status_code=400, detail="未配置任何通知渠道")
+        raise HTTPException(status_code=400, detail="No notification channel configured")
     results = dispatcher.notify(
         body.event,
         body.scan_id,
@@ -412,10 +412,10 @@ class JiraIssueCreate(BaseModel):
     vuln_ids: list[str] = []
 
 
-@router.post("/jira/config", summary="配置Jira连接")
+@router.post("/jira/config", summary="Configure the Jira connection")
 async def configure_jira(body: JiraConfigModel, _=Depends(require_permission("system:manage"))):
     global _jira_client
-    # P0-3: 校验 base_url 防 SSRF,拒绝内网/localhost 等危险目标。
+    # P0-3: validate base_url against SSRF, reject intranet/localhost and other dangerous targets.
     _validate_outbound(body.base_url)
     if _jira_client is not None:
         _jira_client.close()
@@ -428,15 +428,15 @@ async def configure_jira(body: JiraConfigModel, _=Depends(require_permission("sy
         labels=body.labels,
     )
     _jira_client = JiraClient(config)
-    logger.info(f"配置Jira: {body.base_url} project={body.project_key}")
+    logger.info(f"Jira configured: {body.base_url} project={body.project_key}")
     return {"status": "ok", "base_url": body.base_url, "project_key": body.project_key}
 
 
-@router.post("/jira/sync", summary="同步漏洞到Jira")
+@router.post("/jira/sync", summary="Sync vulnerabilities to Jira")
 async def sync_to_jira(body: JiraIssueCreate, api_key: APIKey = Depends(require_permission("vuln:manage"))):
     global _jira_client
     if _jira_client is None:
-        raise HTTPException(status_code=400, detail="未配置Jira连接，请先调用 /jira/config")
+        raise HTTPException(status_code=400, detail="Jira connection not configured; call /jira/config first")
     from fastapi.concurrency import run_in_threadpool
 
     from ...db import get_session
@@ -445,7 +445,7 @@ async def sync_to_jira(body: JiraIssueCreate, api_key: APIKey = Depends(require_
 
     tenant_id = api_key.tenant_id or ""
 
-    # sync SQLAlchemy + sync HTTP 放线程池,避免阻塞事件循环。
+    # Run sync SQLAlchemy + sync HTTP in a thread pool to avoid blocking the event loop.
     def _do_sync():
         db = get_session()
         try:
@@ -476,12 +476,12 @@ async def sync_to_jira(body: JiraIssueCreate, api_key: APIKey = Depends(require_
     return await run_in_threadpool(_do_sync)
 
 
-@router.get("/jira/issue/{issue_key}", summary="获取Jira工单状态")
+@router.get("/jira/issue/{issue_key}", summary="Get Jira issue status")
 async def get_jira_issue(issue_key: str, _=Depends(require_permission("scan:read"))):
     global _jira_client
     if _jira_client is None:
-        raise HTTPException(status_code=400, detail="未配置Jira连接")
+        raise HTTPException(status_code=400, detail="Jira connection not configured")
     issue = _jira_client.get_issue(issue_key)
     if not issue:
-        raise HTTPException(status_code=404, detail="Jira工单未找到")
+        raise HTTPException(status_code=404, detail="Jira issue not found")
     return {"key": issue.key, "summary": issue.summary, "status": issue.status, "url": issue.url}

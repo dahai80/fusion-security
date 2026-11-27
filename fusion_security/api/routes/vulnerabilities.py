@@ -59,13 +59,13 @@ def _orm_to_response(o: VulnerabilityORM) -> VulnResponse:
 
 
 def _tenant_scope(query, api_key: APIKey):
-    # Issue #32: fail-closed 租户隔离。get_principal 保证 tenant_id 非空,始终过滤。
+    # Issue #32: fail-closed tenant isolation. get_principal guarantees a non-empty tenant_id; always filter.
     tenant_id = api_key.tenant_id or ""
     return query.filter(VulnerabilityORM.tenant_id == tenant_id)
 
 
 def _check_tenant(o: VulnerabilityORM, api_key: APIKey) -> None:
-    # Issue #32: fail-closed。跨租户访问一律 404(不泄露存在性)。
+    # Issue #32: fail-closed. Cross-tenant access is always 404 (existence not disclosed).
     tenant_id = api_key.tenant_id or ""
     if (o.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
@@ -208,7 +208,7 @@ def update_vulnerability(
         o.status = body.status
     db.commit()
     db.refresh(o)
-    logger.info(f"更新漏洞状态: {vuln_id} -> {o.status}")
+    logger.info(f"vulnerability status updated: {vuln_id} -> {o.status}")
     return _orm_to_response(o)
 
 
@@ -221,7 +221,7 @@ def update_vuln_status(
 ):
     valid = {"open", "fixing", "fixed", "ignored", "false_positive"}
     if body.status not in valid:
-        raise HTTPException(status_code=400, detail=f"无效状态，可选: {', '.join(valid)}")
+        raise HTTPException(status_code=400, detail=f"Invalid status, valid options: {', '.join(valid)}")
     o = db.query(VulnerabilityORM).filter(VulnerabilityORM.id == vuln_id).first()
     if not o:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
@@ -229,7 +229,7 @@ def update_vuln_status(
     o.status = body.status
     db.commit()
     db.refresh(o)
-    logger.info(f"更新漏洞状态(PUT): {vuln_id} -> {o.status}")
+    logger.info(f"vulnerability status updated (PUT): {vuln_id} -> {o.status}")
     return _orm_to_response(o)
 
 
@@ -240,7 +240,7 @@ def mark_false_positive(
     db: Session = Depends(get_session),
     api_key: APIKey = Depends(require_permission("vuln:manage")),
 ):
-    # Feature 2: 同时写 FeedbackStore(供 filter_vulnerabilities 误报过滤)与 FeedbackORM(持久化)。
+    # Feature 2: write both FeedbackStore (for filter_vulnerabilities false-positive filtering) and FeedbackORM (persistence).
     import uuid as _uuid
 
     from ...db.models import FeedbackORM
@@ -271,5 +271,5 @@ def mark_false_positive(
     db.add(fb)
     db.commit()
     db.refresh(o)
-    logger.info(f"标记误报: {vuln_id}, 原因: {reason}")
+    logger.info(f"marked false positive: {vuln_id}, reason: {reason}")
     return _orm_to_response(o)

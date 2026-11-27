@@ -64,10 +64,10 @@ def _hash_key(raw_key: str) -> str:
 
 
 class AuthManager:
-    # P0-4/S-P0-3: key 持久化到 DB,只存 sha256 哈希;主密钥经 FUSION_SECURITY_MASTER_KEY 稳定,绝不记录明文。
+    # P0-4/S-P0-3: keys are persisted to the DB, only sha256 hashes stored; the master key is stable via FUSION_SECURITY_MASTER_KEY, never logged in plaintext.
     def __init__(self, session_factory=None):
         self._master_key = ""
-        # 测试可注入独立 session factory 做隔离;生产用全局 get_session。
+        # Tests can inject an isolated session factory; production uses the global get_session.
         self._session_factory = session_factory
 
     def _get_session(self):
@@ -112,10 +112,10 @@ class AuthManager:
                 )
                 db.add(row)
             db.commit()
-            logger.info(f"[Auth] 创建 API Key: name={name} role={role_list[0]} tenant={tenant_id}")
+            logger.info(f"[Auth] API Key created: name={name} role={role_list[0]} tenant={tenant_id}")
         except Exception as e:
             db.rollback()
-            logger.error(f"[Auth] 创建 API Key 失败: {e}")
+            logger.error(f"[Auth] API Key creation failed: {e}")
             raise
         finally:
             db.close()
@@ -131,17 +131,18 @@ class AuthManager:
             row = db.query(ApiKeyORM).filter(ApiKeyORM.key_hash == key_hash, ApiKeyORM.enabled.is_(True)).first()
             if not row:
                 return None
-            # P2-1: compare_digest 在 DB 等值过滤已命中后再比 hash 是死代码(过滤即相等)。
-            # 跨 DB 等值过滤无法做常量时间比较,这里靠 key_hash 唯一索引 + enabled 过滤保证安全性。
+            # P2-1: a compare_digest after the DB equality filter already matched would be dead code
+            # (filter match implies equality). Cross-DB equality filtering cannot do constant-time
+            # comparison; security here relies on the key_hash unique index + enabled filter.
             expires_ts = row.expires_at.timestamp() if row.expires_at else 0.0
-            # row.expires_at 是 naive UTC(utcnow 写入),用 utcnow 比较避免本地时区偏移导致的误判过期。
+            # row.expires_at is naive UTC (written via utcnow); compare with utcnow to avoid timezone-offset misjudgment of expiry.
             now_ts = datetime.utcnow().timestamp()
             if expires_ts > 0 and now_ts > expires_ts:
-                logger.warning(f"[Auth] API Key 已过期: {row.name}")
+                logger.warning(f"[Auth] API Key expired: {row.name}")
                 return None
             row.last_used_at = datetime.utcnow()
             db.commit()
-            # 把 DB 单角色还原成 roles 列表(RBAC 用 list)。
+            # Restore the DB single role into a roles list (RBAC uses a list).
             return APIKey(
                 key_hash=row.key_hash,
                 name=row.name,
@@ -153,7 +154,7 @@ class AuthManager:
             )
         except Exception as e:
             db.rollback()
-            logger.warning(f"[Auth] 校验 API Key 异常: {e}")
+            logger.warning(f"[Auth] API Key validation error: {e}")
             return None
         finally:
             db.close()
@@ -174,11 +175,11 @@ class AuthManager:
             for r in rows:
                 r.enabled = False
             db.commit()
-            logger.info(f"[Auth] 撤销 API Key: name={name} count={len(rows)}")
+            logger.info(f"[Auth] API Key revoked: name={name} count={len(rows)}")
             return len(rows) > 0
         except Exception as e:
             db.rollback()
-            logger.error(f"[Auth] 撤销 API Key 失败: {e}")
+            logger.error(f"[Auth] API Key revocation failed: {e}")
             return False
         finally:
             db.close()
@@ -207,20 +208,23 @@ class AuthManager:
             db.close()
 
     def ensure_master_key(self) -> str:
-        # 启动时调用:env 设了就用 env(稳定);没设就生成临时 key,只记录 id/name,绝不记明文。
+        # Called at startup: use env when set (stable); otherwise generate a temporary key, only the id/name is recorded, never the plaintext.
         master_key = os.environ.get(MASTER_KEY_ENV, "").strip()
         if master_key:
             self.create_api_key_from_raw("master", master_key, ["admin"])
-            logger.info("[Auth] master key 已从 FUSION_SECURITY_MASTER_KEY 载入")
+            logger.info("[Auth] master key loaded from FUSION_SECURITY_MASTER_KEY")
             return master_key
         master_key = self.create_api_key("master", ["admin"])
-        logger.warning("[Auth] 未设 FUSION_SECURITY_MASTER_KEY,已生成临时 master key(见本条响应,后续不再显示)")
+        logger.warning(
+            "[Auth] FUSION_SECURITY_MASTER_KEY not set, generated a temporary master key (shown in this response, never displayed again)"
+        )
         return master_key
 
     def ensure_module_key(self, raw_key: str, tenant_id: str = "default") -> None:
-        # Issue #53: shell 模块服务 key 启动落库。gateway /shell 代理注入该 key 作为
-        # Bearer 调仪表盘接口,但此前无落库路径,手工插入默认 viewer,system:manage
-        # 端点每次加载 403。幂等 upsert(已有同 hash 行则更新角色/租户),绝不记明文。
+        # Issue #53: persist the shell module service key at startup. The gateway /shell proxy
+        # injects this key as Bearer to call dashboard endpoints, but there was previously no
+        # persistence path; manually inserted viewer keys made system:manage endpoints 403 on every
+        # load. Idempotent upsert (updates role/tenant when a row with the same hash exists), never logs the plaintext.
         self.create_api_key_from_raw("shell-module", raw_key, ["admin"], tenant_id=tenant_id)
 
 
@@ -228,7 +232,7 @@ auth_manager = AuthManager()
 
 
 def _tenant_context():
-    # 延迟导入:fusion_core.tenant 由 TenantMiddleware 在请求生命周期内 set_context。
+    # Lazy import: fusion_core.tenant gets its context set by TenantMiddleware during the request lifecycle.
     try:
         from fusion_core.tenant import current
 
@@ -238,8 +242,9 @@ def _tenant_context():
 
 
 def _audit_deny(request: Request, tenant_id: str, action: str, detail: str) -> None:
-    # Issue #60: 鉴权拒绝事件进审计流(高风险) —— 首页高风险速览/审计工作台数据源。
-    # 审计失败绝不影响拒绝路径(fail-closed 优先),只记警告。
+    # Issue #60: auth denial events enter the audit stream (high risk) —— data source for the
+    # dashboard high-risk overview / audit workbench. Audit failure never affects the denial path
+    # (fail-closed first), only logs a warning.
     try:
         from ..engine.tenant.audit import get_audit_logger
 
@@ -253,39 +258,40 @@ def _audit_deny(request: Request, tenant_id: str, action: str, detail: str) -> N
             risk_level="high",
         )
     except Exception as e:
-        logger.warning(f"[Auth] 审计记录失败(不影响拒绝): {e}")
+        logger.warning(f"[Auth] audit logging failed (does not affect denial): {e}")
 
 
 async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER)) -> APIKey:
-    # Issue #32: 双模式鉴权。TenantMiddleware 已强制 X-Tenant-Id 存在 + (若带 Bearer) JWT↔header 匹配。
-    # 这里做 fail-closed 租户校验:空租户 key → 401(红线 1);key 租户 ≠ header → 401(红线 2)。
+    # Issue #32: dual-mode auth. TenantMiddleware already enforces the presence of X-Tenant-Id +
+    # (when Bearer is present) JWT↔header matching. The fail-closed tenant checks happen here:
+    # empty-tenant key → 401 (red line 1); key tenant ≠ header → 401 (red line 2).
     ctx = _tenant_context()
     header_tid = ctx.tenant_id if ctx else ""
     if api_key:
         key_obj = auth_manager.validate_key(api_key)
         if not key_obj:
-            _audit_deny(request, header_tid, "auth.invalid_key", "API Key 无效或过期")
-            raise HTTPException(status_code=401, detail="无效或过期的 API Key")
+            _audit_deny(request, header_tid, "auth.invalid_key", "API Key invalid or expired")
+            raise HTTPException(status_code=401, detail="Invalid or expired API Key")
         if not key_obj.tenant_id:
-            logger.warning(f"[Auth] API Key 无租户分配(name={key_obj.name}),fail-closed 401")
-            _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} 未分配租户")
-            raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
+            logger.warning(f"[Auth] API Key has no tenant assigned (name={key_obj.name}), fail-closed 401")
+            _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} has no tenant assigned")
+            raise HTTPException(status_code=401, detail="API Key has no tenant assigned, access denied")
         if header_tid and key_obj.tenant_id != header_tid:
-            logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+            logger.warning(f"[Auth] tenant mismatch key={key_obj.tenant_id} header={header_tid}, fail-closed 401")
             _audit_deny(
                 request,
                 header_tid,
                 "auth.tenant_mismatch",
                 f"key_tenant={key_obj.tenant_id} header_tenant={header_tid}",
             )
-            raise HTTPException(status_code=401, detail="租户不匹配")
-        # 带 Bearer 时 JWT 角色优先(身份层权威)。
+            raise HTTPException(status_code=401, detail="Tenant mismatch")
+        # When Bearer is present, JWT role takes priority (identity layer is authoritative).
         if ctx and ctx.role:
             key_obj = replace(key_obj, roles=[ctx.role])
         return key_obj
-    # Issue #35: 无 X-API-Key 但带非 JWT 形状 Bearer —— gateway shell 模块代理
-    # (web_shell.modules)上游注入 Bearer <模块 API Key>,按 key 验证,同 X-API-Key
-    # 一样的 fail-closed 租户校验。
+    # Issue #35: no X-API-Key but a non-JWT-shaped Bearer —— the gateway shell module proxy
+    # (web_shell.modules) injects Bearer <module API Key> upstream; validate as a key with the
+    # same fail-closed tenant checks as X-API-Key.
     bearer = request.headers.get("authorization", "") if request is not None else ""
     if bearer.lower().startswith("bearer "):
         token = bearer[7:].strip()
@@ -294,43 +300,44 @@ async def get_principal(request: Request, api_key: str = Security(API_KEY_HEADER
         if token and not looks_like_jwt(token):
             key_obj = auth_manager.validate_key(token)
             if not key_obj:
-                _audit_deny(request, header_tid, "auth.invalid_key", "Bearer 模块 key 无效或过期")
-                raise HTTPException(status_code=401, detail="无效或过期的 API Key")
+                _audit_deny(request, header_tid, "auth.invalid_key", "Bearer module key invalid or expired")
+                raise HTTPException(status_code=401, detail="Invalid or expired API Key")
             if not key_obj.tenant_id:
-                logger.warning(f"[Auth] Bearer Key 无租户分配(name={key_obj.name}),fail-closed 401")
-                _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} 未分配租户")
-                raise HTTPException(status_code=401, detail="API Key 未分配租户,禁止访问")
+                logger.warning(f"[Auth] Bearer Key has no tenant assigned (name={key_obj.name}), fail-closed 401")
+                _audit_deny(request, header_tid, "auth.key_no_tenant", f"key={key_obj.name} has no tenant assigned")
+                raise HTTPException(status_code=401, detail="API Key has no tenant assigned, access denied")
             if header_tid and key_obj.tenant_id != header_tid:
-                logger.warning(f"[Auth] 租户不匹配 key={key_obj.tenant_id} header={header_tid},fail-closed 401")
+                logger.warning(f"[Auth] tenant mismatch key={key_obj.tenant_id} header={header_tid}, fail-closed 401")
                 _audit_deny(
                     request,
                     header_tid,
                     "auth.tenant_mismatch",
                     f"key_tenant={key_obj.tenant_id} header_tenant={header_tid}",
                 )
-                raise HTTPException(status_code=401, detail="租户不匹配")
+                raise HTTPException(status_code=401, detail="Tenant mismatch")
             return key_obj
-    # 无 API Key —— 纯 JWT 路径:从 TenantContext 构造 principal。
-    # 必须有"JWT 已验证"的证据(role/jti/scopes 仅在 verify_jwt 返回 claims 时填充):
-    # TenantMiddleware require_jwt=False 下,只带 X-Tenant-Id 的匿名请求同样会得到
-    # TenantContext(role=None),若不校验证据则匿名访问直接拿到 viewer —— fail-open。
+    # No API Key —— pure JWT path: construct the principal from TenantContext.
+    # Evidence of "JWT verified" is required (role/jti/scopes are only populated when verify_jwt
+    # returns claims): under TenantMiddleware require_jwt=False, an anonymous request carrying
+    # only X-Tenant-Id also gets TenantContext(role=None); without checking the evidence an
+    # anonymous request would get viewer directly —— fail-open.
     if ctx and ctx.tenant_id and (ctx.role or ctx.jti or ctx.scopes):
         role = ctx.role or "viewer"
         return APIKey(key_hash="", name="jwt", roles=[role], tenant_id=ctx.tenant_id)
     if ctx and ctx.tenant_id:
-        logger.warning(f"[Auth] 无凭证且无已验证 JWT(tenant={ctx.tenant_id}),fail-closed 401")
-        _audit_deny(request, header_tid, "auth.no_credential", "无凭证且无已验证 JWT")
-    raise HTTPException(status_code=401, detail="缺少凭证(X-API-Key 或 Bearer token)")
+        logger.warning(f"[Auth] no credential and no verified JWT (tenant={ctx.tenant_id}), fail-closed 401")
+        _audit_deny(request, header_tid, "auth.no_credential", "no credential and no verified JWT")
+    raise HTTPException(status_code=401, detail="Missing credentials (X-API-Key or Bearer token)")
 
 
-# 保留 get_current_key 作为别名,兼容现有 dependency_overrides 测试夹具。
+# Keep get_current_key as an alias, compatible with existing dependency_overrides test fixtures.
 get_current_key = get_principal
 
 
 def require_permission(permission: str):
     async def _check(key: APIKey = Depends(get_principal)) -> APIKey:
         if not auth_manager.has_permission(key, permission):
-            # Issue #60: 越权尝试进审计流(高风险) —— 首页高风险速览数据源。
+            # Issue #60: privilege escalation attempts enter the audit stream (high risk) —— dashboard high-risk overview data source.
             try:
                 from ..engine.tenant.audit import get_audit_logger
 
@@ -343,8 +350,8 @@ def require_permission(permission: str):
                     risk_level="high",
                 )
             except Exception as e:
-                logger.warning(f"[Auth] 审计记录失败(不影响拒绝): {e}")
-            raise HTTPException(status_code=403, detail=f"权限不足: 需要 {permission}")
+                logger.warning(f"[Auth] audit logging failed (does not affect denial): {e}")
+            raise HTTPException(status_code=403, detail=f"Insufficient permission: {permission} required")
         return key
 
     return _check

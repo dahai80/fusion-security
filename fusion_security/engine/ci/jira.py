@@ -42,7 +42,7 @@ class JiraClient:
     def __init__(self, config: JiraConfig):
         self.config = config
         self._client: httpx.Client | None = None
-        # P0-3: 校验 base_url 防 SSRF(防御纵深,API 路由也会校验)。
+        # P0-3: validate base_url against SSRF (defense in depth; API routes validate too).
         from ._url_guard import validate_outbound_url
 
         validate_outbound_url(config.base_url)
@@ -76,13 +76,13 @@ class JiraClient:
                 data = resp.json()
                 key = data.get("key", "")
                 url = f"{self.config.base_url}/browse/{key}"
-                logger.info(f"[Jira] 创建工单: {key} for vuln {vuln.id}")
+                logger.info(f"[Jira] created issue: {key} for vuln {vuln.id}")
                 return JiraIssue(key=key, summary=summary, status="Open", url=url)
             else:
-                logger.warning(f"[Jira] 创建工单失败: HTTP {resp.status_code} {resp.text[:200]}")
+                logger.warning(f"[Jira] failed to create issue: HTTP {resp.status_code} {resp.text[:200]}")
                 return None
         except Exception as e:
-            logger.warning(f"[Jira] 创建工单异常: {e}")
+            logger.warning(f"[Jira] issue creation exception: {e}")
             return None
 
     def create_issues_batch(self, vulns: list[Vulnerability]) -> list[JiraIssue]:
@@ -91,13 +91,14 @@ class JiraClient:
             issue = self.create_issue(vuln)
             if issue:
                 issues.append(issue)
-        logger.info(f"[Jira] 批量创建 {len(issues)}/{len(vulns)} 个工单")
+        logger.info(f"[Jira] batch created {len(issues)}/{len(vulns)} issues")
         return issues
 
     def get_issue(self, issue_key: str) -> JiraIssue | None:
-        # P0-3: issue_key 用户可控,拒绝路径/查询/锚点字符以防注入任意 API 路径。
+        # P0-3: issue_key is user-controlled; reject path/query/fragment characters
+        # to prevent injecting arbitrary API paths.
         if not issue_key or any(c in issue_key for c in "/?# \t\r\n"):
-            logger.warning(f"[Jira] 非法 issue_key 被拒绝: {issue_key!r}")
+            logger.warning(f"[Jira] illegal issue_key rejected: {issue_key!r}")
             return None
         try:
             resp = self.client.get(f"/issue/{issue_key}", params={"fields": "summary,status"})
@@ -110,7 +111,7 @@ class JiraClient:
                     url=f"{self.config.base_url}/browse/{issue_key}",
                 )
         except Exception as e:
-            logger.warning(f"[Jira] 获取工单失败 {issue_key}: {e}")
+            logger.warning(f"[Jira] failed to get issue {issue_key}: {e}")
         return None
 
     def close(self):

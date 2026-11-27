@@ -19,13 +19,13 @@ class GitArgError(ValueError):
 
 def _validate_rev(rev: str) -> str:
     if not rev or rev.startswith("-"):
-        raise GitArgError(f"非法 git rev: {rev!r}")
+        raise GitArgError(f"illegal git rev: {rev!r}")
     return rev
 
 
 def _validate_path_arg(path_arg: str) -> str:
     if not path_arg or path_arg.startswith("-"):
-        raise GitArgError(f"非法 git path: {path_arg!r}")
+        raise GitArgError(f"illegal git path: {path_arg!r}")
     return path_arg
 
 
@@ -33,7 +33,7 @@ def _resolve_rev(helper, rev: str) -> str:
     rev = _validate_rev(rev)
     verified = helper._run_git("rev-parse", "--verify", f"{rev}^{{commit}}")
     if not verified:
-        raise GitArgError(f"无法解析的 git rev: {rev!r}")
+        raise GitArgError(f"unresolvable git rev: {rev!r}")
     return verified
 
 
@@ -52,14 +52,15 @@ class GitHelper:
     def __init__(self, repo_path: str | Path):
         self.repo_path = Path(repo_path).resolve()
         if not (self.repo_path / ".git").exists():
-            raise ValueError(f"不是git仓库: {self.repo_path}")
+            raise ValueError(f"not a git repository: {self.repo_path}")
 
     def _run_git(self, *args: str) -> str:
         if shutil.which("git") is None:
-            # git 未安装时 subprocess.run 抛 FileNotFoundError,被下方 Exception 吞掉返回 "",
-            # 调用方误判为"无法解析的 git rev"。显式检测并抛出明确错误。
-            logger.error("git 未安装,无法执行 git 命令")
-            raise GitNotInstalledError("git 未安装,请先安装 git CLI")
+            # Without git installed, subprocess.run raises FileNotFoundError, which the broad Exception
+            # below swallows and returns ""; callers then misdiagnose it as "unresolvable git rev".
+            # Detect it explicitly and raise a clear error.
+            logger.error("git is not installed; cannot run git commands")
+            raise GitNotInstalledError("git is not installed; install the git CLI first")
         cmd = ["git", "-C", str(self.repo_path)] + list(args)
         try:
             result = subprocess.run(
@@ -69,17 +70,17 @@ class GitHelper:
                 timeout=30,
             )
             if result.returncode != 0:
-                logger.warning(f"git命令失败: {' '.join(cmd)}, stderr={result.stderr.strip()}")
+                logger.warning(f"git command failed: {' '.join(cmd)}, stderr={result.stderr.strip()}")
                 return ""
             return result.stdout.strip()
         except subprocess.TimeoutExpired:
-            logger.error(f"git命令超时: {' '.join(cmd)}")
+            logger.error(f"git command timed out: {' '.join(cmd)}")
             return ""
         except FileNotFoundError as e:
-            logger.error(f"git 可执行文件不存在: {e}")
-            raise GitNotInstalledError("git 未安装") from e
+            logger.error(f"git executable not found: {e}")
+            raise GitNotInstalledError("git is not installed") from e
         except Exception as e:
-            logger.error(f"git命令异常: {e}")
+            logger.error(f"git command error: {e}")
             return ""
 
     def get_current_branch(self) -> str:
@@ -103,7 +104,7 @@ class GitHelper:
         head_sha = _resolve_rev(self, head)
         name_status = self._run_git("diff", "--name-status", f"{base_sha}...{head_sha}")
         if not name_status:
-            logger.info(f"无差异: {base}...{head}")
+            logger.info(f"no diff: {base}...{head}")
             return result
 
         source_exts = extensions or [
@@ -145,7 +146,7 @@ class GitHelper:
 
         result.diff_content = self._run_git("diff", f"{base_sha}...{head_sha}")
         logger.info(
-            f"增量扫描: {base}...{head}, "
+            f"incremental scan: {base}...{head}, "
             f"changed={len(result.changed_files)}, "
             f"added={len(result.added_files)}, "
             f"modified={len(result.modified_files)}, "

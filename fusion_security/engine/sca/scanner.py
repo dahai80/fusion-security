@@ -36,33 +36,41 @@ class KnownVuln:
 
 
 KNOWN_VULNS: list[KnownVuln] = [
-    KnownVuln("CVE-2023-36664", "pypdf", "<3.16.0", "critical", "pypdf 注入漏洞", "3.16.0"),
-    KnownVuln("CVE-2023-40217", "cryptography", "<41.0.6", "high", "cryptography 中间人攻击", "41.0.6"),
-    KnownVuln("CVE-2023-43804", "urllib3", "<2.0.7", "high", "urllib3 Cookie 泄露", "2.0.7"),
-    KnownVuln("CVE-2023-44287", "pillow", "<10.0.1", "high", "Pillow 图像解析 DoS", "10.0.1"),
-    KnownVuln("CVE-2023-23934", "werkzeug", "<2.2.3", "medium", "Werkzeug Cookie 解析问题", "2.2.3"),
-    KnownVuln("CVE-2023-25577", "flask", "<2.2.3", "medium", "Flask cookie 解析 DoS", "2.2.3"),
+    KnownVuln("CVE-2023-36664", "pypdf", "<3.16.0", "critical", "pypdf injection vulnerability", "3.16.0"),
+    KnownVuln("CVE-2023-40217", "cryptography", "<41.0.6", "high", "cryptography man-in-the-middle attack", "41.0.6"),
+    KnownVuln("CVE-2023-43804", "urllib3", "<2.0.7", "high", "urllib3 cookie leak", "2.0.7"),
+    KnownVuln("CVE-2023-44287", "pillow", "<10.0.1", "high", "Pillow image parsing DoS", "10.0.1"),
+    KnownVuln("CVE-2023-23934", "werkzeug", "<2.2.3", "medium", "Werkzeug cookie parsing issue", "2.2.3"),
+    KnownVuln("CVE-2023-25577", "flask", "<2.2.3", "medium", "Flask cookie parsing DoS", "2.2.3"),
     KnownVuln("CVE-2022-25883", "semver", "<7.5.2", "high", "semver ReDoS", "7.5.2"),
-    KnownVuln("CVE-2023-32002", "node:vm", "<20.5.0", "high", "Node.js vm 模块沙箱逃逸", "20.5.0"),
-    KnownVuln("CVE-2023-34453", "snappy", "<0.2.0", "medium", "snappy 缓冲区溢出", "0.2.0"),
+    KnownVuln("CVE-2023-32002", "node:vm", "<20.5.0", "high", "Node.js vm module sandbox escape", "20.5.0"),
+    KnownVuln("CVE-2023-34453", "snappy", "<0.2.0", "medium", "snappy buffer overflow", "0.2.0"),
     KnownVuln("CVE-2022-32149", "golang.org/x/text", "<0.3.8", "high", "Go x/text DoS", "0.3.8"),
 ]
 
 DEPRECATED_PACKAGES: list[dict[str, str]] = [
-    {"name": "pycrypto", "reason": "已停止维护，存在已知漏洞，使用pycryptodome替代", "alternative": "pycryptodome"},
-    {"name": "paramiko", "reason": "旧版本存在安全漏洞", "alternative": "paramiko>=3.0"},
-    {"name": "request", "reason": "已废弃，使用requests替代", "alternative": "requests"},
-    {"name": "pickle", "reason": "不应用于不可信数据反序列化", "alternative": "json/msgpack"},
-    {"name": "md5", "reason": "MD5已不安全，使用hashlib.sha256替代", "alternative": "hashlib"},
+    {
+        "name": "pycrypto",
+        "reason": "unmaintained with known vulnerabilities; use pycryptodome instead",
+        "alternative": "pycryptodome",
+    },
+    {
+        "name": "paramiko",
+        "reason": "older versions have known security vulnerabilities",
+        "alternative": "paramiko>=3.0",
+    },
+    {"name": "request", "reason": "deprecated; use requests instead", "alternative": "requests"},
+    {"name": "pickle", "reason": "should not be used to deserialize untrusted data", "alternative": "json/msgpack"},
+    {"name": "md5", "reason": "MD5 is no longer secure; use hashlib.sha256 instead", "alternative": "hashlib"},
 ]
 
 LICENSE_RISKS: dict[str, str] = {
-    "GPL-2.0": "copyleft — 商用需开源衍生作品",
-    "GPL-3.0": "copyleft — 商用需开源衍生作品",
-    "AGPL-3.0": "强copyleft — 网络服务也需开源",
-    "SSPL-1.0": "非OSI认证 — 可能限制云服务使用",
-    "BSL-1.1": "商业源码许可 — 有使用限制",
-    " Commons-Clause": "非开源 — 禁止商业销售",
+    "GPL-2.0": "copyleft — commercial use requires open-sourcing derivative works",
+    "GPL-3.0": "copyleft — commercial use requires open-sourcing derivative works",
+    "AGPL-3.0": "strong copyleft — network services must also be open-sourced",
+    "SSPL-1.0": "not OSI-approved — may restrict cloud service usage",
+    "BSL-1.1": "business source license — usage restrictions apply",
+    " Commons-Clause": "not open source — commercial sale prohibited",
 }
 
 STALE_VERSION_YEARS = 3
@@ -135,7 +143,8 @@ class OSVClient:
 
 class SCAScanner:
     def __init__(self, use_osv: bool = False):
-        # use_osv 默认 False：保持 100% 离线承诺。开启则向 osv.dev 外发依赖清单。
+        # use_osv defaults to False: keeps the 100% offline promise. Enabling it
+        # sends the dependency manifest out to osv.dev.
         self.use_osv = use_osv
         self.osv_client = OSVClient() if use_osv else None
         self.parsers = {
@@ -149,11 +158,11 @@ class SCAScanner:
         }
 
     def scan(self, project_path: str) -> list[Vulnerability]:
-        # osv_client.close() 此前在 return 前,异常路径(任一 check 抛错)泄漏 httpx.Client。
-        # 移入 finally 确保释放。
+        # osv_client.close() previously ran before return; error paths (any check
+        # raising) leaked the httpx.Client. Moved into finally to guarantee release.
         try:
             deps = self.collect_dependencies(project_path)
-            logger.info(f"[SCA] 收集到 {len(deps)} 个依赖")
+            logger.info(f"[SCA] collected {len(deps)} dependencies")
             vulns = self.check_vulnerabilities(deps)
             vulns.extend(self.check_deprecated(deps))
             vulns.extend(self.check_license(project_path))
@@ -176,7 +185,7 @@ class SCAScanner:
                     file_deps = parser(str(dep_file), content)
                     deps.extend(file_deps)
                 except Exception as e:
-                    logger.debug(f"[SCA] 解析 {dep_file} 失败: {e}")
+                    logger.debug(f"[SCA] failed to parse {dep_file}: {e}")
         return deps
 
     def check_vulnerabilities(self, deps: list[Dependency]) -> list[Vulnerability]:
@@ -185,7 +194,7 @@ class SCAScanner:
         if self.use_osv and self.osv_client:
             osv_results = self.osv_client.query_batch(deps)
             if osv_results:
-                logger.info(f"[OSV] 查询到 {sum(len(v) for v in osv_results.values())} 条漏洞")
+                logger.info(f"[OSV] found {sum(len(v) for v in osv_results.values())} vulnerabilities")
         for dep in deps:
             key = f"{dep.name}@{dep.version}"
             if key in osv_results:
@@ -198,8 +207,8 @@ class SCAScanner:
                     if self._is_affected(dep, kv):
                         v = Vulnerability(
                             id=f"SCA-{kv.cve_id}-{dep.name}",
-                            title=f"依赖漏洞: {dep.name} {dep.version} ({kv.cve_id})",
-                            description=f"{dep.name} {dep.version} 存在 {kv.cve_id}: {kv.description}",
+                            title=f"Dependency vulnerability: {dep.name} {dep.version} ({kv.cve_id})",
+                            description=f"{dep.name} {dep.version} is affected by {kv.cve_id}: {kv.description}",
                             severity=kv.severity,
                             confidence=85,
                             file_path=dep.source_file,
@@ -207,10 +216,10 @@ class SCAScanner:
                             code_snippet=f"{dep.name}=={dep.version}",
                             rule_id="FUS-SCA-001",
                             cwe_id="CWE-1035",
-                            fix_suggestion=f"升级 {dep.name} 到 {kv.fixed_version} 或更高版本",
+                            fix_suggestion=f"Upgrade {dep.name} to {kv.fixed_version} or later",
                         )
                         vulns.append(v)
-        logger.info(f"[SCA] 发现 {len(vulns)} 个依赖漏洞")
+        logger.info(f"[SCA] found {len(vulns)} dependency vulnerabilities")
         return vulns
 
     def _osv_to_vulnerability(self, dep: Dependency, osv_vuln: dict) -> Vulnerability | None:
@@ -238,10 +247,10 @@ class SCAScanner:
                             fixed_version = event["fixed"]
                             break
                 break
-        description = summary or details or f"{dep.name} {dep.version} 存在漏洞 {cve_id}"
+        description = summary or details or f"{dep.name} {dep.version} is affected by {cve_id}"
         return Vulnerability(
             id=f"SCA-{cve_id}-{dep.name}",
-            title=f"依赖漏洞: {dep.name} {dep.version} ({cve_id})",
+            title=f"Dependency vulnerability: {dep.name} {dep.version} ({cve_id})",
             description=description,
             severity=severity,
             confidence=90,
@@ -250,9 +259,9 @@ class SCAScanner:
             code_snippet=f"{dep.name}=={dep.version}",
             rule_id="FUS-SCA-001",
             cwe_id=cwe_id,
-            fix_suggestion=f"升级 {dep.name} 到 {fixed_version} 或更高版本"
+            fix_suggestion=f"Upgrade {dep.name} to {fixed_version} or later"
             if fixed_version
-            else "查看 OSV 漏洞详情获取修复建议",
+            else "See the OSV advisory for remediation guidance",
         )
 
     def _map_severity(self, raw: str) -> str:
@@ -291,7 +300,7 @@ class SCAScanner:
         parts = cleaned.split(".")
         parsed = tuple(int(p) for p in parts if p.isdigit())
         if not parsed:
-            raise ValueError(f"无法解析版本号: {version}")
+            raise ValueError(f"cannot parse version: {version}")
         return parsed
 
     def check_deprecated(self, deps: list[Dependency]) -> list[Vulnerability]:
@@ -302,8 +311,8 @@ class SCAScanner:
                     vulns.append(
                         Vulnerability(
                             id=f"SCA-DEPRECATED-{dep.name}",
-                            title=f"已废弃组件: {dep.name}",
-                            description=f"{dep.name} {dep.version} 已废弃: {pkg['reason']}",
+                            title=f"Deprecated component: {dep.name}",
+                            description=f"{dep.name} {dep.version} is deprecated: {pkg['reason']}",
                             severity="medium",
                             confidence=90,
                             file_path=dep.source_file,
@@ -311,11 +320,11 @@ class SCAScanner:
                             code_snippet=f"{dep.name}=={dep.version}",
                             rule_id="FUS-SCA-002",
                             cwe_id="CWE-1104",
-                            fix_suggestion=f"替换为 {pkg['alternative']}",
+                            fix_suggestion=f"Replace with {pkg['alternative']}",
                         )
                     )
                     break
-        logger.info(f"[SCA-002] 发现 {len(vulns)} 个已废弃组件")
+        logger.info(f"[SCA-002] found {len(vulns)} deprecated components")
         return vulns
 
     def check_license(self, project_path: str) -> list[Vulnerability]:
@@ -330,8 +339,8 @@ class SCAScanner:
                         vulns.append(
                             Vulnerability(
                                 id=f"SCA-LICENSE-{license_name}",
-                                title=f"许可证合规风险: {license_name}",
-                                description=f"项目使用 {license_name} 许可证: {risk}",
+                                title=f"License compliance risk: {license_name}",
+                                description=f"Project uses the {license_name} license: {risk}",
                                 severity="medium",
                                 confidence=80,
                                 file_path=str(lf),
@@ -339,12 +348,12 @@ class SCAScanner:
                                 code_snippet=license_name,
                                 rule_id="FUS-SCA-003",
                                 cwe_id="CWE-1104",
-                                fix_suggestion=f"评估 {license_name} 许可证对业务的影响，必要时替换为MIT/Apache-2.0等宽松许可证的组件",
+                                fix_suggestion=f"Evaluate the business impact of the {license_name} license; replace components with permissive licenses such as MIT/Apache-2.0 when necessary",
                             )
                         )
                         break
             except Exception as e:
-                logger.debug(f"[SCA-003] 读取 {lf} 失败: {e}")
+                logger.debug(f"[SCA-003] failed to read {lf}: {e}")
 
         for dep_file in root.rglob("package.json"):
             if any(p in dep_file.parts for p in {".git", "node_modules", ".venv", "__pycache__"}):
@@ -358,8 +367,8 @@ class SCAScanner:
                             vulns.append(
                                 Vulnerability(
                                     id=f"SCA-LICENSE-{dep_name}-{license_name}",
-                                    title=f"许可证合规风险: {dep_name} ({license_name})",
-                                    description=f"依赖 {dep_name} 使用 {license_name}: {risk}",
+                                    title=f"License compliance risk: {dep_name} ({license_name})",
+                                    description=f"Dependency {dep_name} uses {license_name}: {risk}",
                                     severity="medium",
                                     confidence=85,
                                     file_path=str(dep_file),
@@ -367,13 +376,13 @@ class SCAScanner:
                                     code_snippet=f"{dep_name}: {license_name}",
                                     rule_id="FUS-SCA-003",
                                     cwe_id="CWE-1104",
-                                    fix_suggestion=f"评估 {dep_name} ({license_name}) 对业务的影响，考虑替换为宽松许可证的替代方案",
+                                    fix_suggestion=f"Evaluate the business impact of {dep_name} ({license_name}); consider replacing it with a permissively licensed alternative",
                                 )
                             )
             except Exception as e:
-                logger.debug(f"[SCA-003] 解析 {dep_file} 失败: {e}")
+                logger.debug(f"[SCA-003] failed to parse {dep_file}: {e}")
 
-        logger.info(f"[SCA-003] 发现 {len(vulns)} 个许可证合规风险")
+        logger.info(f"[SCA-003] found {len(vulns)} license compliance risks")
         return vulns
 
     def check_stale_versions(self, deps: list[Dependency]) -> list[Vulnerability]:
@@ -392,8 +401,8 @@ class SCAScanner:
                     vulns.append(
                         Vulnerability(
                             id=f"SCA-STALE-{dep.name}",
-                            title=f"组件版本过旧: {dep.name} {dep.version}",
-                            description=f"{dep.name} {dep.version} 可能已过旧({STALE_VERSION_YEARS}年以上)，建议升级到最新版本",
+                            title=f"Outdated component version: {dep.name} {dep.version}",
+                            description=f"{dep.name} {dep.version} may be outdated ({STALE_VERSION_YEARS}+ years old); consider upgrading to the latest version",
                             severity="low",
                             confidence=50,
                             file_path=dep.source_file,
@@ -401,12 +410,12 @@ class SCAScanner:
                             code_snippet=f"{dep.name}=={dep.version}",
                             rule_id="FUS-SCA-004",
                             cwe_id="CWE-1104",
-                            fix_suggestion=f"升级 {dep.name} 到最新版本以获取安全补丁和功能改进",
+                            fix_suggestion=f"Upgrade {dep.name} to the latest version to get security patches and feature improvements",
                         )
                     )
             except (ValueError, IndexError):
                 continue
-        logger.info(f"[SCA-004] 发现 {len(vulns)} 个过旧组件")
+        logger.info(f"[SCA-004] found {len(vulns)} outdated components")
         return vulns
 
     def _parse_requirements(self, file_path: str, content: str) -> list[Dependency]:
@@ -491,9 +500,10 @@ class SCAScanner:
             data = json.loads(content)
             for section, is_dev in [("dependencies", False), ("devDependencies", True)]:
                 for name, ver in data.get(section, {}).items():
-                    # ver 可能是 dist-tag("latest")/alias("npm:foo@1.0")/非字符串(file:/...)
-                    # re.sub 对非字符串抛 TypeError(此前仅捕获 JSONDecodeError)。跳过非字符串
-                    # 与无纯数字版本,避免误报。
+                    # ver may be a dist-tag ("latest"), an alias ("npm:foo@1.0"), or a
+                    # non-string (file:/...). re.sub raises TypeError on non-strings
+                    # (previously only JSONDecodeError was caught). Skip non-strings and
+                    # versions without digits to avoid false positives.
                     if not isinstance(ver, str):
                         continue
                     clean_ver = re.sub(r"[^0-9.]", "", ver)

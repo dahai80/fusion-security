@@ -1,7 +1,9 @@
-"""Console summary —— Admin Console 首页四分区聚合(Issue #60,帧 S1)。
+"""Console summary — Admin Console home four-zone aggregation (Issue #60, frame S1).
 
-数据源:identity admin 聚合(成员/SSO/key 台账,可降级)+ 本地审计 jsonl +
-本地 api_keys 表。所有分区的 degraded 状态显式带 reason,前端渲染降级卡。
+Data sources: identity admin aggregation (members/SSO/key inventory,
+degradable) + local audit jsonl + local api_keys table. Every zone's
+degraded state carries an explicit reason; the frontend renders a
+degraded card.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ EXPIRING_SOON_DAYS = 14
 
 
 def _key_zone(tenant_id: str) -> dict:
-    # 本地 key 计数(当前租户);identity app 台账数量一并给出(可降级)。
+    # Local key counts (current tenant); identity app inventory counts are
+    # included too (degradable).
     active = 0
     expiring = 0
     try:
@@ -41,7 +44,7 @@ def _key_zone(tenant_id: str) -> dict:
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"[Console] key 计数失败: {e}")
+        logger.warning(f"[Console] failed to count keys: {e}")
 
     inventory = get_identity_admin_client().app_secret_inventory()
     return {

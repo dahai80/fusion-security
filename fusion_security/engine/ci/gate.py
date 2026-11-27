@@ -61,7 +61,7 @@ class SecurityGate:
     def __init__(self, policy: GatePolicy = GatePolicy.STANDARD, custom_thresholds: dict[str, int] | None = None):
         self.policy = policy
         self.thresholds = custom_thresholds or POLICY_THRESHOLDS[policy]
-        logger.info(f"[Gate] 初始化 policy={policy.value} thresholds={self.thresholds}")
+        logger.info(f"[Gate] initialized policy={policy.value} thresholds={self.thresholds}")
 
     def evaluate(self, vulnerabilities: list[Vulnerability]) -> GateResult:
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -85,9 +85,9 @@ class SecurityGate:
                 result.blocked_by.append(f"{sev}:{count}>{threshold}")
 
         if result.passed:
-            logger.info(f"[Gate] ✅ 通过 total={len(vulnerabilities)}")
+            logger.info(f"[Gate] ✅ passed total={len(vulnerabilities)}")
         else:
-            logger.warning(f"[Gate] ❌ 阻断 blocked_by={result.blocked_by}")
+            logger.warning(f"[Gate] ❌ blocked blocked_by={result.blocked_by}")
 
         return result
 
@@ -117,7 +117,7 @@ class SecurityGate:
                 result.blocked_by.append(f"{sev}:{count}>{threshold}")
 
         if result.passed:
-            logger.info(f"[Gate] ✅ 通过 (pipeline) total={total}")
+            logger.info(f"[Gate] ✅ passed (pipeline) total={total}")
         else:
-            logger.warning(f"[Gate] ❌ 阻断 (pipeline) blocked_by={result.blocked_by}")
+            logger.warning(f"[Gate] ❌ blocked (pipeline) blocked_by={result.blocked_by}")
         return result

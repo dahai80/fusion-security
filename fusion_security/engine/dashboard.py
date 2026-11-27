@@ -9,7 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 长驻进程下 _scan_history 无上限会持续膨胀。固定窗口即可满足趋势/Top 统计。
+# Unbounded _scan_history would grow forever in a long-lived process. A fixed window is enough for trend/top stats.
 SCAN_HISTORY_MAXLEN = 1000
 
 
@@ -51,7 +51,9 @@ class DashboardAggregator:
 
     def record_scan(self, scan_result: dict[str, Any]) -> None:
         self._scan_history.append(scan_result)
-        logger.info(f"[Dashboard] 记录扫描: {scan_result.get('scan_id', 'unknown')} history={len(self._scan_history)}")
+        logger.info(
+            f"[Dashboard] Recorded scan: {scan_result.get('scan_id', 'unknown')} history={len(self._scan_history)}"
+        )
 
     def get_stats(self) -> DashboardStats:
         stats = DashboardStats()
@@ -87,7 +89,7 @@ class DashboardAggregator:
         return stats
 
     def get_trend(self, days: int = 7) -> list[dict[str, Any]]:
-        # deque 不支持切片，取尾部 N 条需先转 list 或用 islice。扫描量受 maxlen 上限，转换开销可忽略。
+        # deque does not support slicing; taking the last N items requires list() or islice. Scan volume is bounded by maxlen, so conversion cost is negligible.
         recent = list(self._scan_history)[-days:]
         return [
             {

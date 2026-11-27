@@ -60,7 +60,8 @@ def vulnerabilities_to_sarif(
             ]
         results.append(result_entry)
 
-    # ruleIndex 必须对齐 rules 列表顺序。dict 保插入序，一次建索引避免 O(n) 逐条 .index()。
+    # ruleIndex must align with the rules list order. dict preserves insertion order; build the index
+    # once to avoid an O(n) per-entry .index() call.
     rule_index = {rule_id: i for i, rule_id in enumerate(rules_map)}
     for entry in results:
         entry["ruleIndex"] = rule_index[entry["ruleId"]]
@@ -82,7 +83,7 @@ def vulnerabilities_to_sarif(
             }
         ],
     }
-    logger.info(f"[SARIF] 生成 {len(results)} 个结果, {len(rules_map)} 条规则")
+    logger.info(f"[SARIF] generated {len(results)} results, {len(rules_map)} rules")
     return sarif
 
 
@@ -96,7 +97,7 @@ def save_sarif(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(sarif, f, ensure_ascii=False, indent=2)
-    logger.info(f"[SARIF] 保存到 {output_path}")
+    logger.info(f"[SARIF] saved to {output_path}")
     return output_path
 
 

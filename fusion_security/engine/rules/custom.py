@@ -40,12 +40,12 @@ class CustomRule:
         if not self.enabled or not self.pattern:
             return None
         if self._is_redos_risk(self.pattern):
-            logger.warning(f"[CustomRule] ReDoS 风险，跳过规则 {self.id}")
+            logger.warning(f"[CustomRule] ReDoS risk, skipping rule {self.id}")
             return None
         try:
             compiled = re.compile(self.pattern, re.IGNORECASE | re.MULTILINE)
         except re.error as e:
-            logger.warning(f"[CustomRule] 正则编译失败 {self.id}: {e}")
+            logger.warning(f"[CustomRule] regex compilation failed {self.id}: {e}")
             return None
         return ScanRule(
             id=self.id,
@@ -64,8 +64,8 @@ class CustomRule:
 
     @staticmethod
     def _has_nested_quantifier(pattern: str) -> bool:
-        # 栈式扫描：带量词的分组本身再被量词修饰 => 经典 ReDoS 星号重复(a+)+ / (a*)*。
-        # 每层栈记录该分组内是否已出现量词，闭合时若本组有量词且紧跟量词即判定风险。
+        # Stack-based scan: a quantified group itself wrapped by a quantifier => classic ReDoS star-height ((a+)+ / (a*)*).
+        # Each stack level records whether a quantifier appeared inside the group; on close, a quantified group followed by a quantifier is flagged as risky.
         stack: list[bool] = []
         i = 0
         n = len(pattern)
@@ -131,7 +131,7 @@ class CustomRuleStore:
     def add_rule(self, rule: CustomRule) -> CustomRule:
         self.rules[rule.id] = rule
         self._save()
-        logger.info(f"[CustomRule] 添加规则: {rule.id} type={rule.rule_type}")
+        logger.info(f"[CustomRule] rule added: {rule.id} type={rule.rule_type}")
         return rule
 
     def update_rule(self, rule_id: str, **kwargs) -> CustomRule | None:
@@ -143,14 +143,14 @@ class CustomRuleStore:
                 setattr(rule, k, v)
         rule.updated_at = time.time()
         self._save()
-        logger.info(f"[CustomRule] 更新规则: {rule_id}")
+        logger.info(f"[CustomRule] rule updated: {rule_id}")
         return rule
 
     def delete_rule(self, rule_id: str) -> bool:
         if rule_id in self.rules:
             del self.rules[rule_id]
             self._save()
-            logger.info(f"[CustomRule] 删除规则: {rule_id}")
+            logger.info(f"[CustomRule] rule deleted: {rule_id}")
             return True
         return False
 
@@ -195,7 +195,7 @@ class CustomRuleStore:
             with open(self.store_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.warning(f"[CustomRule] 保存失败: {e}")
+            logger.warning(f"[CustomRule] save failed: {e}")
 
     def _load(self) -> None:
         try:
@@ -206,6 +206,6 @@ class CustomRuleStore:
                 data = json.load(f)
             for rid, d in data.items():
                 self.rules[rid] = CustomRule(**d)
-            logger.info(f"[CustomRule] 加载 {len(self.rules)} 条自定义规则")
+            logger.info(f"[CustomRule] loaded {len(self.rules)} custom rules")
         except Exception as e:
-            logger.warning(f"[CustomRule] 加载失败: {e}")
+            logger.warning(f"[CustomRule] load failed: {e}")

@@ -1,8 +1,9 @@
-"""fusion-identity 数据面客户端 —— JWT 校验 + 租户配额 + 用量上报。
+"""fusion-identity data-plane client — JWT verification + tenant quota + usage reporting.
 
-调用 fusion-identity(端口 11470)的 /api/v1/auth/verify 做 JWT 校验,
-承载 FUSION_IDENTITY_SERVICE_TOKEN。校验失败或不可达一律抛异常(fail-closed),
-由 TenantMiddleware 转为 401。用量上报为 best-effort,失败仅告警。
+Calls fusion-identity (port 11470) /api/v1/auth/verify for JWT verification,
+carrying FUSION_IDENTITY_SERVICE_TOKEN. Verification failure or unreachability always
+raises (fail-closed), which TenantMiddleware converts to 401. Usage reporting is
+best-effort; failures only log a warning.
 """
 
 from __future__ import annotations
@@ -31,42 +32,42 @@ def _service_token() -> str:
 
 
 class IdentityVerifyError(Exception):
-    """JWT 校验失败:无效 token / identity 不可达 / 非 200。"""
+    """JWT verification failed: invalid token / identity unreachable / non-200."""
 
 
 class IdentityVerifyClient:
-    # 单一职责:调用 fusion-identity /verify。无缓存(identity 拥有吊销权)。
+    # Single responsibility: call fusion-identity /verify. No caching (identity owns revocation authority).
     def __init__(self, base_url: str = "", service_token: str = ""):
         self._base_url = base_url or _resolve_url()
         self._service_token = service_token or _service_token()
 
     def _verify_headers(self) -> dict[str, str]:
         if not self._service_token:
-            logger.warning("[Identity] FUSION_IDENTITY_SERVICE_TOKEN 未设置,JWT 校验将失败")
+            logger.warning("[Identity] FUSION_IDENTITY_SERVICE_TOKEN not set; JWT verification will fail")
             raise IdentityVerifyError("missing FUSION_IDENTITY_SERVICE_TOKEN")
         return {"Authorization": f"Bearer {self._service_token}", "Content-Type": "application/json"}
 
     def verify_sync(self, token: str) -> dict[str, Any]:
-        # TenantMiddleware 的 verify_jwt 回调是同步的,故提供同步入口。
+        # TenantMiddleware's verify_jwt callback is synchronous, so a sync entry point is provided.
         if not token:
             raise IdentityVerifyError("empty token")
         url = f"{self._base_url}/api/v1/auth/verify"
         try:
             resp = httpx.post(url, json={"token": token}, headers=self._verify_headers(), timeout=_VERIFY_TIMEOUT)
         except httpx.HTTPError as e:
-            logger.warning(f"[Identity] verify 不可达: {e}")
+            logger.warning(f"[Identity] verify unreachable: {e}")
             raise IdentityVerifyError(f"identity unreachable: {e}") from e
         if resp.status_code != 200:
-            logger.warning(f"[Identity] verify 非 200: status={resp.status_code} body={resp.text[:200]}")
+            logger.warning(f"[Identity] verify non-200: status={resp.status_code} body={resp.text[:200]}")
             raise IdentityVerifyError(f"verify status {resp.status_code}")
         data = resp.json()
         if data.get("revoked"):
-            logger.warning(f"[Identity] token 已吊销 tid={data.get('tid')}")
+            logger.warning(f"[Identity] token revoked tid={data.get('tid')}")
             raise IdentityVerifyError("token revoked")
         return data
 
     async def report_usage(self, tenant_id: str, payload: dict[str, Any]) -> None:
-        # 用量上报 best-effort:失败仅告警,不影响扫描完成流程。
+        # Usage reporting is best-effort: failures only log a warning, never affecting the scan completion flow.
         if not tenant_id:
             return
         if not self._service_token:
@@ -76,9 +77,9 @@ class IdentityVerifyClient:
             async with httpx.AsyncClient(timeout=_USAGE_TIMEOUT) as client:
                 resp = await client.post(url, json=payload, headers=self._verify_headers())
             if resp.status_code >= 400:
-                logger.warning(f"[Identity] usage 上报非 2xx: status={resp.status_code} tid={tenant_id}")
+                logger.warning(f"[Identity] usage report non-2xx: status={resp.status_code} tid={tenant_id}")
         except httpx.HTTPError as e:
-            logger.warning(f"[Identity] usage 上报失败(忽略): tid={tenant_id} err={e}")
+            logger.warning(f"[Identity] usage report failed (ignored): tid={tenant_id} err={e}")
 
 
 _client_singleton: IdentityVerifyClient | None = None
@@ -91,7 +92,7 @@ def get_identity_client() -> IdentityVerifyClient:
     return _client_singleton
 
 
-# 租户配额缓存:verify_jwt 回调写入,enforce_scan_quota 读取。仅 JWT 路径填充。
+# Tenant quota cache: written by the verify_jwt callback, read by enforce_scan_quota. Populated only on the JWT path.
 _tenant_quota: dict[str, dict[str, Any]] = {}
 
 

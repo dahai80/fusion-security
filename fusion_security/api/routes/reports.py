@@ -30,7 +30,7 @@ def generate_report(
     scan_orm = db.query(ScanORM).filter(ScanORM.id == body.scan_id).first()
     if not scan_orm:
         raise HTTPException(status_code=404, detail="Scan not found")
-    # Issue #32: fail-closed。跨租户访问他人扫描报告一律 404。
+    # Issue #32: fail-closed. Cross-tenant access to another tenant's scan report is always 404.
     tenant_id = api_key.tenant_id or ""
     if (scan_orm.tenant_id or "") != tenant_id:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -56,7 +56,7 @@ def generate_report(
         seen_vuln_ids.add(finding.vuln_id)
         result.vulnerabilities.append(orm_to_vuln(finding.vulnerability))
     logger.info(
-        f"报告 scan={scan_orm.id}: {len(result.vulnerabilities)} 个漏洞 (过滤前 total={scan_orm.total_vulnerabilities})"
+        f"report scan={scan_orm.id}: {len(result.vulnerabilities)} vulnerabilities (pre-filter total={scan_orm.total_vulnerabilities})"
     )
 
     reporter = ReportGenerator()

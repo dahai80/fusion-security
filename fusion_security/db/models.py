@@ -45,8 +45,9 @@ class ScanORM(Base):
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    # A-P0-2/FK: path-only 扫描无关联 project,project_id 可空且无 FK。
-    # 此前 FK("projects.id") + default="" 在 foreign_keys=ON 时让无 project 的扫描写入失败(整个 POST /scans 不可用)。
+    # A-P0-2/FK: path-only scans have no associated project, so project_id is nullable with no FK.
+    # Previously FK("projects.id") + default="" made scans without a project fail to write when
+    # foreign_keys=ON (the whole POST /scans endpoint was unusable).
     project_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("projects.id"), nullable=True, default=None)
     scan_type: Mapped[str] = mapped_column(String(20), default="full")
     status: Mapped[str] = mapped_column(String(20), default="pending")
@@ -57,7 +58,8 @@ class ScanORM(Base):
     branch: Mapped[str] = mapped_column(String(100), default="")
     base_commit: Mapped[str] = mapped_column(String(64), default="")
     head_commit: Mapped[str] = mapped_column(String(64), default="")
-    # A-P0-2: 扫描目标原始路径,对账(reconcile)与队列恢复必须依赖它,此前缺失导致 project_path=""。
+    # A-P0-2: original path of the scan target; reconcile and queue recovery depend on it. Previously
+    # missing, which left project_path="".
     path: Mapped[str] = mapped_column(String(500), default="")
     tenant_id: Mapped[str] = mapped_column(String(16), default="")
     claimed_by: Mapped[str] = mapped_column(String(64), default="")
@@ -155,7 +157,8 @@ class PatchORM(Base):
 
 class ScanCacheORM(Base):
     __tablename__ = "scan_cache"
-    # A-P1-4: (project_id, file_path) 唯一约束,把并发 put 竞争转成可捕获的 IntegrityError + upsert。
+    # A-P1-4: unique constraint on (project_id, file_path) turns concurrent put races into a catchable
+    # IntegrityError + upsert.
     __table_args__ = (
         UniqueConstraint("project_id", "file_path", name="uq_cache_project_file"),
         Index("ix_cache_project_file", "project_id", "file_path"),
@@ -190,7 +193,8 @@ class RuleORM(Base):
 
 
 class ApiKeyORM(Base):
-    # P0-4/S-P0-3: API key 持久化到 DB,只存 sha256 哈希;主密钥经 FUSION_SECURITY_MASTER_KEY 稳定。
+    # P0-4/S-P0-3: API keys are persisted to the DB, storing only the sha256 hash; the master key is
+    # stabilized via FUSION_SECURITY_MASTER_KEY.
     __tablename__ = "api_keys"
     __table_args__ = (UniqueConstraint("key_hash", name="uq_api_key_hash"),)
 
@@ -206,8 +210,9 @@ class ApiKeyORM(Base):
 
 
 class WebhookORM(Base):
-    # Feature 5: Webhook 持久化(此前仅内存 dict,重启即丢)。
-    # P0-5: secret_hash 现存 Fernet 可逆密文(签名需回放),不再是单向 sha256。
+    # Feature 5: webhook persistence (previously an in-memory dict only, lost on restart).
+    # P0-5: secret_hash now stores Fernet reversible ciphertext (signing needs replay); no longer a
+    # one-way sha256.
     __tablename__ = "webhooks"
     __table_args__ = (Index("ix_webhooks_enabled", "enabled"), Index("ix_webhooks_tenant_id", "tenant_id"))
 
@@ -221,16 +226,18 @@ class WebhookORM(Base):
 
 
 class ScheduledScanORM(Base):
-    # Feature 4: 定时扫描持久化(此前仅内存,重启即丢)。
-    # frequency(project_path) 与 ScanScheduler.ScheduledScan 数据类对齐;
-    # cron/project_id 保留兼容旧字段,新写入走 frequency + project_path。
+    # Feature 4: scheduled scan persistence (previously in-memory only, lost on restart).
+    # frequency (project_path) aligns with the ScanScheduler.ScheduledScan dataclass;
+    # cron/project_id are kept for backward compatibility; new writes go through frequency + project_path.
     __tablename__ = "scheduled_scans"
     __table_args__ = (Index("ix_schedules_enabled", "enabled"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), default="")
-    # project_id 可空且无 FK:Feature 4 以 project_path 为主,path-only 计划无关联 project。
-    # 此前 FK("projects.id") 会导致无 project 的计划写入失败(整个 Feature 4 不可用)。
+    # project_id is nullable with no FK: Feature 4 is keyed on project_path; path-only schedules have
+    # no associated project.
+    # Previously FK("projects.id") made schedules without a project fail to write (the whole Feature 4
+    # was unusable).
     project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     project_path: Mapped[str] = mapped_column(String(500), default="")
     cron: Mapped[str] = mapped_column(String(100), default="")
@@ -245,7 +252,7 @@ class ScheduledScanORM(Base):
 
 
 class FeedbackORM(Base):
-    # Feature 2: 反馈循环持久化(false_positive/confirmed),此前仅内存。
+    # Feature 2: feedback loop persistence (false_positive/confirmed), previously in-memory only.
     __tablename__ = "feedbacks"
     __table_args__ = (Index("ix_feedback_vuln_id", "vuln_id"), Index("ix_feedback_scan_id", "scan_id"))
 
@@ -259,8 +266,8 @@ class FeedbackORM(Base):
 
 
 class SavedQueryORM(Base):
-    # Issue #61: 审计工作台保存查询 —— 定义 JSON(search/action/risk/start/end),
-    # 重放时与手输过滤同一代码路径,保证结果集一致。
+    # Issue #61: audit workbench saved queries — definition is JSON (search/action/risk/start/end);
+    # replay goes through the same code path as manual filters to guarantee identical result sets.
     __tablename__ = "saved_queries"
     __table_args__ = (Index("ix_saved_query_tenant", "tenant_id"),)
 
@@ -273,8 +280,8 @@ class SavedQueryORM(Base):
 
 
 class AlertSubscriptionORM(Base):
-    # Issue #61: 告警订阅 —— event_class(action 前缀)或 saved_query 引用;
-    # last_matched_ts 游标支撑增量匹配(不重放历史)。
+    # Issue #61: alert subscriptions — event_class (action prefix) or a saved_query reference;
+    # the last_matched_ts cursor supports incremental matching (no history replay).
     __tablename__ = "alert_subscriptions"
     __table_args__ = (Index("ix_alert_sub_tenant", "tenant_id"),)
 
@@ -291,8 +298,8 @@ class AlertSubscriptionORM(Base):
 
 
 class AlertRecordORM(Base):
-    # Issue #61: 已触发告警 —— shell 🔔 通知轮询数据源;dedup_key 幂等
-    # (同事件重扫不重复插入),created_at 支撑保留清理。
+    # Issue #61: fired alerts — polling data source for shell 🔔 notifications; dedup_key is idempotent
+    # (a rescan of the same event does not insert twice), created_at supports retention cleanup.
     __tablename__ = "alert_records"
     __table_args__ = (Index("ix_alert_record_tenant", "tenant_id"), Index("uq_alert_dedup", "dedup_key", unique=True))
 
@@ -309,8 +316,9 @@ class AlertRecordORM(Base):
 
 
 class AuditMarkORM(Base):
-    # Issue #65: 审计事件"标记复核"分诊态 —— 审计 jsonl 是 append-only 不可改,
-    # 标记落独立表,(tenant_id, event_key) 唯一;event_key = ts:action:actor。
+    # Issue #65: "mark for review" triage state for audit events — the audit jsonl is append-only and
+    # immutable, so marks live in a separate table, unique on (tenant_id, event_key);
+    # event_key = ts:action:actor.
     __tablename__ = "audit_review_marks"
     __table_args__ = (Index("uq_audit_mark", "tenant_id", "event_key", unique=True),)
 

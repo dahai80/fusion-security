@@ -144,12 +144,12 @@ class TestReportGenerator:
         result = ScanResult(ScanTarget("/test"))
         result.files_scanned = 5
         result.duration_ms = 50.0
-        result.summary = "✅ 未发现安全漏洞"
+        result.summary = "✅ No security vulnerabilities found"
 
         gen = ReportGenerator()
         md = gen.generate_markdown(result)
-        assert "安全审计报告" in md
-        assert "未发现安全漏洞" in md
+        assert "Code Security Audit Report" in md
+        assert "No security vulnerabilities found" in md
 
     def test_generate_json(self):
         result = ScanResult(ScanTarget("/test"))

@@ -1,7 +1,8 @@
 """Console audit store — query layer over per-tenant audit jsonl files.
 
-Issue #60/#61: AuditLogger 落盘 audit_{tenant}.jsonl(append-only);本模块只读该
-文件做聚合/检索(重启不丢)。旧行缺 risk_level/trace_id 字段时按 info/""兜底。
+Issue #60/#61: AuditLogger persists audit_{tenant}.jsonl (append-only); this module only
+reads that file for aggregation/search (nothing lost on restart). Old rows missing
+risk_level/trace_id fall back to info/"".
 """
 
 from __future__ import annotations
@@ -22,21 +23,26 @@ HIGH_RISK_LEVELS = ("high", "critical")
 
 
 def event_key(rec: dict[str, Any]) -> str:
-    # Issue #68 R1: 事件无落盘 ID,键 = 全载荷 sha256 摘要。盘上时间戳本就是微秒
-    # 精度,旧式 ts:action:actor 三位截断在同毫秒同actor同action 时碰撞(并发
-    # 突发正是这种形态) → 标记互相污染。摘要含完整 payload,实际无碰撞。
-    # 迁移兼容:legacy_event_key 继续参与匹配,存量标记不失效。
+    # Issue #68 R1: events carry no persisted ID, so the key = sha256 digest of the full
+    # payload. On-disk timestamps are already microsecond precision; the legacy
+    # ts:action:actor three-digit truncation collides when same-millisecond + same actor
+    # + same action (concurrent bursts are exactly that shape) → markers cross-pollute.
+    # The digest covers the full payload, so in practice no collisions.
+    # Migration compatibility: legacy_event_key still participates in matching, so
+    # existing markers stay valid.
     payload = json.dumps(rec, sort_keys=True, ensure_ascii=False, default=str)
     return "mk_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 def legacy_event_key(rec: dict[str, Any]) -> str:
-    # v0.2.0rc9 及之前的键形态(三位毫秒截断),仅供存量标记匹配。
+    # Key shape used up to v0.2.0rc9 (three-digit millisecond truncation), kept only for
+    # matching existing markers.
     return f"{rec['timestamp']:.3f}:{rec['action']}:{rec['actor']}"
 
 
 def event_key_candidates(rec: dict[str, Any]) -> tuple[str, str]:
-    # 标记解析候选:新摘要键优先,旧键兜底(事件条目/标记表格两侧同用)。
+    # Marker resolution candidates: new digest key first, legacy key as fallback (used on
+    # both the event rows and the marker table sides).
     return (event_key(rec), legacy_event_key(rec))
 
 
@@ -62,8 +68,9 @@ def _entry_from_line(line: str) -> dict[str, Any] | None:
 
 
 class AuditStore:
-    # 只读查询层:不持锁、不缓存(文件量级 = 审计条数,逐行读可接受;
-    # max_entries 环形驱逐只影响内存,文件是完整历史)。
+    # Read-only query layer: no locks, no cache (file size = audit entry count, so
+    # line-by-line reads are acceptable; max_entries ring eviction only affects memory,
+    # the file is the complete history).
     def __init__(self, log_dir: str):
         self.log_dir = Path(log_dir)
 
@@ -82,7 +89,7 @@ class AuditStore:
                     if rec is not None:
                         entries.append(rec)
         except OSError as e:
-            logger.warning(f"[AuditStore] 读取失败 {path}: {e}")
+            logger.warning(f"[AuditStore] failed to read {path}: {e}")
             return []
         return entries
 
@@ -134,9 +141,10 @@ class AuditStore:
         marked_keys: frozenset[str] | None = None,
         marked_only: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
-        # 返回 (entries, total):total 为过滤后总数(分页用),entries 为当前页。
-        # Issue #65: trace_id/resource_id 精确匹配(关联事件跳转);marked_keys +
-        # marked_only 支撑"仅看已标记"(total 含标记过滤,分页数一致)。
+        # Returns (entries, total): total is the post-filter count (for pagination),
+        # entries is the current page.
+        # Issue #65: trace_id/resource_id exact match (related-event jumps); marked_keys +
+        # marked_only support "marked only" (total includes the marker filter, page counts stay consistent).
         entries = self._load(tenant_id)
         matched = [
             r
@@ -159,15 +167,16 @@ class AuditStore:
         return matched[offset : offset + limit], total
 
     def known_mark_keys(self, tenant_id: str) -> frozenset[str]:
-        # Issue #68 R2: 当前审计流中真实存在的全部标记键(新摘要 + legacy 兜底),
-        # marks 写入口用它拒绝悬空 event_key。
+        # Issue #68 R2: every marker key actually present in the current audit stream
+        # (new digest + legacy fallback); the marks write path uses it to reject
+        # dangling event_keys.
         keys: set[str] = set()
         for rec in self._load(tenant_id):
             keys.update(event_key_candidates(rec))
         return frozenset(keys)
 
     def today_counts(self, tenant_id: str) -> dict[str, int]:
-        # 首页审计分区:今日事件数 + 高风险数 + 最近高风险条目。
+        # Home audit zone: today's event count + high-risk count + latest high-risk entries.
         now = time.time()
         day_start = now - (now % 86400)
         entries = self._load(tenant_id)

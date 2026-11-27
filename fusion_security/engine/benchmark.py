@@ -1,4 +1,4 @@
-"""Fusion-Security 性能基准 — 吞吐 / 并发 / AI 背压量化。"""
+"""Fusion-Security performance benchmarks - throughput / concurrency / AI backpressure."""
 
 from __future__ import annotations
 
@@ -174,12 +174,12 @@ def bench_scanner_directory(n_files: int = 2000) -> BenchResult:
         cur, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         r.peak_mem_mb = peak / 1024 / 1024
-        r.notes = "use_ai=False (rule-only); AI backpressure见 bench_ai_backpressure"
+        r.notes = "use_ai=False (rule-only); AI backpressure: see bench_ai_backpressure"
     return r
 
 
 def bench_ai_backpressure(n_findings: int = 12, max_concurrency: int = 4) -> BenchResult:
-    # 真实加载 fusion-mlx,并发 verify_findings,量化 semaphore 背压:在飞请求数被 cap。
+    # Loads fusion-mlx for real, runs verify_findings concurrently, quantifies semaphore backpressure: in-flight requests are capped.
     r = BenchResult(name=f"ai-backpressure-{n_findings}vulns-cap{max_concurrency}")
     try:
         import asyncio
@@ -211,13 +211,13 @@ def bench_ai_backpressure(n_findings: int = 12, max_concurrency: int = 4) -> Ben
 
     async def run():
         nonlocal in_flight, peak_in_flight
-        # 显式指定 MLX URL + key,避免默认 11432 打到 fusion-gateway。
+        # Pin the MLX URL + key explicitly, so the 11432 default does not hit fusion-gateway.
         mlx_url = os.environ.get("MLX_BASE_URL", "http://127.0.0.1:11434/v1")
         analyzer = AIAnalyzer(max_concurrency=max_concurrency, mlx_url=mlx_url)
         original_request = analyzer._do_chat_request
 
         async def traced_request(payload):
-            # 在 semaphore 持有期内计数:量化被限流后的真实在飞 HTTP 并发。
+            # Counted while the semaphore is held: quantifies real in-flight HTTP concurrency after throttling.
             nonlocal in_flight, peak_in_flight
             in_flight += 1
             peak_in_flight = max(peak_in_flight, in_flight)
@@ -237,9 +237,9 @@ def bench_ai_backpressure(n_findings: int = 12, max_concurrency: int = 4) -> Ben
         r.latency_ms = [r.duration_s * 1000]
         r.notes = (
             f"peak_in_flight={peak_in_flight} (cap={max_concurrency}); "
-            f"verifies={len(result)}; semaphore 背压生效峰值不超 cap"
+            f"verifies={len(result)}; semaphore backpressure effective, peak does not exceed cap"
             if peak_in_flight <= max_concurrency
-            else f"peak_in_flight={peak_in_flight} > cap={max_concurrency} — 背压失效!"
+            else f"peak_in_flight={peak_in_flight} > cap={max_concurrency} - backpressure FAILED!"
         )
 
     asyncio.run(run())
@@ -248,21 +248,21 @@ def bench_ai_backpressure(n_findings: int = 12, max_concurrency: int = 4) -> Ben
 
 def run_all_benchmarks() -> list[BenchResult]:
     results: list[BenchResult] = []
-    logger.info("=== 基准测试开始 ===")
+    logger.info("=== Benchmarks started ===")
     for fn in (
         lambda: bench_throughput(10000),
         lambda: bench_scanner_directory(2000),
         lambda: bench_concurrency(20, 50),
         lambda: bench_ai_backpressure(12, 4),
     ):
-        logger.info(f"运行 {fn.__name__ if hasattr(fn, '__name__') else 'bench'} ...")
+        logger.info(f"Running {fn.__name__ if hasattr(fn, '__name__') else 'bench'} ...")
         try:
             r = fn()
             results.append(r)
             logger.info(r.summary())
         except Exception as e:
-            logger.error(f"基准 {fn} 失败: {e}")
-    logger.info("=== 基准测试结束 ===")
+            logger.error(f"Benchmark {fn} failed: {e}")
+    logger.info("=== Benchmarks finished ===")
     return results
 
 

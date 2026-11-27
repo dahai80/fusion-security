@@ -74,7 +74,7 @@ class TestReportSection:
 
     def test_build_section_empty_findings(self):
         lines = build_compliance_section("eu_ai_act", [])
-        assert any("无" in line for line in lines)
+        assert any("none" in line for line in lines)
 
     def test_build_section_unknown_framework_empty(self):
         assert build_compliance_section("gdpr", []) == []
@@ -87,7 +87,7 @@ class TestReportSection:
         from fusion_security.report.report import ReportGenerator
 
         md = ReportGenerator().generate_markdown(result, compliance_framework="eu_ai_act")
-        assert "合规对照" in md
+        assert "Compliance Mapping" in md
         assert "EU AI Act" in md
 
     def test_markdown_without_flag_no_section(self):
@@ -97,4 +97,4 @@ class TestReportSection:
         from fusion_security.report.report import ReportGenerator
 
         md = ReportGenerator().generate_markdown(result)
-        assert "合规对照" not in md
+        assert "Compliance Mapping" not in md

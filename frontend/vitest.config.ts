@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
-// Issue #68 R3: 前端测试基建(vitest + jsdom + testing-library)。
-// 独立于 vite.config.ts,不影响构建配置。
+// Issue #68 R3: frontend test infrastructure (vitest + jsdom + testing-library).
+// Separate from vite.config.ts; does not affect the build config.
 export default defineConfig({
     plugins: [react()],
     test: {

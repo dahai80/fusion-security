@@ -144,8 +144,8 @@ def _dict_to_ast_result(data: dict[str, Any]) -> ASTResult:
 
 
 class ASTParser:
-    # tree-sitter 是原生 C 扩展，畸形输入可能段错误。8KB 以上走子进程隔离，
-    # 避免主扫描进程崩溃；8KB 以下进程内解析以保留吞吐（绝大多数源文件 < 8KB）。
+    # tree-sitter is a native C extension; malformed input may segfault. Inputs over 8KB run isolated in a subprocess,
+    # avoiding a crash of the main scan process; under 8KB parse in-process to keep throughput (most source files are < 8KB).
     SUBPROCESS_SIZE_THRESHOLD = 8 * 1024
 
     def __init__(self):
@@ -165,7 +165,7 @@ class ASTParser:
         ext = file_path.suffix
         parser = self._get_parser(ext)
         if not parser:
-            logger.debug(f"不支持的语言: {ext}")
+            logger.debug(f"unsupported language: {ext}")
             return None
 
         if len(content) > self.SUBPROCESS_SIZE_THRESHOLD:
@@ -182,7 +182,7 @@ class ASTParser:
             self._walk(root, content, result, ext)
             return result
         except Exception as e:
-            logger.warning(f"AST 解析失败 {file_path}: {e}")
+            logger.warning(f"AST parse failed {file_path}: {e}")
             return None
 
     def _parse_in_subprocess(self, file_path: Path, content: str, ext: str) -> ASTResult | None:
@@ -198,23 +198,23 @@ class ASTParser:
             if proc.is_alive():
                 proc.kill()
                 proc.join(timeout=5)
-                logger.warning(f"AST 子进程超时，已终止: {file_path}")
+                logger.warning(f"AST subprocess timed out and was terminated: {file_path}")
                 return None
             if parent_conn.poll():
                 data = parent_conn.recv()
                 if data is None:
-                    logger.warning(f"AST 子进程解析失败: {file_path}")
+                    logger.warning(f"AST subprocess parse failed: {file_path}")
                     return None
                 return _dict_to_ast_result(data)
-            logger.warning(f"AST 子进程无返回: {file_path}")
+            logger.warning(f"AST subprocess returned nothing: {file_path}")
             return None
         except Exception as e:
-            logger.warning(f"AST 子进程异常 {file_path}: {e}")
+            logger.warning(f"AST subprocess exception {file_path}: {e}")
             if proc.is_alive():
                 proc.kill()
             return None
         finally:
-            # FD 泄漏:parent_conn 此前在所有 return 路径均未关闭,长扫描累积 FD 直达上限。
+            # FD leak: parent_conn was never closed on any return path before; long scans accumulated FDs up to the limit.
             with contextlib.suppress(Exception):
                 parent_conn.close()
             with contextlib.suppress(Exception):
@@ -443,7 +443,7 @@ def _ast_subprocess_worker(conn, file_path: str, content: str, ext: str) -> None
         tmp._walk(root, content, result, ext)
         conn.send(result.to_dict())
     except Exception:
-        logger.warning(f"AST 子进程解析异常: {file_path}", exc_info=True)
+        logger.warning(f"AST subprocess parse exception: {file_path}", exc_info=True)
         conn.send(None)
     finally:
         conn.close()

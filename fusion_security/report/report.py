@@ -1,4 +1,4 @@
-"""报告生成器 — 生成漏洞审计报告。"""
+"""Report generator — produces vulnerability audit reports."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 def _fence_for(code: str) -> str:
-    # 扫描的源码可能包含 ``` 序列，会闭合外层 markdown 围栏造成注入。
-    # 生成比内容中最长连续反引号多一个反引号的围栏，确保不会提前闭合。
+    # Scanned source code may contain ``` sequences, which would close the outer markdown fence (injection).
+    # Generate a fence with one more backtick than the longest run in the content so it cannot close early.
     runs = re.findall(r"`+", code or "")
     longest = max((len(r) for r in runs), default=0)
     return "`" * max(3, longest + 1)
@@ -30,7 +30,7 @@ HTML_TEMPLATE = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>安全审计报告</title>
+<title>Code Security Audit Report</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:960px;margin:40px auto;padding:0 24px;color:#1a1a2e;background:#fafafa}
@@ -52,13 +52,13 @@ footer{text-align:center;color:#999;font-size:12px;margin-top:40px;padding:20px 
 </style>
 </head>
 <body>
-<h1>🔒 代码安全审计报告</h1>
+<h1>🔒 Code Security Audit Report</h1>
 <div class="meta">
-    <span><strong>扫描目标:</strong> {{ target_path }}</span>
-    <span><strong>扫描时间:</strong> {{ scan_time }}</span>
-    <span><strong>文件数:</strong> {{ files_scanned }}</span>
-    <span><strong>漏洞:</strong> {{ vuln_count }}</span>
-    <span><strong>耗时:</strong> {{ duration_ms }}ms</span>
+    <span><strong>Scan Target:</strong> {{ target_path }}</span>
+    <span><strong>Scan Time:</strong> {{ scan_time }}</span>
+    <span><strong>Files Scanned:</strong> {{ files_scanned }}</span>
+    <span><strong>Vulnerabilities:</strong> {{ vuln_count }}</span>
+    <span><strong>Duration:</strong> {{ duration_ms }}ms</span>
 </div>
 <div class="summary">{{ summary }}</div>
 
@@ -66,9 +66,9 @@ footer{text-align:center;color:#999;font-size:12px;margin-top:40px;padding:20px 
 <div class="vuln">
     <h3 class="{{ vuln.severity }}">[{{ vuln.severity.upper() }}] {{ vuln.title }}</h3>
     <div class="vuln-meta">
-        <span><strong>文件:</strong> {{ vuln.file_path }}:{{ vuln.line_number }}</span>
+        <span><strong>File:</strong> {{ vuln.file_path }}:{{ vuln.line_number }}</span>
         <span><strong>CWE:</strong> {{ vuln.cwe_id }}</span>
-        <span><strong>置信度:</strong> {{ vuln.confidence }}</span>
+        <span><strong>Confidence:</strong> {{ vuln.confidence }}</span>
     </div>
     <p>{{ vuln.description }}</p>
     {% if vuln.code_snippet %}
@@ -81,8 +81,8 @@ footer{text-align:center;color:#999;font-size:12px;margin-top:40px;padding:20px 
 {% endfor %}
 
 <footer>
-    <p>由 Fusion-Security v{{ version }} 于 {{ scan_time }} 自动生成 | 100% 本地离线，代码不出境</p>
-    <p>⚠️ 修复建议由 AI 生成，请人工审核后再应用</p>
+    <p>Generated automatically by Fusion-Security v{{ version }} on {{ scan_time }} | 100% local and offline, code never leaves this machine</p>
+    <p>⚠️ Fix suggestions are AI-generated; have them reviewed by a human before applying</p>
 </footer>
 </body>
 </html>
@@ -95,32 +95,32 @@ _html_template = _jinja_env.from_string(HTML_TEMPLATE)
 class ReportGenerator:
     def generate_markdown(self, result: ScanResult, compliance_framework: str = "") -> str:
         lines = []
-        lines.append("# 代码安全审计报告")
+        lines.append("# Code Security Audit Report")
         lines.append("")
-        lines.append(f"**扫描目标**: {result.target.path}")
-        lines.append(f"**扫描时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"**扫描文件**: {result.files_scanned} 个")
-        lines.append(f"**扫描耗时**: {result.duration_ms:.0f}ms")
+        lines.append(f"**Scan Target**: {result.target.path}")
+        lines.append(f"**Scan Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"**Files Scanned**: {result.files_scanned}")
+        lines.append(f"**Duration**: {result.duration_ms:.0f}ms")
         lines.append("")
-        lines.append("## 扫描摘要")
+        lines.append("## Scan Summary")
         lines.append("")
         lines.append(f"{result.summary}")
         lines.append("")
 
         if result.vulnerabilities:
-            lines.append("## 漏洞详情")
+            lines.append("## Vulnerability Details")
             lines.append("")
             for i, vuln in enumerate(result.vulnerabilities, 1):
                 sev_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
                 icon = sev_icon.get(vuln.severity, "⚪")
                 lines.append(f"### {i}. {icon} [{vuln.severity.upper()}] {vuln.title}")
                 lines.append("")
-                lines.append(f"- **文件**: {vuln.file_path}:{vuln.line_number}")
+                lines.append(f"- **File**: {vuln.file_path}:{vuln.line_number}")
                 lines.append(f"- **CWE**: {vuln.cwe_id}")
-                lines.append(f"- **置信度**: {vuln.confidence}")
-                lines.append(f"- **描述**: {vuln.description}")
+                lines.append(f"- **Confidence**: {vuln.confidence}")
+                lines.append(f"- **Description**: {vuln.description}")
                 if vuln.fix_suggestion:
-                    lines.append(f"- **修复建议**: {vuln.fix_suggestion}")
+                    lines.append(f"- **Fix Suggestion**: {vuln.fix_suggestion}")
                 lines.append("")
                 fence = _fence_for(vuln.code_snippet[:500])
                 lines.append(f"{fence}")
@@ -135,9 +135,11 @@ class ReportGenerator:
             lines.extend(build_compliance_section(compliance_framework, result.vulnerabilities))
 
         lines.append("---")
-        lines.append(f"*由 Fusion-Security v{__version__} 于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 自动生成*")
-        lines.append("*100% 本地离线，代码不出境*")
-        lines.append("*⚠️ 修复建议由 AI 生成，请人工审核后再应用*")
+        lines.append(
+            f"*Generated automatically by Fusion-Security v{__version__} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+        )
+        lines.append("*100% local and offline, code never leaves this machine*")
+        lines.append("*⚠️ Fix suggestions are AI-generated; have them reviewed by a human before applying*")
         return "\n".join(lines)
 
     def generate_json(self, result: ScanResult) -> str:
